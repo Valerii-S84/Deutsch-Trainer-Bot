@@ -10,8 +10,8 @@
 ## Поточний стан (2026-05-14)
 
 - Виконання: Architecture Lock completed.
-- Поточний статус: Milestone 0 завершено, готовність до запуску Milestone 1 підтверджена.
-- Наступний крок: розпочати Milestone 1 — Repository and Foundation.
+- Поточний статус: Milestone 0 завершено, Milestone 1 (Repository and Foundation) виконується.
+- Наступний крок: завершити Milestone 1 і перейти до Milestone 2.
 
 ## Milestone 0 — Architecture Lock
 
@@ -47,7 +47,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 
 ## Milestone 1 — Repository and Foundation
 
-- Може стартувати на основі `docs/16_architecture_lock.md`.
+- Стартовано на основі `docs/16_architecture_lock.md` (`docs/17_foundation_setup.md` підготовлено).
+- Базову структуру створено: pyproject, Docker, app package, tests, alembic scaffold.
 
 ## Milestone 2+ — Code/migration/data work
 

@@ -1,0 +1,60 @@
+version: "3.9"
+
+services:
+  bot:
+    build: .
+    image: deutsch-trainer-bot:dev
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      TELEGRAM_WEBHOOK_PATH: ${TELEGRAM_WEBHOOK_PATH:-/telegram/webhook}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/deutsch_trainer}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      QUIZ_BANK_API_BASE_URL: ${QUIZ_BANK_API_BASE_URL:-https://api.quiz-bank.example.internal}
+      QUIZ_BANK_API_KEY: ${QUIZ_BANK_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      - db
+      - redis
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-deutsch_trainer}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    expose:
+      - "6379"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "443:443"
+      - "80:80"
+    depends_on:
+      - bot
+    restart: unless-stopped
+
+volumes:
+  db_data:
+

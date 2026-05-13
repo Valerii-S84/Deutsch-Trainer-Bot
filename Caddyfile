@@ -1,0 +1,5 @@
+:443 {
+    tls internal
+    reverse_proxy bot:8080
+}
+

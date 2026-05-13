@@ -1,0 +1,2 @@
+"""Deutsch Trainer Bot package."""
+
