@@ -5,6 +5,7 @@ from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.themes import build_theme_keyboard
 from app.bot.texts import (
     MENU_BUTTON_HOME,
+    MENU_BUTTON_REVIEW,
     MENU_BUTTON_LEVEL_THEME,
     MENU_BUTTON_PROGRESS,
     MENU_BUTTON_SUBSCRIPTION,
@@ -28,10 +29,11 @@ def test_main_menu_keyboard_contains_required_actions() -> None:
 
     assert MENU_BUTTON_TRAIN in texts
     assert MENU_BUTTON_LEVEL_THEME in texts
+    assert MENU_BUTTON_REVIEW in texts
     assert MENU_BUTTON_PROGRESS in texts
     assert MENU_BUTTON_SUBSCRIPTION in texts
     assert MENU_BUTTON_HOME in texts
-    assert len(payloads) == 5
+    assert len(payloads) == 6
     assert len(payloads) >= len(set(payloads)) >= 4
 
 

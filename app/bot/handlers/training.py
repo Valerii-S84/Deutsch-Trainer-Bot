@@ -54,11 +54,15 @@ from app.services.training_session import (
     TrainingSessionService,
 )
 from app.services.progress import ProgressService
+from app.services.mistakes import MistakeService
 
 router = Router(name="training")
 
 
-training_service = TrainingSessionService(progress_service=ProgressService())
+training_service = TrainingSessionService(
+    progress_service=ProgressService(),
+    mistakes_service=MistakeService(),
+)
 
 
 def _session_factory():

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.quiz_bank import QuizBankRequestContext, QuizBankService
 from app.quiz_bank.schemas import QuizItem
 from app.services.progress import ProgressService
+from app.services.mistakes import MistakeService
 from app.repositories.answers import AnswerRepository
 from app.repositories.quiz_sessions import QuizSessionRepository, QuizSessionStatus
 from app.repositories.users import UserRepository
@@ -65,6 +66,10 @@ class NoMoreQuestionsError(TrainingFlowError):
     """Raised when the Quiz Bank returns no available questions."""
 
 
+class NoReviewItemsError(TrainingFlowError):
+    """Raised when review flow has no active mistake items."""
+
+
 class TrainingSessionService:
     """Runtime session orchestration without progress/mistake side effects."""
 
@@ -74,6 +79,8 @@ class TrainingSessionService:
     FAILED_SESSION_STATUS = QuizSessionStatus.failed
     DEFAULT_SESSION_QUESTIONS = 5
     QUIZ_SOURCE = "quiz_bank_api"
+    SESSION_FLOW_REGULAR = "regular"
+    SESSION_FLOW_REVIEW = "mistake_review"
 
     def __init__(
         self,
@@ -83,12 +90,14 @@ class TrainingSessionService:
         answer_repo: AnswerRepository | None = None,
         quiz_service: QuizBankService | None = None,
         progress_service: ProgressService | None = None,
+        mistakes_service: MistakeService | None = None,
     ) -> None:
         self._user_repo = user_repo or UserRepository()
         self._session_repo = session_repo or QuizSessionRepository()
         self._answer_repo = answer_repo or AnswerRepository()
         self._quiz_service = quiz_service
         self._progress_service = progress_service
+        self._mistakes_service = mistakes_service
 
     @property
     def _quiz_bank_service(self) -> QuizBankService:
@@ -111,6 +120,26 @@ class TrainingSessionService:
     @staticmethod
     def _question_token(external_quiz_id: str) -> str:
         return sha1(external_quiz_id.encode("utf-8")).hexdigest()[:8]
+
+    def _session_flow(self, session) -> str:
+        metadata = session.source_metadata or {}
+        return str(metadata.get("flow") or self.SESSION_FLOW_REGULAR)
+
+    def _is_review_session(self, session) -> bool:
+        return self._session_flow(session) == self.SESSION_FLOW_REVIEW
+
+    def _default_source_metadata(self, flow: str, telegram_user_id: int) -> dict[str, str]:
+        return {
+            "flow": flow,
+            "created_by": str(telegram_user_id),
+        }
+
+    @staticmethod
+    def _session_question_limit(requested_total_questions: int, review_items: list[object] | None = None) -> int:
+        requested = max(1, requested_total_questions)
+        if review_items is None or not review_items:
+            return requested
+        return max(1, min(requested, len(review_items)))
 
     async def get_user(self, db: AsyncSession, telegram_user_id: int):
         return await self._user_repo.create_if_missing(db, telegram_user_id)
@@ -151,11 +180,75 @@ class TrainingSessionService:
             theme=theme,
             total_questions=max(1, total_questions),
             source=self.QUIZ_SOURCE,
-            source_metadata={"flow": "regular", "created_by": str(telegram_user_id)},
+            source_metadata=self._default_source_metadata(self.SESSION_FLOW_REGULAR, telegram_user_id),
             api_metadata={"started_at": datetime.now(UTC).isoformat()},
         )
         await db.flush()
         return session
+
+    async def start_review_session(
+        self,
+        db: AsyncSession,
+        telegram_user_id: int,
+        *,
+        force_new: bool,
+        total_questions: int,
+    ):
+        if self._mistakes_service is None:
+            raise NoReviewItemsError("Review service is not configured")
+
+        user = await self.get_user(db, telegram_user_id)
+
+        review_items = await self._mistakes_service.get_review_items(db, telegram_user_id)
+        if not review_items:
+            raise NoReviewItemsError("No active mistakes to review")
+
+        existing = await self._session_repo.get_active_for_user(db, user.id)
+        if existing is not None:
+            if self._is_review_session(existing):
+                if not force_new:
+                    return existing
+                await self._session_repo.mark_cancelled(db, existing)
+            elif not force_new:
+                raise ActiveSessionConflictError("Active training session exists")
+            else:
+                await self._session_repo.mark_cancelled(db, existing)
+
+        first_item = review_items[0]
+        total = self._session_question_limit(total_questions, review_items)
+        session = await self._session_repo.create(
+            db,
+            user_id=user.id,
+            level=first_item.level,
+            theme=first_item.theme,
+            total_questions=total,
+            source=self.QUIZ_SOURCE,
+            source_metadata=self._default_source_metadata(self.SESSION_FLOW_REVIEW, telegram_user_id),
+            api_metadata={"review_count": len(review_items)},
+        )
+        await db.flush()
+        return session
+
+    async def resume_or_start_review_session(
+        self,
+        db: AsyncSession,
+        telegram_user_id: int,
+        *,
+        force_new: bool,
+        total_questions: int,
+    ) -> tuple[Any, QuizQuestionPayload]:
+        session = await self.start_review_session(
+            db,
+            telegram_user_id,
+            force_new=force_new,
+            total_questions=total_questions,
+        )
+        question = await self.get_or_create_current_question(
+            db,
+            telegram_user_id,
+            force_refresh=True,
+        )
+        return session, question
 
     async def get_active_session(self, db: AsyncSession, telegram_user_id: int):
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
@@ -276,11 +369,30 @@ class TrainingSessionService:
                     return payload
 
         seen_item_ids = await self._answer_repo.list_question_ids_by_session(db, session.id)
-        request_context = QuizBankRequestContext(
-            seen_item_ids=seen_item_ids,
-            target_level=session.level,
-            session_type="regular",
-        )
+        is_review_session = self._is_review_session(session)
+        mistake_item_ids: list[str] = []
+        if is_review_session and self._mistakes_service is not None:
+            review_items = await self._mistakes_service.get_review_items(db, user.telegram_user_id)
+            mistake_item_ids = [entry.external_quiz_id for entry in review_items]
+            if not mistake_item_ids:
+                await self._session_repo.mark_failed(db, session)
+                await self._session_repo.clear_pending_question(db, session)
+                await db.flush()
+                raise NoReviewItemsError("No active mistakes to review")
+
+        if is_review_session and self._mistakes_service is not None:
+            request_context = QuizBankRequestContext(
+                seen_item_ids=seen_item_ids,
+                target_level=session.level,
+                session_type=self._session_flow(session),
+                mistake_item_ids=mistake_item_ids,
+            )
+        else:
+            request_context = QuizBankRequestContext(
+                seen_item_ids=seen_item_ids,
+                target_level=session.level,
+                session_type=self._session_flow(session),
+            )
 
         response = await self._quiz_bank_service.request_quiz(
             level=session.level,
@@ -405,6 +517,32 @@ class TrainingSessionService:
 
         if is_correct:
             await self._session_repo.increment_correct_answers(db, session, 1)
+
+        if self._mistakes_service is not None:
+            if is_correct:
+                if self._is_review_session(session):
+                    await self._mistakes_service.record_review_success(
+                        db,
+                        telegram_user_id,
+                        external_quiz_id=pending.question_id,
+                        question_level=pending.level,
+                        question_theme=pending.theme,
+                        correct_answer=pending.correct_answer,
+                    )
+            else:
+                await self._mistakes_service.record_wrong_answer(
+                    db,
+                    telegram_user_id,
+                    external_quiz_id=pending.question_id,
+                    level=pending.level,
+                    theme=pending.theme,
+                    wrong_answer=selected_option_id,
+                    correct_answer=pending.correct_answer,
+                    source_snapshot={
+                        "session_type": self._session_flow(session),
+                        "question_token": pending.question_token,
+                    },
+                )
 
         if not existing and self._progress_service is not None:
             await self._progress_service.record_answer_result(

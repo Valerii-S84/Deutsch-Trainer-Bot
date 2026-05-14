@@ -231,3 +231,49 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - Duplicate protection підтверджено:
   - інтеграційний тест `tests/test_training_progress_integration.py` і unit тест `tests/test_progress_service.py`
     перевіряють, що повторна відповідь з `is_duplicate=True` не змінює `total_answered/total_correct`.
+
+## Milestone 7 — Mistakes and Review
+
+### Поточний статус
+
+`2026-05-14`: completed.
+
+### Що виконано в цьому вікні
+
+- додано `app/repositories/mistakes.py`:
+  - пошук активної помилки по `user_id + external_quiz_id`;
+  - створення/оновлення помилок без дублювання;
+  - списування активних помилок користувача;
+  - weak areas summary по `level/theme`;
+  - закриття помилки після review-success.
+- додано `app/services/mistakes.py`:
+  - `record_wrong_answer(...)`;
+  - `record_review_success(...)`;
+  - `get_review_items(...)`;
+  - `get_weak_areas(...)`;
+  - duplicate-ветка для `is_duplicate=True` не змінює стан.
+- інтегровано у training flow (`app/services/training_session.py`):
+  - неправильна нова відповідь викликає `record_wrong_answer`;
+  - правильна відповідь у review-режимі викликає `record_review_success`;
+  - duplicate-відповідь не змінює mistakes.
+- додано/оновлено UI для review:
+  - `app/bot/handlers/review.py`;
+  - `app/bot/keyboards/review.py`;
+  - `app/bot/routers.py`;
+  - `app/bot/texts.py`.
+- додано тести:
+  - `tests/test_mistakes_repository.py`
+  - `tests/test_mistakes_service.py`
+  - `tests/test_training_mistakes_integration.py`
+  - `tests/test_review_handlers.py`
+
+### Підтвердження завершення milestone
+
+- `bash scripts/local_ci.sh` — passed
+- `make check` — passed
+- `python -m pytest -q tests/test_mistakes_repository.py tests/test_mistakes_service.py tests/test_training_mistakes_integration.py tests/test_review_handlers.py --capture=no` — passed
+- `git diff --check` — no whitespace/trailing issues
+- Duplicate protection підтверджено тестами:
+  - `tests/test_mistakes_service.py::test_record_wrong_answer_is_duplicate_does_not_change_state`;
+  - `tests/test_training_mistakes_integration.py::test_submit_answer_does_not_repeat_wrong_mistake_on_duplicate_click`.
+- Review mode підтверджено тестом `tests/test_review_handlers.py`.

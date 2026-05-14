@@ -69,6 +69,7 @@ HOME_TEXT = "🏠 Hauptmenü"
 MENU_BUTTON_TRAIN = "▶️ Üben"
 MENU_BUTTON_LEVEL_THEME = "🎯 Niveau & Thema"
 MENU_BUTTON_PROGRESS = "📊 Mein Fortschritt"
+MENU_BUTTON_REVIEW = "🧠 Fehler wiederholen"
 MENU_BUTTON_SUBSCRIPTION = "💳 Subscription"
 MENU_BUTTON_HOME = "🏠 Hauptmenü"
 
@@ -86,6 +87,7 @@ CALLBACK_HOME = "bot:home"
 CALLBACK_LEVELS = "menu:levels"
 CALLBACK_THEMES = "bot:theme"
 CALLBACK_PROFILE = "menu:profile"
+CALLBACK_REVIEW = "menu:review"
 CALLBACK_SUBSCRIPTION = "menu:subscription"
 CALLBACK_LEVEL_PREFIX = "level:"
 CALLBACK_THEME_PREFIX = "theme:"
@@ -120,6 +122,11 @@ TRAINING_SESSION_COMPLETED_TEXT = "🏁 Diese Runde ist bereits beendet."
 TRAINING_SESSION_CANCELLED_TEXT = "✅ Sitzung wurde beendet."
 TRAINING_NO_LEVEL_SELECTED_TEXT = "⚠️ Bitte wähle zuerst ein Niveau bevor du ein Thema auswählst."
 TRAINING_THEME_NOT_AVAILABLE_TEXT = "⚠️ Dieses Thema ist aktuell nicht verfügbar."
+
+REVIEW_EMPTY_STATE_TEXT = (
+    "🧹 Keine aktiven Fehler für die Wiederholung.\n\n"
+    "Lerne zuerst neue Fragen, dann werden falsche Antworten automatisch erfasst."
+)
 
 TRAINING_QUIZBANK_AUTH_ERROR_TEXT = (
     "🔒 Quiz-Bank Authentifizierung fehlgeschlagen. Bitte versuche es später erneut."
