@@ -9,6 +9,7 @@ description = "Production foundation for Telegram quiz bot"
 requires-python = ">=3.12"
 dependencies = [
   "aiogram>=3.4.1",
+  "httpx>=0.28.0",
   "redis>=5.0.4",
   "sqlalchemy>=2.0.30",
   "alembic>=1.13.2",

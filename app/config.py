@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     quiz_bank_api_base_url: str = "https://api.quiz-bank.example.internal"
+    quiz_bank_edge_api_key: Optional[SecretStr] = None
+    quiz_bank_consumer_id: Optional[str] = None
+    quiz_bank_consumer_api_key: Optional[SecretStr] = None
+    quiz_bank_timeout_seconds: int = 3
+    quiz_bank_max_retries: int = 2
+    # Deprecated compatibility alias from previous milestones:
+    # do not remove because tests and legacy scripts still reference it.
     quiz_bank_api_key: Optional[SecretStr] = None
 
     log_level: str = "INFO"
@@ -57,9 +64,29 @@ class Settings(BaseSettings):
             raise ValueError("BOT_MAX_REQUEST_TIMEOUT must be > 0")
         return value
 
+    @field_validator("quiz_bank_timeout_seconds")
+    @classmethod
+    def validate_quiz_bank_timeout(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("QUIZ_BANK_TIMEOUT_SECONDS must be > 0")
+        return value
+
+    @field_validator("quiz_bank_max_retries")
+    @classmethod
+    def validate_quiz_bank_retries(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("QUIZ_BANK_MAX_RETRIES must be >= 0")
+        return value
+
     @property
     def webhook_mode_enabled(self) -> bool:
         return bool(self.telegram_webhook_url and self.telegram_webhook_secret and self.bot_webhook_enabled)
+
+    @property
+    def quiz_bank_edge_api_key_or_legacy(self) -> Optional[str]:
+        primary = self.quiz_bank_edge_api_key.get_secret_value() if self.quiz_bank_edge_api_key else None
+        legacy = self.quiz_bank_api_key.get_secret_value() if self.quiz_bank_api_key else None
+        return primary or legacy
 
     def require_production_secrets(self) -> None:
         """Fail fast when mandatory production settings are missing."""
@@ -72,12 +99,15 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_SECRET is required in production")
         if not self.telegram_webhook_url:
             raise ValueError("TELEGRAM_WEBHOOK_URL is required in production")
-        if not self.quiz_bank_api_key or not self.quiz_bank_api_key.get_secret_value():
-            raise ValueError("QUIZ_BANK_API_KEY is required in production")
+        if not self.quiz_bank_edge_api_key_or_legacy:
+            raise ValueError("QUIZ_BANK_EDGE_API_KEY (or QUIZ_BANK_API_KEY legacy) is required in production")
+        if not self.quiz_bank_consumer_api_key or not self.quiz_bank_consumer_api_key.get_secret_value():
+            raise ValueError("QUIZ_BANK_CONSUMER_API_KEY is required in production")
+        if not self.quiz_bank_consumer_id:
+            raise ValueError("QUIZ_BANK_CONSUMER_ID is required in production")
 
 
 def get_settings() -> Settings:
     """Load and validate environment configuration."""
 
     return Settings()  # type: ignore[call-arg]
-

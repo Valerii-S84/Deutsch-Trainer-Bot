@@ -127,3 +127,24 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 1. Підтвердити фінальні tariff values (`exact Plus/Pro price`, `exact Plus/Pro duration`, final Stars package values, `public tariff copy`) до початку фінальної payment імплементації.
 2. Зафіксувати remaining operational config для rollout (`limits`, `cooldown`, retry/circuit settings for Quiz Bank API) в підготовчому документі/конфігурації.
 3. Почати Milestone 1–13 по черзі в порядку з `docs/14_implementation_roadmap.md`.
+
+## Milestone 4 — Quiz Bank API Integration
+
+### Поточний статус
+
+`2026-05-14`: почато.
+
+### Виконані/заплановані кроки
+
+- додано production-ready async Quiz Bank клієнт (`app/quiz_bank/client.py`) з timeout/retry;
+- додано валідаційні схеми для item/answers/explanation/source/error (`app/quiz_bank/schemas.py`);
+- додано explicit errors (`app/quiz_bank/errors.py`);
+- додано service layer без доступу до DB/Telegram handlers (`app/quiz_bank/service.py`);
+- розширено `app/config.py` новими quiz bank settings;
+- додано unit-тести (`tests/test_quiz_bank_client.py`, `tests/test_quiz_bank_schemas.py`,
+  `tests/test_quiz_bank_service.py`);
+- оновлено `.env.example` новими QUIZ_BANK_* змінними для середовища.
+
+### Критерії для завершення milestone
+
+- повна продакшн-сумісна інтеграція без флоу доставки quiz-питань у цьому milestone.
