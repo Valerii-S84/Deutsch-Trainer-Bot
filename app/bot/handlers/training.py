@@ -53,11 +53,12 @@ from app.services.training_session import (
     QuestionStateError,
     TrainingSessionService,
 )
+from app.services.progress import ProgressService
 
 router = Router(name="training")
 
 
-training_service = TrainingSessionService()
+training_service = TrainingSessionService(progress_service=ProgressService())
 
 
 def _session_factory():

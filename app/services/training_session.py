@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.quiz_bank import QuizBankRequestContext, QuizBankService
 from app.quiz_bank.schemas import QuizItem
+from app.services.progress import ProgressService
 from app.repositories.answers import AnswerRepository
 from app.repositories.quiz_sessions import QuizSessionRepository, QuizSessionStatus
 from app.repositories.users import UserRepository
@@ -81,11 +82,13 @@ class TrainingSessionService:
         session_repo: QuizSessionRepository | None = None,
         answer_repo: AnswerRepository | None = None,
         quiz_service: QuizBankService | None = None,
+        progress_service: ProgressService | None = None,
     ) -> None:
         self._user_repo = user_repo or UserRepository()
         self._session_repo = session_repo or QuizSessionRepository()
         self._answer_repo = answer_repo or AnswerRepository()
         self._quiz_service = quiz_service
+        self._progress_service = progress_service
 
     @property
     def _quiz_bank_service(self) -> QuizBankService:
@@ -402,6 +405,16 @@ class TrainingSessionService:
 
         if is_correct:
             await self._session_repo.increment_correct_answers(db, session, 1)
+
+        if not existing and self._progress_service is not None:
+            await self._progress_service.record_answer_result(
+                db,
+                user.telegram_user_id,
+                level=session.level,
+                theme=session.theme,
+                is_correct=is_correct,
+                is_duplicate=False,
+            )
 
         total_answers = await self._answer_repo.count_by_session(db, session.id)
         completed = total_answers >= session.total_questions

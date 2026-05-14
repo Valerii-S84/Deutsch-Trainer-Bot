@@ -187,3 +187,47 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - розгорнута progress aggregation (Milestone 6)
 - mistakes lifecycle/review (Milestone 7)
 - paywall/subscription/payment logic (Milestone 8/9)
+
+## Milestone 6 — Progress Aggregation
+
+### Поточний статус
+
+`2026-05-14`: completed.
+
+### Що виконано в цьому вікні
+
+- додано `app/repositories/progress.py`:
+  - отримання прогресу по `user/level/theme`;
+  - create row якщо відсутній;
+  - оновлення `total_answered`, `total_correct`, `accuracy`;
+  - безпечна робота з негативними значеннями;
+  - support summary-читання по користувачу;
+  - support summary-читання по `level/theme`.
+- додано `app/services/progress.py`:
+  - `record_answer_result(...)` для запису відповіді;
+  - update `total_answered`;
+  - update `total_correct` лише для коректних відповідей;
+  - recalculate `accuracy`;
+  - update `streak` за наявності поля в моделі;
+  - no-op для duplicate-ответів.
+- інтегровано progress update в `TrainingSessionService.submit_answer`:
+  - виклик тільки для нових валідних відповідей;
+  - duplicate-відповідь не змінює прогрес і не змінює score.
+- оновлено `app/bot/handlers/profile.py`:
+  - відображення реального прогресу з empty-state;
+  - fallback до порожнього стану без складної аналітики.
+- додано тести:
+  - `tests/test_progress_service.py`
+  - `tests/test_progress_repository.py`
+  - `tests/test_training_progress_integration.py`
+  - `tests/test_profile_handlers.py`
+
+### Підтвердження завершення milestone
+
+- `bash scripts/local_ci.sh` — passed
+- `make check` — passed
+- `python -m pytest -q tests/test_progress_service.py tests/test_progress_repository.py tests/test_training_progress_integration.py tests/test_profile_handlers.py --capture=no` — passed
+- `git diff --check` — no whitespace/trailing issues
+- Duplicate protection підтверджено:
+  - інтеграційний тест `tests/test_training_progress_integration.py` і unit тест `tests/test_progress_service.py`
+    перевіряють, що повторна відповідь з `is_duplicate=True` не змінює `total_answered/total_correct`.

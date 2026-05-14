@@ -37,8 +37,16 @@ THEME_CALLBACK_FALLBACK_TEXT = (
 )
 
 PROFILE_TEXT = (
-    "👤 Dein Profil & Fortschritt sind angelegt. "
-    "Die Fortschrittsberechnung und Historie sind Teil eines späteren Milestones."
+    "👤 Dein Profil & Fortschritt"
+)
+
+PROFILE_EMPTY_STATE_TEXT = (
+    "📭 Noch kein Fortschritt erfasst.\n\n"
+    "Starte zuerst ein Training, dann erscheint hier dein Lernstand."
+)
+
+PROFILE_PROGRESS_TEMPLATE = (
+    "✅ {level} / {theme}: {correct}/{answered} korrekt ({accuracy}%)."
 )
 
 SUBSCRIPTION_TEXT = (
