@@ -76,6 +76,15 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
     `mistakes`, `subscriptions`, `payments`, `analytics_events`;
   - початкова Alembic міграція `202605140001_initial_schema.py`;
   - оновлення логу виконання та базових тести для metadata/constraints/indexes.
+- 2026-05-14: додано runtime verification assets:
+  - `scripts/db_runtime_check.sh`
+  - `tests/test_db_runtime_schema.py`
+  - `docs/19_database_runtime_verification.md`
+- 2026-05-14: runtime verification blocker:
+  - `docker` у WSL не має доступу до Docker Linux Engine;
+  - локального PostgreSQL сервісу немає;
+  - `alembic upgrade head`, `alembic current`, `alembic check` падають з
+    `ConnectionRefusedError` до `127.0.0.1:5432`.
 
 ## Активні ризики (витяг з roadmap, секції 19)
 
