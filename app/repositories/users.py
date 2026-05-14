@@ -28,6 +28,18 @@ class UserRepository:
         user.last_active_at = datetime.now(UTC)
         return user
 
+    async def create_or_update_from_telegram(self, db: AsyncSession, telegram_user) -> User | None:
+        telegram_user_id = getattr(telegram_user, "id", None)
+        if telegram_user_id is None:
+            return None
+
+        user = await self.create_if_missing(db, int(telegram_user_id))
+        user.username = getattr(telegram_user, "username", None)
+        user.first_name = getattr(telegram_user, "first_name", None)
+        user.language_code = getattr(telegram_user, "language_code", None)
+        user.last_active_at = datetime.now(UTC)
+        return user
+
     async def set_training_preferences(
         self,
         db: AsyncSession,

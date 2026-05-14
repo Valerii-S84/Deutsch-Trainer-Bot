@@ -1,4 +1,4 @@
-"""German user-facing text constants for Milestone 3 bot shell."""
+"""German user-facing text constants for the bot shell."""
 
 from __future__ import annotations
 
@@ -50,8 +50,8 @@ PROFILE_PROGRESS_TEMPLATE = (
 )
 
 SUBSCRIPTION_TEXT = (
-    "💳 Subscription-Bereich ist vorbereitet. "
-    "Die Payment-Integration wird in einem späteren Milestone implementiert."
+    "💳 Der Abo-Bereich ist vorbereitet. "
+    "Die Zahlungsanbindung wird in einem späteren Ausbauschritt implementiert."
 )
 
 UNKNOWN_MESSAGE_TEXT = (
@@ -70,10 +70,10 @@ MENU_BUTTON_TRAIN = "▶️ Üben"
 MENU_BUTTON_LEVEL_THEME = "🎯 Niveau & Thema"
 MENU_BUTTON_PROGRESS = "📊 Mein Fortschritt"
 MENU_BUTTON_REVIEW = "🧠 Fehler wiederholen"
-MENU_BUTTON_SUBSCRIPTION = "💳 Subscription"
+MENU_BUTTON_SUBSCRIPTION = "💳 Abo"
 MENU_BUTTON_HOME = "🏠 Hauptmenü"
 
-LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
+LEVELS = ("A1", "A2", "B1", "B2", "C1")
 THEMES = (
     "Alltag",
     "Beruf",

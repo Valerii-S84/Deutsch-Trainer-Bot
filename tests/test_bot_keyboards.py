@@ -40,7 +40,7 @@ def test_main_menu_keyboard_contains_required_actions() -> None:
 def test_levels_keyboard_is_complete() -> None:
     keyboard = build_levels_keyboard()
     texts = _button_texts(keyboard)
-    assert texts[:6] == ["A1", "A2", "B1", "B2", "C1", "C2"]
+    assert texts[:5] == ["A1", "A2", "B1", "B2", "C1"]
 
 
 def test_theme_keyboard_uses_placeholder_categories() -> None:

@@ -157,7 +157,7 @@ async def test_handle_theme_selected_without_level_prompts_level_picker(monkeypa
     sent_text = _extract_text(callback.message.answer.await_args)
     assert TRAINING_NO_LEVEL_SELECTED_TEXT == sent_text
     payloads = _callback_payloads(callback.message.answer.await_args.kwargs["reply_markup"])
-    assert payloads[:6] == ["level:A1", "level:A2", "level:B1", "level:B2", "level:C1", "level:C2"]
+    assert payloads[:5] == ["level:A1", "level:A2", "level:B1", "level:B2", "level:C1"]
     assert service.resume_or_start_session.await_count == 0
 
 
@@ -226,6 +226,10 @@ async def test_handle_submit_answer_shows_duplicate_warning_and_next_button(monk
 async def test_handle_next_question_shows_new_question(monkeypatch) -> None:
     db = FakeDb()
     service = AsyncMock()
+    service.get_active_session.return_value = SimpleNamespace(
+        id=10,
+        api_metadata={"pending_question": {"question_token": "tok12345"}},
+    )
     service.get_next_question.return_value = _question()
 
     _patch_service(monkeypatch, service, db)
@@ -243,6 +247,7 @@ async def test_handle_next_question_shows_new_question(monkeypatch) -> None:
 async def test_handle_cancel_training_confirms_cancel(monkeypatch) -> None:
     db = FakeDb()
     service = AsyncMock()
+    service.get_active_session.return_value = SimpleNamespace(id=10)
     service.cancel_active_session.return_value = True
 
     _patch_service(monkeypatch, service, db)
@@ -255,7 +260,25 @@ async def test_handle_cancel_training_confirms_cancel(monkeypatch) -> None:
     sent_text = _extract_text(callback.message.answer.await_args)
     assert sent_text == training.TRAINING_SESSION_CANCELLED_TEXT
     keyboard_payloads = _callback_payloads(callback.message.answer.await_args.kwargs["reply_markup"])
-    assert keyboard_payloads[:6] == ["level:A1", "level:A2", "level:B1", "level:B2", "level:C1", "level:C2"]
+    assert keyboard_payloads[:5] == ["level:A1", "level:A2", "level:B1", "level:B2", "level:C1"]
+
+
+@pytest.mark.asyncio
+async def test_handle_next_question_rejects_stale_token(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.get_active_session.return_value = SimpleNamespace(
+        id=10,
+        api_metadata={"pending_question": {"question_token": "new-token"}},
+    )
+
+    _patch_service(monkeypatch, service, db)
+
+    callback = _Callback(data="train:next:10:old-token")
+    await training.handle_next_question(callback)
+
+    service.get_next_question.assert_not_awaited()
+    callback.message.answer.assert_awaited_once_with(training.TRAINING_SESSION_ERROR_TEXT)
 
 
 @pytest.mark.asyncio

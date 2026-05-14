@@ -20,10 +20,42 @@ from app.bot.texts import (
 
 
 class _Message:
-    def __init__(self, text: str | None = None, first_name: str | None = None) -> None:
+    def __init__(
+        self,
+        text: str | None = None,
+        first_name: str | None = None,
+        user_id: int | None = None,
+    ) -> None:
         self.text = text
-        self.from_user = SimpleNamespace(first_name=first_name) if first_name else SimpleNamespace(first_name=None)
+        self.from_user = SimpleNamespace(
+            id=user_id,
+            first_name=first_name,
+            username="anna",
+            language_code="de",
+        )
         self.answer = AsyncMock()
+
+
+class _Db:
+    def __init__(self) -> None:
+        self.commit = AsyncMock()
+        self.rollback = AsyncMock()
+
+
+class _SessionContext:
+    def __init__(self, db: _Db) -> None:
+        self.db = db
+
+    async def __aenter__(self) -> _Db:
+        return self.db
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        return None
+
+
+class _UserRepo:
+    def __init__(self) -> None:
+        self.create_or_update_from_telegram = AsyncMock()
 
 
 class _CallbackQuery:
@@ -34,14 +66,21 @@ class _CallbackQuery:
 
 
 @pytest.mark.asyncio
-async def test_start_handler_shows_main_menu() -> None:
-    message = _Message(text="/start", first_name="Anna")
+async def test_start_handler_shows_main_menu_and_remembers_user(monkeypatch) -> None:
+    db = _Db()
+    user_repo = _UserRepo()
+    monkeypatch.setattr(start, "_session_factory", lambda: _SessionContext(db))
+    monkeypatch.setattr(start, "_user_repo", user_repo)
+
+    message = _Message(text="/start", first_name="Anna_Test", user_id=111)
     await start.handle_start(message)
 
+    user_repo.create_or_update_from_telegram.assert_awaited_once_with(db, message.from_user)
+    db.commit.assert_awaited_once()
     message.answer.assert_awaited_once()
     kwargs = message.answer.await_args.kwargs
     assert WELCOME_TEXT in kwargs["text"]
-    assert "Hallo *Anna*" in kwargs["text"]
+    assert "Hallo *Anna\\_Test*" in kwargs["text"]
     assert kwargs["parse_mode"] == "Markdown"
     assert kwargs["reply_markup"].inline_keyboard == build_main_menu_keyboard().inline_keyboard
 
@@ -76,6 +115,9 @@ async def test_subscription_entry_point_is_static_message() -> None:
     await subscription.handle_subscription_message(message)
     args = message.answer.await_args.args
     assert SUBSCRIPTION_TEXT in args[0]
+    assert "Subscription" not in args[0]
+    assert "Payment" not in args[0]
+    assert "Milestone" not in args[0]
 
 
 @pytest.mark.asyncio

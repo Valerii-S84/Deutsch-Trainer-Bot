@@ -72,20 +72,32 @@ class MistakeRepository:
         correct_answer: str,
         source_snapshot: dict[str, Any] | None = None,
     ) -> Mistake:
+        now = datetime.now(UTC)
+        mistake_id = await self._next_id_if_needed(db)
         mistake = Mistake(
+            id=mistake_id,
             user_id=user_id,
             external_quiz_id=external_quiz_id,
+            item_id=external_quiz_id,
             level=level,
             theme=theme,
             wrong_answer=wrong_answer,
             correct_answer=correct_answer,
             mistake_count=1,
-            last_seen_at=datetime.now(UTC),
+            last_seen_at=now,
+            first_mistake_at=now,
+            last_mistake_at=now,
             status=MistakeStatus.new,
             source_snapshot=source_snapshot,
         )
         db.add(mistake)
         return mistake
+
+    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
+        if db.get_bind().dialect.name != "sqlite":
+            return None
+        max_id = await db.scalar(select(func.max(Mistake.id)))
+        return (max_id or 0) + 1
 
     async def increment_wrong(
         self,
@@ -101,13 +113,17 @@ class MistakeRepository:
         mistake.correct_answer = correct_answer
         if source_snapshot is not None:
             mistake.source_snapshot = source_snapshot
+        mistake.item_id = mistake.item_id or mistake.external_quiz_id
         mistake.status = MistakeStatus.repeated if mistake.status in {
             MistakeStatus.new,
             MistakeStatus.repeated,
             MistakeStatus.improved,
         } else mistake.status
         mistake.resolved_at = None
-        mistake.last_seen_at = datetime.now(UTC)
+        now = datetime.now(UTC)
+        mistake.last_seen_at = now
+        mistake.last_mistake_at = now
+        mistake.last_repeated_at = now
         return mistake
 
     async def resolve(
@@ -131,9 +147,13 @@ class MistakeRepository:
         mistake.status = MistakeStatus.repeated
         mistake.mistake_count = max(1, int(mistake.mistake_count or 0) + 1)
         mistake.resolved_at = None
-        mistake.last_seen_at = datetime.now(UTC)
+        now = datetime.now(UTC)
+        mistake.last_seen_at = now
+        mistake.last_mistake_at = now
+        mistake.last_repeated_at = now
         mistake.wrong_answer = wrong_answer
         mistake.correct_answer = correct_answer
+        mistake.item_id = mistake.item_id or mistake.external_quiz_id
         if source_snapshot is not None:
             mistake.source_snapshot = source_snapshot
         return mistake

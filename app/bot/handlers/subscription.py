@@ -1,4 +1,4 @@
-"""Subscription entrypoint."""
+"""Abo entrypoint."""
 
 from __future__ import annotations
 

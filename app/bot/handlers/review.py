@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
+from app.bot.formatting import escape_markdown_text
 from app.bot.keyboards.main_menu import build_back_to_main_menu_button
 from app.bot.keyboards.quiz import build_question_options_keyboard
 from app.bot.keyboards.review import build_review_empty_keyboard
@@ -54,7 +55,7 @@ def _question_message(position: int, total_questions: int, question_text: str) -
     return TRAINING_QUESTION_TEMPLATE.format(
         position=position,
         total=total_questions,
-        question_text=question_text,
+        question_text=escape_markdown_text(question_text),
     )
 
 

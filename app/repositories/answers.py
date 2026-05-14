@@ -23,14 +23,22 @@ class AnswerRepository:
         is_correct: bool,
         quiz_source: str | None = None,
         external_ref: str | None = None,
+        level: str | None = None,
+        theme: str | None = None,
+        session_type: str = "regular",
+        metadata_snapshot: dict[str, object] | None = None,
     ) -> UserAnswer:
         answer = UserAnswer(
             session_id=session_id,
             user_id=user_id,
             external_quiz_id=external_quiz_id,
+            level=level,
+            theme=theme,
             selected_answer=selected_answer,
             correct_answer=correct_answer,
             is_correct=is_correct,
+            session_type=session_type,
+            metadata_snapshot=metadata_snapshot,
             quiz_source=quiz_source,
             external_ref=external_ref,
         )

@@ -45,7 +45,10 @@ class ProgressRepository:
             theme=theme,
             total_answered=0,
             total_correct=0,
+            wrong_count=0,
             accuracy=Decimal("0.00"),
+            stability_score=Decimal("0.00"),
+            weakness_score=Decimal("0.00"),
         )
         db.add(progress)
         return progress
@@ -86,6 +89,9 @@ class ProgressRepository:
                 (progress.total_correct or 0) + deltas["correct_delta"],
             ),
         )
+        wrong_delta = max(0, deltas["answered_delta"] - deltas["correct_delta"])
+        if hasattr(progress, "wrong_count"):
+            progress.wrong_count = max(0, (progress.wrong_count or 0) + wrong_delta)
 
         if progress.total_answered <= 0:
             progress.accuracy = Decimal("0.00")
@@ -95,6 +101,10 @@ class ProgressRepository:
 
         if hasattr(progress, "last_answered_at"):
             progress.last_answered_at = datetime.now(UTC)
+        if hasattr(progress, "last_wrong_at") and wrong_delta:
+            progress.last_wrong_at = progress.last_answered_at
+        if hasattr(progress, "last_recalculated_at"):
+            progress.last_recalculated_at = datetime.now(UTC)
         return progress
 
     async def update_streak_if_supported(self, progress: Progress, *, is_correct: bool) -> Progress:

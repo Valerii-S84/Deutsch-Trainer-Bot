@@ -1,10 +1,11 @@
-"""Training session handlers for Milestone 5."""
+"""Training session handlers."""
 
 from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
+from app.bot.formatting import escape_markdown_text
 from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.quiz import (
     build_finish_keyboard,
@@ -131,7 +132,7 @@ def _question_message(position: int, total_questions: int, question_text: str) -
     return TRAINING_QUESTION_TEMPLATE.format(
         position=position,
         total=total_questions,
-        question_text=question_text,
+        question_text=escape_markdown_text(question_text),
     )
 
 
@@ -139,12 +140,23 @@ def _result_message(result: AnswerResult) -> str:
     if result.is_correct:
         text = TRAINING_CORRECT_ANSWER_TEXT
     else:
-        text = TRAINING_INCORRECT_ANSWER_TEXT.format(correct_answer=result.correct_answer)
+        correct_answer = escape_markdown_text(result.correct_answer)
+        text = TRAINING_INCORRECT_ANSWER_TEXT.format(correct_answer=correct_answer)
     if result.is_duplicate:
         text = f"{TRAINING_ANSWER_DUPLICATE_TEXT}\n\n{text}"
     if result.explanation:
-        text = f"{text}\n\n{TRAINING_EXPLANATION_TEXT.format(explanation=result.explanation)}"
+        explanation = escape_markdown_text(result.explanation)
+        text = f"{text}\n\n{TRAINING_EXPLANATION_TEXT.format(explanation=explanation)}"
     return text
+
+
+def _pending_question_token(session: object) -> str | None:
+    metadata = getattr(session, "api_metadata", None) or {}
+    pending = metadata.get("pending_question") if isinstance(metadata, dict) else None
+    if not isinstance(pending, dict):
+        return None
+    token = pending.get("question_token")
+    return token if isinstance(token, str) else None
 
 
 def _percent_correct(correct_answers: int, total_questions: int) -> int:
@@ -380,6 +392,16 @@ async def handle_cancel_training(callback_query: CallbackQuery) -> None:
 
     async with _session_factory() as db:
         try:
+            session_id = _parse_session_payload(callback_query.data, CALLBACK_TRAIN_CANCEL_PREFIX)
+        except ValueError:
+            await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
+            return
+
+        try:
+            active = await training_service.get_active_session(db, user_id)
+            if active is None or active.id != session_id:
+                await callback_query.message.answer(TRAINING_RESUME_NO_ACTIVE_TEXT)
+                return
             cancelled = await training_service.cancel_active_session(db, user_id)
             await db.commit()
         except Exception:
@@ -433,6 +455,7 @@ async def handle_submit_answer(callback_query: CallbackQuery) -> None:
         await callback_query.message.answer(
             _build_completed_feedback(result),
             reply_markup=build_finish_keyboard(),
+            parse_mode="Markdown",
         )
         return
 
@@ -442,6 +465,7 @@ async def handle_submit_answer(callback_query: CallbackQuery) -> None:
             result.session_id,
             result.question_token,
         ),
+        parse_mode="Markdown",
     )
 
 
@@ -456,13 +480,20 @@ async def handle_next_question(callback_query: CallbackQuery) -> None:
         return
 
     try:
-        _parse_next_payload(callback_query.data)
+        session_id, question_token = _parse_next_payload(callback_query.data)
     except ValueError:
         await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
         return
 
     async with _session_factory() as db:
         try:
+            active = await training_service.get_active_session(db, user_id)
+            if active is None or active.id != session_id:
+                await callback_query.message.answer(TRAINING_SESSION_COMPLETED_TEXT)
+                return
+            if _pending_question_token(active) != question_token:
+                await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
+                return
             question = await training_service.get_next_question(db, user_id)
             await db.commit()
         except (

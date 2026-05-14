@@ -4,11 +4,11 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base, TimestampMixin
+from app.db.types import json_document_type
 
 
 class AnalyticsEvent(Base, TimestampMixin):
@@ -24,7 +24,7 @@ class AnalyticsEvent(Base, TimestampMixin):
     )
     event_name: Mapped[str] = mapped_column(String(128), nullable=False)
     event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    event_metadata: Mapped[Optional[dict[str, object]]] = mapped_column(JSONB(), nullable=True)
+    event_metadata: Mapped[Optional[dict[str, object]]] = mapped_column(json_document_type(), nullable=True)
     session_id: Mapped[Optional[int]] = mapped_column(
         BigInteger,
         ForeignKey("quiz_sessions.id", ondelete="SET NULL"),

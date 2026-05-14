@@ -489,6 +489,8 @@ class TrainingSessionService:
                 is_correct=is_correct,
                 quiz_source=self.QUIZ_SOURCE,
             )
+            if hasattr(self._session_repo, "increment_answered_count"):
+                await self._session_repo.increment_answered_count(db, session, 1)
             await db.flush()
         except IntegrityError:
             await db.rollback()
