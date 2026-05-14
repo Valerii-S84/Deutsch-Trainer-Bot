@@ -5,23 +5,24 @@
 Не дублюй тут правила з `.agent/core/PRINCIPLES.md`.
 Невикористані секції позначай як `Not used in this repo.`
 
-primary_language: `Not selected yet. Repository currently contains only agent documentation.`
-active_sections: `None for implementation code yet. Apply Markdown documentation discipline for .md files.`
-fallback: якщо `primary_language` або `active_sections` не
-заповнено, Ask First перед застосуванням стилю.
+primary_language: `Python 3.12+`
+active_sections: `Python, SQL/Alembic, Shell, Tests and fixtures, Markdown documentation`
+fallback: якщо для конкретного інструмента правило не визначене,
+дотримуйся існуючого стилю файлу і не додавай новий toolchain без
+прямого scope задачі.
 
 ## Active languages
 
-- Languages in scope: `Markdown documentation only until implementation stack is selected.`
+- Languages in scope: `Python 3.12+, SQL/Alembic migrations, Bash scripts, Markdown documentation.`
 
 ## Python
 
-- Formatter: `Not used in this repo.`
-- Linter: `Not used in this repo.`
-- Type checker: `Not used in this repo.`
-- Import/order rules: `Not used in this repo.`
-- Line length / docstring limits: `Not used in this repo.`
-- Python-specific test rules: `Not used in this repo.`
+- Formatter: `No formatter is configured yet. Preserve local style; do not mass-format unrelated files.`
+- Linter: `No linter is configured yet. Do not introduce or require a linter without explicit scope.`
+- Type checker: `No type checker is configured yet. Keep type hints consistent with existing code and avoid untyped public service contracts when editing related code.`
+- Import/order rules: `Use existing pattern: __future__ import first, then standard library, third-party imports, and app imports. Avoid unused imports.`
+- Line length / docstring limits: `Keep production code readable and consistent with existing files. Avoid long functions beyond .agent/core/PRINCIPLES.md numeric limits unless covered by an allowed exception.`
+- Python-specific test rules: `Use pytest and pytest-asyncio. Prefer explicit fakes/mocks for Telegram, Quiz Bank, and repositories. Do not use real Telegram, Quiz Bank, payment, or production DB credentials in tests.`
 
 ## JavaScript / TypeScript
 
@@ -42,22 +43,22 @@ fallback: якщо `primary_language` або `active_sections` не
 
 ## SQL
 
-- Migration conventions: `Not used in this repo.`
-- Query style / naming rules: `Not used in this repo.`
-- DDL / DML safety rules: `Not used in this repo.`
+- Migration conventions: `Alembic migrations live in alembic/versions/. SQLAlchemy models and migrations must stay aligned. Schema changes require migration and runtime PostgreSQL verification.`
+- Query style / naming rules: `Use SQLAlchemy 2.x async patterns for app code. Raw SQL is acceptable in tests/scripts for schema inspection when parameterized.`
+- DDL / DML safety rules: `Use transactions, scoped WHERE clauses for writes, and non-destructive verification by default. Destructive or production DB operations require explicit approval.`
 
 ## Shell / CLI
 
-- Shell dialect: `Not used in this repo.`
-- Formatting / linting: `Not used in this repo.`
-- Script safety rules: `Not used in this repo.`
+- Shell dialect: `Bash for scripts in scripts/.`
+- Formatting / linting: `No shell linter is configured yet. Keep scripts short, readable, and consistent with existing scripts.`
+- Script safety rules: `Use set -euo pipefail for executable scripts. Do not print secrets or run production/deploy/destructive commands without explicit request.`
 
 ## Tests and fixtures
 
-- Test frameworks: `Not defined yet.`
-- Fixture / mock conventions: `Not defined yet.`
-- Required test suites before close-out: `For documentation-only changes, reread changed files and check that no template placeholders remain. Define code test suites after implementation stack is selected.`
+- Test frameworks: `pytest, pytest-asyncio.`
+- Fixture / mock conventions: `Use small explicit fixtures/fakes. Test data must contain no real secrets, real payment credentials, real personal data, or production Quiz Bank dumps.`
+- Required test suites before close-out: `For Python code changes, run . .venv/bin/activate && bash scripts/local_ci.sh when available. For DB/migration changes, also run alembic/runtime PostgreSQL checks with DATABASE_URL or TEST_DATABASE_URL. For documentation-only changes, reread changed files and check that no template placeholders or project-context contradictions remain.`
 
 ## Framework or repo-specific exceptions
 
-- `Do not choose an implementation language or framework from CODE_STYLE alone. The product vision defines behavior and data needs, not the technical stack.`
+- `Architecture Lock in docs/16_architecture_lock.md is the source of truth for selected stack decisions. CODE_STYLE describes how to work inside that locked stack; it does not authorize changing the stack.`

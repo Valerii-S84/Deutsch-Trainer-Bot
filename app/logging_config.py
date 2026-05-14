@@ -4,18 +4,15 @@ import logging
 import re
 from typing import Final
 
-SENSITIVE_KEYS: Final = ("token", "secret", "key", "password", "authorization", "api-key")
+SENSITIVE_VALUE_PATTERN: Final = re.compile(
+    r"(?i)\b(token|secret|api-key|password|key)\b\s*[:=]\s*(\"[^\"]*\"|'[^']*'|[^\s,]+)",
+)
+AUTHORIZATION_PATTERN: Final = re.compile(r"(?i)\b(authorization)\b\s*[:=]\s*[^,]+")
 
 
 def _redact(text: str) -> str:
-    redacted = text
-    for key in SENSITIVE_KEYS:
-        redacted = re.sub(
-            rf"(?i){re.escape(key)}[=:][^\\s\"]+",
-            f"{key}=***",
-            redacted,
-        )
-    return redacted
+    redacted = AUTHORIZATION_PATTERN.sub(lambda match: f"{match.group(1)}=***", text)
+    return SENSITIVE_VALUE_PATTERN.sub(lambda match: f"{match.group(1)}=***", redacted)
 
 
 class SecretRedactionFilter(logging.Filter):
@@ -32,9 +29,10 @@ def configure_logging(level: str = "INFO") -> None:
     """Configure structured-lean logging with basic secret redaction."""
     root = logging.getLogger()
     root.handlers = []
+    redaction_filter = SecretRedactionFilter()
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    root.addFilter(SecretRedactionFilter())
-
+    for handler in root.handlers:
+        handler.addFilter(redaction_filter)
