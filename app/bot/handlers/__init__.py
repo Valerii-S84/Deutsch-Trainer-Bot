@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-from aiogram import Dispatcher
+"""Handler package exports."""
 
+from app.bot.handlers.fallback import router as fallback_router
+from app.bot.handlers.level import router as level_router
+from app.bot.handlers.menu import router as menu_router
+from app.bot.handlers.profile import router as profile_router
+from app.bot.handlers.start import router as start_router
+from app.bot.handlers.subscription import router as subscription_router
+from app.bot.handlers.theme import router as theme_router
 
-def register_handlers(dispatcher: Dispatcher) -> None:
-    """Register bot handlers.
-
-    Placeholder registration for foundation milestone.
-    """
-
-    # Intentionally left empty for foundation.
-    return None
-
+__all__ = [
+    "fallback_router",
+    "level_router",
+    "menu_router",
+    "profile_router",
+    "start_router",
+    "subscription_router",
+    "theme_router",
+]

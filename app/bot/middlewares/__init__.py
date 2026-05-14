@@ -1,0 +1,7 @@
+"""Middlewares for bot updates."""
+
+from __future__ import annotations
+
+from app.bot.middlewares.logging import LoggingMiddleware
+
+__all__ = ["LoggingMiddleware"]

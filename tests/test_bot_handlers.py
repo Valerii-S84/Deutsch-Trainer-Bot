@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.bot.handlers import fallback, menu
+from app.bot.handlers import level as level_handlers
+from app.bot.handlers import profile, start, subscription, theme
+from app.bot.keyboards.main_menu import build_main_menu_keyboard
+from app.bot.texts import (
+    LEVEL_CALLBACK_FALLBACK_TEXT,
+    PROFILE_TEXT,
+    SUBSCRIPTION_TEXT,
+    THEME_CALLBACK_FALLBACK_TEXT,
+    UNKNOWN_CALLBACK_TEXT,
+    UNKNOWN_MESSAGE_TEXT,
+    WELCOME_TEXT,
+)
+
+
+class _Message:
+    def __init__(self, text: str | None = None, first_name: str | None = None) -> None:
+        self.text = text
+        self.from_user = SimpleNamespace(first_name=first_name) if first_name else SimpleNamespace(first_name=None)
+        self.answer = AsyncMock()
+
+
+class _CallbackQuery:
+    def __init__(self, data: str | None = None, text: str | None = None) -> None:
+        self.data = data
+        self.message = _Message(text=text, first_name="Test")
+        self.answer = AsyncMock()
+
+
+@pytest.mark.asyncio
+async def test_start_handler_shows_main_menu() -> None:
+    message = _Message(text="/start", first_name="Anna")
+    await start.handle_start(message)
+
+    message.answer.assert_awaited_once()
+    kwargs = message.answer.await_args.kwargs
+    assert WELCOME_TEXT in kwargs["text"]
+    assert "Hallo *Anna*" in kwargs["text"]
+    assert kwargs["parse_mode"] == "Markdown"
+    assert kwargs["reply_markup"].inline_keyboard == build_main_menu_keyboard().inline_keyboard
+
+
+@pytest.mark.asyncio
+async def test_open_menu_from_callback_shows_menu() -> None:
+    callback = _CallbackQuery(data="bot:home", text="menu")
+    await menu.open_menu_from_callback(callback)
+    callback.message.answer.assert_awaited_once()
+    callback.answer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_level_flow_with_unknown_level_is_safe() -> None:
+    callback = _CallbackQuery(data="level:ZZ")
+    await level_handlers.level_selected(callback)
+    callback.message.answer.assert_awaited_once()
+    callback.message.answer.assert_awaited_with(LEVEL_CALLBACK_FALLBACK_TEXT)
+
+
+@pytest.mark.asyncio
+async def test_theme_selection_fallback_for_unknown_theme() -> None:
+    callback = _CallbackQuery(data="theme:unknown")
+    await theme.theme_selected(callback)
+    callback.message.answer.assert_awaited_once_with(THEME_CALLBACK_FALLBACK_TEXT)
+
+
+@pytest.mark.asyncio
+async def test_profile_entry_point_is_static_message() -> None:
+    message = _Message(text="/profile")
+    await profile.handle_profile_message(message)
+    args = message.answer.await_args.args
+    kwargs = message.answer.await_args.kwargs
+    assert PROFILE_TEXT in args[0]
+    assert kwargs["reply_markup"] is not None
+
+
+@pytest.mark.asyncio
+async def test_subscription_entry_point_is_static_message() -> None:
+    message = _Message(text="/subscription")
+    await subscription.handle_subscription_message(message)
+    args = message.answer.await_args.args
+    assert SUBSCRIPTION_TEXT in args[0]
+
+
+@pytest.mark.asyncio
+async def test_fallback_message_handler_responds() -> None:
+    message = _Message(text="random text")
+    await fallback.fallback_text(message)
+    message.answer.assert_awaited_once_with(UNKNOWN_MESSAGE_TEXT)
+
+
+@pytest.mark.asyncio
+async def test_fallback_callback_handler_responds() -> None:
+    callback = _CallbackQuery(data="invalid:payload")
+    await fallback.fallback_callback(callback)
+    callback.answer.assert_awaited_once_with(UNKNOWN_CALLBACK_TEXT, show_alert=True)

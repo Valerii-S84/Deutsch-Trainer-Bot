@@ -7,16 +7,14 @@ from aiogram import Bot, Dispatcher
 
 from app.config import get_settings
 from app.logging_config import configure_logging
-from app.bot.handlers import register_handlers
+from app.bot.dispatcher import build_dispatcher
 
 logger = logging.getLogger(__name__)
 
 
 def create_dispatcher() -> Dispatcher:
-    """Create an empty dispatcher and wire placeholder handlers."""
-    dispatcher = Dispatcher()
-    register_handlers(dispatcher)
-    return dispatcher
+    """Create and configure a dispatcher with all production-relevant routers."""
+    return build_dispatcher()
 
 
 def create_bot(token: str) -> Bot:
@@ -62,4 +60,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
