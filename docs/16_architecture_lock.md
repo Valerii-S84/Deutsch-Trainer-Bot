@@ -36,6 +36,13 @@
 
 Ці значення не hardcode-яться в коді чи документації налаштувань і підтягуються через конфігурацію.
 
+Наступні рішення не блокують Milestone 0–7:
+
+- Quiz Bank runtime consumer contract для levels/themes/availability/questions/lookup/metadata/error taxonomy реалізується в schemas/service/tests; фінальний OpenAPI freeze потрібен перед production release.
+- Quiz Bank cache policy для Milestone 4–7: short-lived catalog/availability/metadata cache; повний локальний question bank заборонений.
+- Plan limits використовуються як config-driven runtime values з перевіркою `Free < Plus < Pro`; фінальні launch values потрібні перед payment launch.
+- Free mistake repeat policy для поточної імплементації: повторення помилок є Plus+ entitlement; зміна на Free trial потребує окремого product decision.
+
 ## 4. Blocking Decisions Closed
 
 Поточний стан у рамках milestone-locked prerequisites:
@@ -45,11 +52,14 @@
 - DB
 - deployment model
 - API integration model
+- Quiz Bank runtime consumer contract and cache scope for Milestone 4-7
+- config-driven plan limits for non-payment milestones
+- Plus+ mistake repeat entitlement for current review flow
 - payment architecture
 - security model
 - QA model
 
-Усі вони закриті для старту подальшої імплементації.
+Усі вони закриті для старту та закриття Milestone 0-7. Payment launch і production release мають окремі decision gates вище.
 
 ## 5. Constraints
 
@@ -64,4 +74,5 @@
 
 - Milestone 1 can start.
 - Milestone 2 can start after DB schema planning and migration design.
+- Milestone 0-7 can be closed without `Blocking=Yes` decisions from the roadmap, якщо реалізація відповідає runtime contract, config-driven limits and Plus+ review entitlement above.
 - Payment milestone still requires exact tariff values before final implementation, while respecting event/payment model and idempotency rules.

@@ -118,7 +118,7 @@ async def test_handle_theme_selected_starts_session_and_shows_question(monkeypat
 
     _patch_service(monkeypatch, service, db)
 
-    callback = _Callback(data="theme:A1:alltag")
+    callback = _Callback(data="theme:A1:Alltag")
     await training.handle_theme_selected(callback)
 
     callback.answer.assert_awaited_once()
@@ -149,7 +149,7 @@ async def test_handle_theme_selected_shows_daily_limit_paywall(monkeypatch) -> N
 
     _patch_service(monkeypatch, service, db)
 
-    callback = _Callback(data="theme:A1:alltag")
+    callback = _Callback(data="theme:A1:Alltag")
     await training.handle_theme_selected(callback)
 
     assert db.rolled_back == 1
@@ -168,7 +168,7 @@ async def test_handle_theme_selected_shows_resume_for_active_session(monkeypatch
 
     _patch_service(monkeypatch, service, db)
 
-    callback = _Callback(data="theme:A1:alltag")
+    callback = _Callback(data="theme:A1:Alltag")
     await training.handle_theme_selected(callback)
 
     callback.message.answer.assert_awaited_once()
@@ -215,8 +215,16 @@ async def test_handle_submit_answer_returns_result_and_finish(monkeypatch) -> No
     _patch_service(monkeypatch, service, db)
 
     callback = _Callback(data="train:ans:10:tok12345:a")
-    await training.handle_submit_answer(callback)
+    await training.handle_submit_answer(callback, event_update=SimpleNamespace(update_id=777001))
 
+    service.submit_answer.assert_awaited_once_with(
+        db,
+        111,
+        session_id=10,
+        question_token="tok12345",
+        selected_option_id="a",
+        telegram_update_id=777001,
+    )
     callback.message.answer.assert_awaited_once()
     text = _extract_text(callback.message.answer.await_args)
     assert TRAINING_FINISH_TEXT.format(correct=3, total=3, percent=100) in text

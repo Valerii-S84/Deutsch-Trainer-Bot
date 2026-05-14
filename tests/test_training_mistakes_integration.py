@@ -42,6 +42,7 @@ class FakeAnswer:
     selected_answer: str
     correct_answer: str
     is_correct: bool
+    telegram_update_id: int | None = None
 
 
 @dataclass
@@ -221,6 +222,7 @@ class FakeAnswerRepository:
         theme_key: str | None = None,
         session_type: str = "regular",
         metadata_snapshot: dict[str, object] | None = None,
+        telegram_update_id: int | None = None,
     ) -> FakeAnswer:
         answer = FakeAnswer(
             id=self._next_id,
@@ -230,6 +232,7 @@ class FakeAnswerRepository:
             selected_answer=selected_answer,
             correct_answer=correct_answer,
             is_correct=is_correct,
+            telegram_update_id=telegram_update_id,
         )
         self._next_id += 1
         self._answers.append(answer)
@@ -249,6 +252,12 @@ class FakeAnswerRepository:
                 and answer.user_id == user_id
                 and answer.external_quiz_id == external_quiz_id
             ):
+                return answer
+        return None
+
+    async def get_by_telegram_update_id(self, db, telegram_update_id: int) -> FakeAnswer | None:
+        for answer in self._answers:
+            if answer.telegram_update_id == telegram_update_id:
                 return answer
         return None
 

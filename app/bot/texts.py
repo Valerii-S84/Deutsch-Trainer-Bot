@@ -8,7 +8,7 @@ WELCOME_TEXT = (
     "Wähle im Menü, was du als Nächstes tun möchtest."
 )
 
-MENU_PROMPT = "Was möchtest du als Nächstes tun?"
+MENU_PROMPT = "Was möchtest du heute üben?"
 
 TRAINING_PROMPT = (
     "📘 Wähle ein Level, um eine neue Übungsrunde zu starten."
@@ -17,6 +17,10 @@ TRAINING_PROMPT = (
 LEVEL_SELECTED_TEXT = "✅ {level} wurde ausgewählt. Jetzt wähle bitte ein Thema."
 
 THEME_PROMPT = "📚 Wähle ein Thema für die nächste Übung."
+THEME_EMPTY_STATE_TEXT = (
+    "📭 Für dieses Niveau sind aktuell keine aktiven Themen verfügbar. "
+    "Bitte wähle ein anderes Niveau."
+)
 
 THEME_SELECTED_TEXT = (
     "✅ Thema *{theme}* ist gewählt für Niveau *{level}*. "
@@ -98,25 +102,17 @@ HOME_TEXT = "🏠 Hauptmenü"
 MENU_BUTTON_TRAIN = "▶️ Üben"
 MENU_BUTTON_LEVEL_THEME = "🎯 Niveau & Thema"
 MENU_BUTTON_PROGRESS = "📊 Mein Fortschritt"
-MENU_BUTTON_REVIEW = "🧠 Fehler wiederholen"
-MENU_BUTTON_SUBSCRIPTION = "💳 Abo"
+MENU_BUTTON_REVIEW = "🔁 Fehler wiederholen"
+MENU_BUTTON_REVIEW_START = "▶️ Fehler üben"
 MENU_BUTTON_HOME = "🏠 Hauptmenü"
 
 LEVELS = ("A1", "A2", "B1", "B2", "C1")
-THEMES = (
-    "Alltag",
-    "Beruf",
-    "Reisen",
-    "Bewerbung",
-    "Grammatik",
-    "Wortschatz",
-)
-
 CALLBACK_HOME = "bot:home"
 CALLBACK_LEVELS = "menu:levels"
 CALLBACK_THEMES = "bot:theme"
 CALLBACK_PROFILE = "menu:profile"
 CALLBACK_REVIEW = "menu:review"
+CALLBACK_REVIEW_START = "review:start"
 CALLBACK_SUBSCRIPTION = "menu:subscription"
 CALLBACK_LEVEL_PREFIX = "level:"
 CALLBACK_THEME_PREFIX = "theme:"
@@ -158,6 +154,11 @@ TRAINING_THEME_NOT_AVAILABLE_TEXT = "⚠️ Dieses Thema ist aktuell nicht verf�
 REVIEW_EMPTY_STATE_TEXT = (
     "🧹 Keine aktiven Fehler für die Wiederholung.\n\n"
     "Lerne zuerst neue Fragen, dann werden falsche Antworten automatisch erfasst."
+)
+
+REVIEW_SCREEN_TEXT = (
+    "🔁 Deine Fehler sind bereit.\n\n"
+    "Starte eine kurze Wiederholung, um offene Fehler gezielt zu üben."
 )
 
 TRAINING_QUIZBANK_AUTH_ERROR_TEXT = (

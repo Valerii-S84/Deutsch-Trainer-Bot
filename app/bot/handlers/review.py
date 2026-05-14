@@ -10,11 +10,13 @@ from aiogram.types import CallbackQuery
 from app.bot.formatting import escape_markdown_text
 from app.bot.keyboards.main_menu import build_back_to_main_menu_button
 from app.bot.keyboards.quiz import build_question_options_keyboard
-from app.bot.keyboards.review import build_review_empty_keyboard
+from app.bot.keyboards.review import build_review_empty_keyboard, build_review_screen_keyboard
 from app.bot.keyboards.subscription import build_paywall_keyboard
 from app.bot.texts import (
     CALLBACK_REVIEW,
+    CALLBACK_REVIEW_START,
     REVIEW_EMPTY_STATE_TEXT,
+    REVIEW_SCREEN_TEXT,
     TRAINING_QUIZBANK_AUTH_ERROR_TEXT,
     TRAINING_QUIZBANK_RATE_LIMIT_TEXT,
     TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
@@ -28,12 +30,20 @@ from app.bot.texts import (
 from app.db.session import get_session as _get_session
 from app.quiz_bank.errors import (
     QuizBankAuthError,
+    QuizBankError,
     QuizBankRateLimitError,
     QuizBankUnavailableError,
     QuizBankValidationError,
 )
+from app.repositories.api_error_logs import ApiErrorLogRepository
+from app.repositories.users import UserRepository
 from app.services.mistakes import MistakeService
-from app.services.entitlements import EntitlementDeniedError, DailyLimitExceededError, EntitlementService
+from app.services.entitlements import (
+    FEATURE_MISTAKE_REPEAT,
+    EntitlementDeniedError,
+    DailyLimitExceededError,
+    EntitlementService,
+)
 from app.services.training_session import (
     ActiveSessionConflictError,
     NoMoreQuestionsError,
@@ -48,6 +58,10 @@ review_service = TrainingSessionService(
     mistakes_service=MistakeService(),
     entitlement_service=EntitlementService(),
 )
+mistake_service = MistakeService()
+entitlement_service = EntitlementService()
+_api_error_log_repo = ApiErrorLogRepository()
+_user_repo = UserRepository()
 
 
 def _extract_user_id(event: CallbackQuery) -> int | None:
@@ -93,8 +107,74 @@ def _map_quizbank_error(error: Exception) -> str:
     return TRAINING_SESSION_ERROR_TEXT
 
 
+def _quiz_bank_error_category(error: QuizBankError) -> str:
+    if isinstance(error, QuizBankAuthError):
+        return "auth"
+    if isinstance(error, QuizBankRateLimitError):
+        return "rate_limit"
+    if isinstance(error, QuizBankValidationError):
+        return "validation"
+    if isinstance(error, QuizBankUnavailableError):
+        return "unavailable"
+    return "unknown"
+
+
+async def _persist_quiz_bank_error(telegram_user_id: int | None, error: QuizBankError) -> None:
+    async with _session_context() as db:
+        try:
+            user = await _user_repo.get_by_telegram_id(db, telegram_user_id) if telegram_user_id else None
+            await _api_error_log_repo.record(
+                db,
+                endpoint=error.endpoint or "unknown",
+                error_category=_quiz_bank_error_category(error),
+                user_id=getattr(user, "id", None),
+                request_id=error.request_id,
+                status_code=error.status_code,
+                error_metadata={"message": error.message},
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
+
 @router.callback_query(F.data == CALLBACK_REVIEW)
 async def handle_review_entry(callback_query: CallbackQuery) -> None:
+    """Open mistake screen before starting review training."""
+    await callback_query.answer()
+    if callback_query.message is None:
+        return
+
+    user_id = _extract_user_id(callback_query)
+    if not user_id:
+        return
+
+    async with _session_context() as db:
+        try:
+            await entitlement_service.ensure_entitlement(db, user_id, feature=FEATURE_MISTAKE_REPEAT)
+            review_items = await mistake_service.get_review_items(db, user_id)
+        except EntitlementDeniedError:
+            await db.rollback()
+            await callback_query.message.answer(
+                PAYWALL_MISTAKE_REPEAT_TEXT,
+                reply_markup=build_paywall_keyboard(),
+            )
+            return
+        if not review_items:
+            await callback_query.message.answer(
+                REVIEW_EMPTY_STATE_TEXT,
+                reply_markup=build_review_empty_keyboard(),
+            )
+            return
+
+    await callback_query.message.answer(
+        REVIEW_SCREEN_TEXT,
+        reply_markup=build_review_screen_keyboard(),
+    )
+
+
+@router.callback_query(F.data == CALLBACK_REVIEW_START)
+async def handle_review_start(callback_query: CallbackQuery) -> None:
+    """Start mistake review training after the active Mistake Screen."""
     await callback_query.answer()
     if callback_query.message is None:
         return
@@ -154,6 +234,7 @@ async def handle_review_entry(callback_query: CallbackQuery) -> None:
             QuizBankValidationError,
         ) as exc:
             await db.rollback()
+            await _persist_quiz_bank_error(user_id, exc)
             await callback_query.message.answer(
                 _map_quizbank_error(exc),
                 reply_markup=build_back_to_main_menu_button(),

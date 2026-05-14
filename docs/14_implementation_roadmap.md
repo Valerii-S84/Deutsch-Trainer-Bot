@@ -55,14 +55,14 @@ requires a new explicit architecture decision.
 | Repo structure | Active layout: `app/`, `tests/`, `alembic/`, `docs/`, `scripts/` | `src/`, `tests/`, `infra/`, `docs/`; stack-specific layout | Closed for current implementation; future layout changes require explicit scope | Tech owner | No |
 | Config strategy | Locked: environment variables plus typed validation | Environment variables, typed config files with env injection, secret manager | Closed in current implementation; no secrets in repo | Tech owner / Ops owner | No |
 | Secrets strategy | Locked: runtime env/secrets only | Provider secret store, encrypted env, VPS secret injection | Closed as policy; exact production secret store remains deploy/runbook work | Ops owner | No for coding; Yes before deploy |
-| Quiz Bank API contract | Final OpenAPI/HTTP contract, auth, fields, errors | Existing API spec, generated OpenAPI, agreed manual contract | Decision Required; contract must include levels, themes, availability, questions, lookup, metadata and error taxonomy | Product owner / API owner / Tech owner | Yes |
-| Quiz Bank cache policy | TTL and allowed cache scope | Catalog cache, availability cache, session buffer | Use only allowed caches; never full local question bank; exact TTL Decision Required | Tech owner / Ops owner | Yes |
+| Quiz Bank API contract | Runtime consumer contract for levels, themes, availability, questions, lookup, metadata and error taxonomy is implemented in schemas/tests; final external OpenAPI freeze remains before production release | Existing API spec, generated OpenAPI, agreed manual contract | Use the implemented contract fixtures/tests for Milestone 4-7; final OpenAPI freeze is release work, not a Milestone 0-7 blocker | Product owner / API owner / Tech owner | No for M0-7; Yes before production release |
+| Quiz Bank cache policy | Locked for implementation: short-lived catalog/availability/metadata cache only; no durable local question bank | Catalog cache, availability cache, session buffer | Runtime TTL is `QuizBankService.CACHE_TTL_SECONDS`; question content may only live in active session state/snapshots required for learning history | Tech owner / Ops owner | No for M0-7 |
 | Payment details | Telegram Stars provider flow and verification details | Telegram Stars only for Release 1, additional provider only if approved | Telegram Stars per product docs; exact payload, invoice, provider references and verification must be locked | Product owner / Tech owner | Yes |
 | Plus/Pro durations | Subscription period per plan | 7 days, 30 days, monthly, custom | Decision Required; do not hardcode until launch configuration is approved | Product owner | Yes |
 | Prices | Plus and Pro prices in Telegram Stars | Product-defined Stars amounts | Decision Required; no default prices in code or docs | Product owner | Yes |
 | Telegram Stars config | Currency/unit, invoice payload, provider fields, test/prod mode | Telegram Stars settings | Decision Required; must separate test and production credentials/config | Product owner / Tech owner | Yes |
-| Plan limits | Free/Plus/Pro daily and monthly question limits | Numeric config per plan | Decision Required; must preserve Free < Plus < Pro | Product owner | Yes |
-| Free mistake repeat policy | Whether Free has limited mistake repeat | Limited access, no full repeat, configurable trial | Decision Required; must align with monetization access table | Product owner | Yes |
+| Plan limits | Free/Plus/Pro daily question limits are configuration-driven and validated as Free < Plus < Pro; final launch values remain product config | Numeric config per plan | Use env/config values for Milestone 8+; do not hardcode payment package values | Product owner | No for M0-7; Yes before payment launch |
+| Free mistake repeat policy | Locked for current implementation: mistake journal/repeat requires Plus; Free sees paywall from review entrypoints | Limited access, no full repeat, configurable trial | Aligns with entitlement matrix; any Free trial requires explicit product change before launch | Product owner | No for M0-7 |
 | Paywall cooldown | Frequency and suppression rules | No cooldown, per-context cooldown, daily cap | Decision Required; must not show paywall before first value | Product owner | No |
 | Admin access model | Locked: owner-only Telegram admin commands | Static admin allowlist, role-based auth, provider auth | Closed in `docs/16_architecture_lock.md`; implementation still required in later milestone | Tech owner / Ops owner | No for coding; Yes before production |
 | Analytics backend | Locked: PostgreSQL `analytics_events` | Internal DB, external analytics provider, hybrid | Closed in `docs/16_architecture_lock.md`; event writes/reports remain later milestone work | Product owner / Tech owner | No |
@@ -534,14 +534,14 @@ Acceptance criteria:
 | Risk | Impact | Mitigation | Owner | Status |
 |---|---|---|---|---|
 | Architecture decisions drift from locked stack | Coding can reintroduce stack or boundary ambiguity | Keep `docs/16_architecture_lock.md`, `.agent/project/PROJECT_CONTEXT.md`, and `.agent/project/CODE_STYLE.md` aligned before execution work | Tech owner | Controlled |
-| Quiz Bank API contract incomplete | Sessions, progress coverage and mistake review may be unstable | Finalize contract, mocks and contract tests before training engine | API owner / Tech owner | Open |
+| Quiz Bank API contract incomplete | Sessions, progress coverage and mistake review may be unstable | Runtime schemas/service/tests cover Milestone 4-7; final OpenAPI freeze remains before production release | API owner / Tech owner | Controlled for M0-7 |
 | Prices or durations undefined | Payments and subscriptions cannot be configured safely | Product owner defines launch configuration before payment coding | Product owner | Open |
 | Telegram Stars details misunderstood | Payment credit or invoice flow may fail in production | Validate provider flow in test mode and document payload/idempotency | Tech owner | Open |
-| Daily limits undefined | Entitlement behavior cannot be tested fully | Define Free/Plus/Pro limits with hierarchy before coding access checks | Product owner | Open |
-| API failures corrupt learning state | Fake progress or wrong limit charge | Enforce transaction ordering and API failure tests | Tech owner / QA owner | Open |
-| Duplicate Telegram updates | Duplicate answers, progress or limits | Idempotency keys and unique constraints for updates and answers | Tech owner | Open |
+| Daily limits undefined | Entitlement behavior cannot be tested fully | Runtime limits are config-driven and validated as Free < Plus < Pro; final launch values remain payment/release config | Product owner | Controlled for M0-7 |
+| API failures corrupt learning state | Fake progress or wrong limit charge | Enforce transaction ordering, rollback learning writes, and persist diagnostic API error logs separately | Tech owner / QA owner | Controlled for M0-7 |
+| Duplicate Telegram updates | Duplicate answers, progress or limits | `telegram_update_id` idempotency and unique answer constraints protect accepted answers | Tech owner | Controlled for answers |
 | Duplicate payment events | Duplicate paid access | Payment credit transaction and provider_payment_id uniqueness | Tech owner | Open |
-| Coverage unavailable from Quiz Bank | Topic status may be misleading | Support coverage unknown and block strong status without count | Tech owner / API owner | Open |
+| Coverage unavailable from Quiz Bank | Topic status may be misleading | Support coverage unknown and populate available topic rows/counts from Quiz Bank catalog when available | Tech owner / API owner | Controlled for M0-7 |
 | Admin surface exposed | Sensitive operational or user data leak | Auth, authorization, audit logs and aggregate-by-default dashboards | Ops owner / Tech owner | Open |
 | Secrets leak in logs or docs | Security incident | Redaction, secret scanning, review gates and runtime secret injection | Ops owner | Open |
 | Backup not restorable | Production data loss after incident | Restore test before launch and recurring restore checks | Ops owner | Open |
@@ -552,7 +552,7 @@ Acceptance criteria:
 ## 20. Execution Order
 
 1. Maintain Milestone 0 Architecture Lock and keep project context/style aligned with locked decisions.
-2. Define launch configuration placeholders and owners for unresolved product config: prices, durations, limits, paywall cooldown, Free mistake repeat policy and Telegram Stars production settings.
+2. Define launch configuration placeholders and owners for unresolved product config: prices, durations, paywall cooldown, Telegram Stars production settings and final limit values if launch config differs from runtime defaults.
 3. Build Milestone 1 Repository and Foundation.
 4. Build Milestone 2 Database and Data Layer, including migrations, constraints, indexes and transaction helpers.
 5. Build Milestone 4 Quiz Bank API Integration before relying on live quiz content in bot flows.

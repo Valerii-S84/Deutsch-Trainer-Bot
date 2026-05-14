@@ -1,6 +1,7 @@
 """Repository layer package."""
 
 from app.db.models import (
+    ApiErrorLog,
     AnalyticsEvent,
     Mistake,
     Payment,
@@ -12,6 +13,7 @@ from app.db.models import (
 )
 
 __all__ = [
+    "ApiErrorLog",
     "AnalyticsEvent",
     "Mistake",
     "Payment",

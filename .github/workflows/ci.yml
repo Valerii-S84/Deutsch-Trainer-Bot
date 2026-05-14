@@ -25,5 +25,11 @@ jobs:
       - name: Compile
         run: python -m compileall app tests
 
+      - name: Static analysis policy
+        run: python scripts/static_policy_check.py
+
+      - name: Secret scan
+        run: python scripts/secret_scan.py
+
       - name: Test
         run: python -m pytest -q --capture=no

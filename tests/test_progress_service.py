@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.db.base import Base
 from app.db.models import Mistake, Progress, QuizSession, User, UserAnswer
+from app.quiz_bank.schemas import QuizLevel, QuizLevelsResponse, QuizTheme, QuizThemesResponse
 from app.services.progress import ProgressService
 from app.repositories.users import UserRepository
 
@@ -79,11 +80,94 @@ class _FakeProgressHistoryRepository:
         )
 
 
+class _FakeQuizBankCatalog:
+    async def get_levels(self) -> QuizLevelsResponse:
+        return QuizLevelsResponse(
+            levels=[QuizLevel(code="A1", display_name="A1", is_active=True)],
+        )
+
+    async def get_themes(self, *, level: str) -> QuizThemesResponse:
+        return QuizThemesResponse(
+            level=level,
+            themes=[
+                QuizTheme(theme="Alltag", theme_key="alltag", is_active=True, available_items_count=10),
+                QuizTheme(theme="Artikel", theme_key="artikel", is_active=True, available_items_count=8),
+            ],
+        )
+
+
 def _progress_service(user_repo: _StaticUserRepository) -> ProgressService:
     return ProgressService(
         user_repo=user_repo,
         progress_history_repo=_FakeProgressHistoryRepository(),
     )
+
+
+@pytest.mark.asyncio
+async def test_get_user_summary_includes_available_topics_without_answers(db_session: AsyncSession) -> None:
+    user_repo = _StaticUserRepository()
+    service = ProgressService(
+        user_repo=user_repo,
+        progress_history_repo=_FakeProgressHistoryRepository(),
+        quiz_service=_FakeQuizBankCatalog(),
+    )
+    user = await user_repo.create_if_missing(db_session, telegram_user_id=1191)
+
+    records = await service.get_user_summary(db_session, user.telegram_user_id)
+
+    assert [(record.level, record.theme, record.total_answered) for record in records] == [
+        ("A1", "Alltag", 0),
+        ("A1", "Artikel", 0),
+    ]
+    assert records[0].available_items_count == 10
+    assert records[0].coverage_status == "known"
+
+
+@pytest.mark.asyncio
+async def test_get_level_theme_summary_merges_catalog_counts_for_existing_rows(db_session: AsyncSession) -> None:
+    user_repo = _StaticUserRepository()
+    service = ProgressService(
+        user_repo=user_repo,
+        progress_history_repo=_FakeProgressHistoryRepository(),
+        quiz_service=_FakeQuizBankCatalog(),
+    )
+    user = await user_repo.create_if_missing(db_session, telegram_user_id=1192)
+    await service.record_answer_result(
+        db_session,
+        user.telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        is_correct=True,
+        is_duplicate=False,
+    )
+
+    records = await service.get_level_theme_summary(db_session, user.telegram_user_id, level="A1")
+    alltag = next(record for record in records if record.theme == "Alltag")
+    artikel = next(record for record in records if record.theme == "Artikel")
+
+    assert alltag.available_items_count == 10
+    assert alltag.coverage_status == "known"
+    assert artikel.total_answered == 0
+
+
+@pytest.mark.asyncio
+async def test_progress_summary_preserves_unknown_coverage_without_catalog(db_session: AsyncSession) -> None:
+    user_repo = _StaticUserRepository()
+    service = ProgressService(user_repo=user_repo, progress_history_repo=_FakeProgressHistoryRepository())
+    user = await user_repo.create_if_missing(db_session, telegram_user_id=1193)
+    progress = await service.record_answer_result(
+        db_session,
+        user.telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        is_correct=True,
+        is_duplicate=False,
+    )
+
+    records = await service.get_user_summary(db_session, user.telegram_user_id)
+
+    assert records == [progress]
+    assert records[0].coverage_status == "unknown"
 
 
 async def _add_session(db: AsyncSession, user: User, *, session_id: int) -> QuizSession:

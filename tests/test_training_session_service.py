@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.quiz_bank import QuizBankRequestContext
+from app.quiz_bank.errors import QuizBankUnavailableError
 from app.quiz_bank.schemas import QuizAnswerOption, QuizCorrectAnswerReference, QuizItem, QuizQuestionsResponse
 from app.services.entitlements import DailyLimitExceededError
 from app.services.training_session import (
@@ -50,6 +51,7 @@ class FakeAnswer:
     selected_answer: str
     correct_answer: str
     is_correct: bool
+    telegram_update_id: int | None = None
 
 
 @dataclass
@@ -225,6 +227,7 @@ class FakeAnswerRepository:
         theme_key: str | None = None,
         session_type: str = "regular",
         metadata_snapshot: dict[str, object] | None = None,
+        telegram_update_id: int | None = None,
     ) -> FakeAnswer:
         answer = FakeAnswer(
             id=self._next_id,
@@ -234,6 +237,7 @@ class FakeAnswerRepository:
             selected_answer=selected_answer,
             correct_answer=correct_answer,
             is_correct=is_correct,
+            telegram_update_id=telegram_update_id,
         )
         self._next_id += 1
         self.create_calls += 1
@@ -254,6 +258,12 @@ class FakeAnswerRepository:
                 and answer.user_id == user_id
                 and answer.external_quiz_id == external_quiz_id
             ):
+                return answer
+        return None
+
+    async def get_by_telegram_update_id(self, db, telegram_update_id: int) -> FakeAnswer | None:
+        for answer in self._answers:
+            if answer.telegram_update_id == telegram_update_id:
                 return answer
         return None
 
@@ -381,6 +391,24 @@ class StubQuizBankService:
     ):
         self.calls.append((level, theme, limit, user_context.model_dump(exclude_none=True) if user_context else None))
         return self._responses.pop(0)
+
+
+class FailingQuizBankService:
+    async def request_quiz(self, *, level: str, theme: str | None, limit: int, user_context=None):
+        raise QuizBankUnavailableError(
+            "Quiz Bank down",
+            endpoint="/questions",
+            status_code=503,
+            request_id="qb-test",
+        )
+
+
+class FakeApiErrorLogRepository:
+    def __init__(self) -> None:
+        self.records: list[dict[str, object]] = []
+
+    async def record(self, db, **kwargs: object) -> None:
+        self.records.append(kwargs)
 
 
 class FakeEntitlementService:
@@ -516,6 +544,37 @@ async def test_submit_answer_marks_score_once_for_duplicate_click() -> None:
     active_session = await service._session_repo.get_active_for_user(db, user.id)  # type: ignore[attr-defined]
     assert active_session is not None
     assert active_session.correct_answers == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_answer_is_idempotent_by_telegram_update_id() -> None:
+    service = _make_service([_question_payload()])
+    db = FakeDatabaseSession()
+    user_id = 325
+
+    await service.start_session(db, telegram_user_id=user_id, level="A1", theme="Alltag", total_questions=2, force_new=False)
+    question = await service.get_or_create_current_question(db, telegram_user_id=user_id, force_refresh=True)
+
+    first = await service.submit_answer(
+        db,
+        telegram_user_id=user_id,
+        session_id=question.session_id,
+        question_token=question.question_token,
+        selected_option_id="a1",
+        telegram_update_id=998001,
+    )
+    second = await service.submit_answer(
+        db,
+        telegram_user_id=user_id,
+        session_id=question.session_id,
+        question_token=question.question_token,
+        selected_option_id="a1",
+        telegram_update_id=998001,
+    )
+
+    assert first.is_duplicate is False
+    assert second.is_duplicate is True
+    assert service._answer_repo.create_calls == 1  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -686,6 +745,46 @@ async def test_get_question_marks_session_failed_when_quiz_bank_empty() -> None:
     user = await service.get_user(db, user_id)
     active = await service._session_repo.get_active_for_user(db, user.id)  # type: ignore[attr-defined]
     assert active is None
+
+
+@pytest.mark.asyncio
+async def test_quiz_bank_failure_is_persisted_without_answer_or_limit_charge() -> None:
+    answer_repo = FakeAnswerRepository()
+    api_error_repo = FakeApiErrorLogRepository()
+    entitlement_service = FakeEntitlementService()
+    service = TrainingSessionService(
+        user_repo=FakeUserRepository(),
+        session_repo=FakeSessionRepository(),
+        answer_repo=answer_repo,
+        analytics_repo=FakeAnalyticsRepository(),
+        api_error_log_repo=api_error_repo,
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
+        quiz_service=FailingQuizBankService(),
+        entitlement_service=entitlement_service,
+    )
+    db = FakeDatabaseSession()
+    user_id = 336
+
+    await service.start_session(db, telegram_user_id=user_id, level="A1", theme="Alltag", total_questions=1, force_new=False)
+    with pytest.raises(QuizBankUnavailableError):
+        await service.get_or_create_current_question(db, telegram_user_id=user_id, force_refresh=True)
+
+    assert answer_repo.create_calls == 0
+    assert entitlement_service.charge_calls == 0
+    assert api_error_repo.records == [
+        {
+            "endpoint": "/questions",
+            "error_category": "unavailable",
+            "user_id": 1,
+            "session_id": 1,
+            "request_id": "qb-test",
+            "status_code": 503,
+            "level": "A1",
+            "theme": "Alltag",
+            "error_metadata": {"message": "Quiz Bank down"},
+        },
+    ]
 
 
 @pytest.mark.asyncio

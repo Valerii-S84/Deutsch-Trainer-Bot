@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
+from app.quiz_bank.errors import QuizBankError
+from app.quiz_bank.service import QuizBankService
 from app.repositories.progress_history import ProgressHistoryRepository
 from app.repositories.progress import ProgressRepository
 from app.repositories.users import UserRepository
@@ -10,6 +13,7 @@ from app.services.progress_model import (
     TopicAnswerEvent,
     build_progress_recommendation,
     calculate_topic_scores,
+    coverage_from_counts,
     recency_risk_score,
 )
 
@@ -30,6 +34,29 @@ class _ProgressAnswerUpdate:
     reason_code: str
 
 
+@dataclass
+class ProgressSummaryRow:
+    """Display-only progress row for available topics without answers yet."""
+
+    user_id: int
+    level: str
+    theme: str | None
+    theme_key: str | None = None
+    total_answered: int = 0
+    total_correct: int = 0
+    wrong_count: int = 0
+    accuracy: Decimal = Decimal("0.00")
+    unique_items_seen: int = 0
+    available_items_count: int | None = None
+    coverage_score: Decimal | None = Decimal("0.00")
+    coverage_status: str = "known"
+    stability_score: Decimal = Decimal("0.00")
+    weakness_score: Decimal = Decimal("0.00")
+    recency_score: Decimal = Decimal("100.00")
+    topic_status: str = "new"
+    last_answered_at: datetime | None = None
+
+
 class ProgressService:
     """Runtime business logic for progress aggregation."""
 
@@ -39,10 +66,12 @@ class ProgressService:
         user_repo: UserRepository | None = None,
         progress_repo: ProgressRepository | None = None,
         progress_history_repo: ProgressHistoryRepository | None = None,
+        quiz_service: QuizBankService | None = None,
     ) -> None:
         self._user_repo = user_repo or UserRepository()
         self._progress_repo = progress_repo or ProgressRepository()
         self._progress_history_repo = progress_history_repo or ProgressHistoryRepository()
+        self._quiz_service = quiz_service
 
     async def record_answer_result(
         self,
@@ -187,6 +216,7 @@ class ProgressService:
         if user is None:
             return []
         records = await self._progress_repo.get_user_summary(db, user_id=user.id)
+        records = await self._with_available_topic_rows(user_id=user.id, records=records)
         _refresh_recency_for_display(records)
         return records
 
@@ -207,11 +237,61 @@ class ProgressService:
             level=level,
             theme=theme,
         )
+        if level is not None and theme is None:
+            records = await self._with_available_topic_rows(
+                user_id=user.id,
+                records=records,
+                levels=[level],
+            )
         _refresh_recency_for_display(records)
         return records
 
     def build_recommendation_text(self, progress_records: list[object]) -> str:
         return build_progress_recommendation(progress_records).copy_de
+
+    async def _with_available_topic_rows(
+        self,
+        *,
+        user_id: int,
+        records: list,
+        levels: list[str] | None = None,
+    ) -> list:
+        quiz_service = self._get_quiz_service()
+        if quiz_service is None:
+            return records
+
+        try:
+            level_values = levels or [level.code for level in (await quiz_service.get_levels()).levels]
+            catalog_rows = []
+            for level in level_values:
+                themes = await quiz_service.get_themes(level=level)
+                catalog_rows.extend((level, theme) for theme in themes.themes)
+        except QuizBankError:
+            return records
+
+        by_key = {
+            (getattr(record, "level", None), getattr(record, "theme", None)): record
+            for record in records
+        }
+        for level, theme in catalog_rows:
+            key = (level, theme.theme)
+            existing = by_key.get(key)
+            if existing is not None:
+                _apply_catalog_counts(existing, theme)
+                continue
+            row = _empty_topic_row(user_id=user_id, level=level, theme=theme)
+            by_key[key] = row
+            records.append(row)
+        return sorted(records, key=lambda item: (getattr(item, "level", ""), getattr(item, "theme", "") or ""))
+
+    def _get_quiz_service(self):
+        if self._quiz_service is not None:
+            return self._quiz_service
+        try:
+            self._quiz_service = QuizBankService()
+        except QuizBankError:
+            return None
+        return self._quiz_service
 
 
 def _available_items_count(
@@ -251,3 +331,34 @@ def _refresh_recency_for_display(progress_records: list[object]) -> None:
         if not hasattr(record, "last_answered_at") or not hasattr(record, "recency_score"):
             continue
         record.recency_score = recency_risk_score(getattr(record, "last_answered_at", None))
+
+
+def _empty_topic_row(*, user_id: int, level: str, theme: object) -> ProgressSummaryRow:
+    available_items_count = getattr(theme, "available_items_count", None)
+    if not isinstance(available_items_count, int):
+        available_items_count = None
+    coverage_score = Decimal("0.00") if available_items_count is not None and available_items_count > 0 else None
+    coverage_status = "known" if coverage_score is not None else "unknown"
+    return ProgressSummaryRow(
+        user_id=user_id,
+        level=level,
+        theme=getattr(theme, "theme", None),
+        theme_key=getattr(theme, "theme_key", None),
+        available_items_count=available_items_count,
+        coverage_score=coverage_score,
+        coverage_status=coverage_status,
+    )
+
+
+def _apply_catalog_counts(progress: object, theme: object) -> None:
+    if getattr(progress, "theme_key", None) is None:
+        setattr(progress, "theme_key", getattr(theme, "theme_key", None))
+    available_items_count = getattr(theme, "available_items_count", None)
+    if isinstance(available_items_count, int):
+        setattr(progress, "available_items_count", available_items_count)
+        coverage_score, coverage_status = coverage_from_counts(
+            int(getattr(progress, "unique_items_seen", 0) or 0),
+            available_items_count,
+        )
+        setattr(progress, "coverage_score", coverage_score)
+        setattr(progress, "coverage_status", coverage_status)

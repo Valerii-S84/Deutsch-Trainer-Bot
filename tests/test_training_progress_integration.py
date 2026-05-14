@@ -46,6 +46,7 @@ class FakeAnswer:
     selected_answer: str
     correct_answer: str
     is_correct: bool
+    telegram_update_id: int | None = None
 
 
 @dataclass
@@ -217,6 +218,7 @@ class FakeAnswerRepository:
         theme_key: str | None = None,
         session_type: str = "regular",
         metadata_snapshot: dict[str, object] | None = None,
+        telegram_update_id: int | None = None,
     ) -> FakeAnswer:
         answer = FakeAnswer(
             id=self._next_id,
@@ -226,6 +228,7 @@ class FakeAnswerRepository:
             selected_answer=selected_answer,
             correct_answer=correct_answer,
             is_correct=is_correct,
+            telegram_update_id=telegram_update_id,
         )
         self._next_id += 1
         self._answers.append(answer)
@@ -245,6 +248,12 @@ class FakeAnswerRepository:
                 and answer.user_id == user_id
                 and answer.external_quiz_id == external_quiz_id
             ):
+                return answer
+        return None
+
+    async def get_by_telegram_update_id(self, db, telegram_update_id: int) -> FakeAnswer | None:
+        for answer in self._answers:
+            if answer.telegram_update_id == telegram_update_id:
                 return answer
         return None
 
@@ -400,6 +409,21 @@ class FakeProgressService:
         )
 
 
+class FakeMistakeService:
+    def __init__(self) -> None:
+        self.review_items = [SimpleNamespace(external_quiz_id="q_review", level="A1", theme="Alltag")]
+        self.success_calls: list[dict[str, object]] = []
+
+    async def get_review_items(self, db, telegram_user_id: int):
+        return self.review_items
+
+    async def record_review_success(self, db, telegram_user_id: int, **kwargs: object):
+        self.success_calls.append({"telegram_user_id": telegram_user_id, **kwargs})
+
+    async def get_weak_areas(self, db, telegram_user_id: int):
+        return []
+
+
 def _question_payload(item_id: str = "q1", correct_answer: str = "a2") -> QuizQuestionsResponse:
     return QuizQuestionsResponse(
         items=[
@@ -505,6 +529,46 @@ async def test_submit_answer_does_not_update_progress_for_duplicate() -> None:
     )
 
     assert len(progress_service.recorded_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_review_session_correct_answer_records_progress() -> None:
+    progress_service = FakeProgressService()
+    mistakes_service = FakeMistakeService()
+    service = TrainingSessionService(
+        user_repo=FakeUserRepository(),
+        session_repo=FakeSessionRepository(),
+        answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
+        quiz_service=FakeQuizBankService([_question_payload(item_id="q_review")]),
+        progress_service=progress_service,
+        mistakes_service=mistakes_service,
+    )
+    db = FakeDatabaseSession()
+    telegram_user_id = 114
+
+    await service.start_review_session(db, telegram_user_id, force_new=False, total_questions=1)
+    question = await service.get_or_create_current_question(db, telegram_user_id=telegram_user_id, force_refresh=True)
+    await service.submit_answer(
+        db,
+        telegram_user_id=telegram_user_id,
+        session_id=question.session_id,
+        question_token=question.question_token,
+        selected_option_id="a2",
+    )
+
+    assert progress_service.recorded_calls == [
+        {
+            "telegram_user_id": telegram_user_id,
+            "level": "A1",
+            "theme": "Alltag",
+            "is_correct": True,
+            "is_duplicate": False,
+        },
+    ]
+    assert len(mistakes_service.success_calls) == 1
 
 
 @pytest.mark.asyncio

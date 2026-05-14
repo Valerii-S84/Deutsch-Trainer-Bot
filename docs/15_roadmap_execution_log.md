@@ -7,11 +7,13 @@
 - робити початок виконання строго в рамках roadmap без розширення scope;
 - забезпечити прозорість блокерів перед стартом кодування.
 
-## Поточний стан (2026-05-14)
+## Поточний стан (2026-05-15)
 
-- Виконання: Architecture Lock completed.
-- Поточний статус: Milestone 0 завершено, Milestone 1 (Repository and Foundation) completed,
-  Milestone 2 (Domain and schema planning) completed (PostgreSQL runtime proof passed).
+- Виконання: Milestone 0-7 acceptance recovery completed against roadmap gates.
+- Поточний статус: Milestone 0-7 закрито після усунення розривів між roadmap/docs/code/tests:
+  Home/onboarding, Quiz Bank availability-driven themes, persisted API error logs,
+  Telegram update idempotency, progress rows for available unanswered topics,
+  explicit Mistake Screen before review session.
 
 ## Milestone 0 — Architecture Lock
 
@@ -110,6 +112,36 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
     - JSONB columns confirmed: `quiz_sessions.source_metadata`, `quiz_sessions.api_metadata`,
       `mistakes.source_snapshot`, `payments.audit_metadata`, `analytics_events.event_metadata`
 
+## Milestone 0-7 Acceptance Recovery
+
+### 2026-05-15
+
+- Milestone 0:
+  - `docs/14_implementation_roadmap.md` і `docs/16_architecture_lock.md` узгоджені для M0-7:
+    Quiz Bank runtime contract/cache scope, config-driven plan limits and Plus+ mistake repeat policy
+    більше не позначені як coding blockers для M0-7.
+- Milestone 1:
+  - CI/local checks доповнені compile, explicit lint/type policy check, tracked-file secret scan and pytest.
+  - `docs/17_foundation_setup.md` описує, що lint/type tools ще не configured, а policy check робить це явним.
+- Milestone 3:
+  - Home має лише `▶️ Üben`, `🎯 Niveau & Thema`, `📊 Mein Fortschritt`.
+  - `/start` для user without `selected_level` веде на Level Selection.
+  - Review/Subscription прибрані з primary Home.
+- Milestone 4:
+  - Theme selection використовує Quiz Bank `get_themes(level=...)` з availability-driven list.
+  - Quiz Bank API failures у training path записуються в persisted `api_error_logs`.
+  - Availability count підтягується через Quiz Bank availability для progress metadata, коли endpoint доступний.
+- Milestone 5:
+  - `telegram_update_id` прокидається з aiogram `event_update` до `UserAnswer`.
+  - Duplicate Telegram update id повертає duplicate result без другого answer/progress/mistake mutation.
+- Milestone 6:
+  - Progress summary може показувати available topics without answers.
+  - Existing progress rows отримують `available_items_count`/coverage з Quiz Bank catalog, коли catalog доступний.
+- Milestone 7:
+  - `menu:review` відкриває Mistake Screen active state.
+  - Review session стартує тільки з `review:start`.
+  - Mistake Screen кнопки: `▶️ Fehler üben`, `📊 Mein Fortschritt`, `🏠 Hauptmenü`.
+
 ## Активні ризики (витяг з roadmap, секції 19)
 
 - exact Plus price / exact Pro price (Decision Required Before Payment Implementation)
@@ -117,8 +149,7 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - final Telegram Stars package values
 - final public tariff copy
 - API payload/verification details потрібно підтвердити до фінальної payment реалізації.
-- Ризик корупції стану залишається доти, доки не ввімкнено idempotency і правильне ordering transaction у наступних milestone.
-- Дублювання оновлень Telegram і дублювання payment events мають бути закриті в Milestone 5/9.
+- Дублювання payment events має бути закрите в Milestone 9.
 - Нестабільне покриття та regressions у German copy залишаються QA-ризиками.
 - Готовність backup/restore/rollback валідатиметься на Milestone 12.
 

@@ -7,8 +7,9 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from app.bot.formatting import escape_markdown_text
+from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
-from app.bot.texts import MENU_PROMPT, WELCOME_TEXT
+from app.bot.texts import MENU_PROMPT, TRAINING_PROMPT, WELCOME_TEXT
 from app.db.session import get_session as _get_session
 from app.repositories.users import UserRepository
 
@@ -20,23 +21,29 @@ def _session_factory():
     return _get_session()
 
 
-async def _remember_user(message: Message) -> None:
+async def _remember_user(message: Message):
     if message.from_user is None:
-        return
+        return None
 
     async with _session_factory() as db:
         try:
-            await _user_repo.create_or_update_from_telegram(db, message.from_user)
+            user = await _user_repo.create_or_update_from_telegram(db, message.from_user)
             await db.commit()
+            return user
         except Exception:
-            # /start should still return the safe menu if persistence is temporarily unavailable.
+            # /start should still return a safe onboarding screen if persistence is temporarily unavailable.
             await db.rollback()
+    return None
 
 
 @router.message(CommandStart())
 async def handle_start(message: Message) -> None:
     """Handle /start for both first-time and returning users."""
-    await _remember_user(message)
+    user = await _remember_user(message)
+    if user is None or not getattr(user, "selected_level", None):
+        await message.answer(TRAINING_PROMPT, reply_markup=build_levels_keyboard())
+        return
+
     text = WELCOME_TEXT
     if message.from_user and getattr(message.from_user, "first_name", None):
         first_name = escape_markdown_text(message.from_user.first_name)

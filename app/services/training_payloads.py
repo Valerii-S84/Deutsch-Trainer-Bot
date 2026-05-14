@@ -118,6 +118,7 @@ def build_question_payload(
     total_questions: int,
     question_reference_id: int | None = None,
     training_session_item_id: int | None = None,
+    metadata_snapshot: dict[str, Any] | None = None,
 ) -> QuizQuestionPayload:
     return QuizQuestionPayload(
         session_id=session_id,
@@ -134,7 +135,7 @@ def build_question_payload(
         correct_answer_text=answer_text(question, question.correct_answer.option_id),
         theme_key=question.theme_key,
         content_version=question.content_version,
-        metadata_snapshot=question_metadata_snapshot(question),
+        metadata_snapshot=metadata_snapshot or question_metadata_snapshot(question),
         question_reference_id=question_reference_id,
         training_session_item_id=training_session_item_id,
     )

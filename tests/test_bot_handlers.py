@@ -8,6 +8,7 @@ import pytest
 from app.bot.handlers import fallback, menu
 from app.bot.handlers import level as level_handlers
 from app.bot.handlers import profile, start, subscription, theme
+from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
 from app.bot.texts import (
     LEVEL_CALLBACK_FALLBACK_TEXT,
@@ -16,6 +17,7 @@ from app.bot.texts import (
     UNKNOWN_CALLBACK_TEXT,
     UNKNOWN_MESSAGE_TEXT,
     WELCOME_TEXT,
+    TRAINING_PROMPT,
 )
 
 
@@ -55,7 +57,7 @@ class _SessionContext:
 
 class _UserRepo:
     def __init__(self) -> None:
-        self.create_or_update_from_telegram = AsyncMock()
+        self.create_or_update_from_telegram = AsyncMock(return_value=SimpleNamespace(selected_level=None))
 
 
 class _CallbackQuery:
@@ -72,7 +74,7 @@ class _TrainingService:
 
 
 @pytest.mark.asyncio
-async def test_start_handler_shows_main_menu_and_remembers_user(monkeypatch) -> None:
+async def test_start_handler_routes_new_user_to_level_selection(monkeypatch) -> None:
     db = _Db()
     user_repo = _UserRepo()
     monkeypatch.setattr(start, "_session_factory", lambda: _SessionContext(db))
@@ -84,6 +86,23 @@ async def test_start_handler_shows_main_menu_and_remembers_user(monkeypatch) -> 
     user_repo.create_or_update_from_telegram.assert_awaited_once_with(db, message.from_user)
     db.commit.assert_awaited_once()
     message.answer.assert_awaited_once()
+    args = message.answer.await_args.args
+    kwargs = message.answer.await_args.kwargs
+    assert args[0] == TRAINING_PROMPT
+    assert kwargs["reply_markup"].inline_keyboard == build_levels_keyboard().inline_keyboard
+
+
+@pytest.mark.asyncio
+async def test_start_handler_shows_main_menu_for_returning_user(monkeypatch) -> None:
+    db = _Db()
+    user_repo = _UserRepo()
+    user_repo.create_or_update_from_telegram.return_value = SimpleNamespace(selected_level="A1")
+    monkeypatch.setattr(start, "_session_factory", lambda: _SessionContext(db))
+    monkeypatch.setattr(start, "_user_repo", user_repo)
+
+    message = _Message(text="/start", first_name="Anna_Test", user_id=111)
+    await start.handle_start(message)
+
     kwargs = message.answer.await_args.kwargs
     assert WELCOME_TEXT in kwargs["text"]
     assert "Hallo *Anna\\_Test*" in kwargs["text"]

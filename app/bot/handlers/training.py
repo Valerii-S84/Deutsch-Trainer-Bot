@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, Update
 
 from app.bot.formatting import escape_markdown_text
 from app.bot.keyboards.levels import build_levels_keyboard
@@ -47,10 +47,13 @@ from app.bot.texts import (
 from app.db.session import get_session as _get_session
 from app.quiz_bank.errors import (
     QuizBankAuthError,
+    QuizBankError,
     QuizBankRateLimitError,
     QuizBankUnavailableError,
     QuizBankValidationError,
 )
+from app.repositories.api_error_logs import ApiErrorLogRepository
+from app.repositories.users import UserRepository
 from app.services.training_session import (
     AnswerResult,
     ActiveSessionConflictError,
@@ -71,6 +74,8 @@ training_service = TrainingSessionService(
     mistakes_service=MistakeService(),
     entitlement_service=EntitlementService(),
 )
+_api_error_log_repo = ApiErrorLogRepository()
+_user_repo = UserRepository()
 
 
 def _session_factory():
@@ -81,12 +86,16 @@ def _extract_user_id(event: Message | CallbackQuery) -> int | None:
     return getattr(getattr(event, "from_user", None), "id", None)
 
 
+def _extract_update_id(event_update: Update | None) -> int | None:
+    update_id = getattr(event_update, "update_id", None)
+    return update_id if isinstance(update_id, int) else None
+
+
 def _normalize_theme(theme: str) -> str:
-    normalized = theme.strip().lower()
-    for item in ("Alltag", "Beruf", "Reisen", "Bewerbung", "Grammatik", "Wortschatz"):
-        if item.lower() == normalized:
-            return item
-    raise ValueError("invalid theme")
+    normalized = theme.strip()
+    if not normalized:
+        raise ValueError("invalid theme")
+    return normalized
 
 
 def _parse_theme_payload(data: str | None) -> tuple[str, str]:
@@ -196,6 +205,44 @@ def _map_session_error(error: Exception) -> str:
     return TRAINING_SESSION_ERROR_TEXT
 
 
+def _quiz_bank_error_category(error: QuizBankError) -> str:
+    if isinstance(error, QuizBankAuthError):
+        return "auth"
+    if isinstance(error, QuizBankRateLimitError):
+        return "rate_limit"
+    if isinstance(error, QuizBankValidationError):
+        return "validation"
+    if isinstance(error, QuizBankUnavailableError):
+        return "unavailable"
+    return "unknown"
+
+
+async def _persist_quiz_bank_error(
+    telegram_user_id: int | None,
+    error: QuizBankError,
+    *,
+    level: str | None,
+    theme: str | None,
+) -> None:
+    async with _session_factory() as db:
+        try:
+            user = await _user_repo.get_by_telegram_id(db, telegram_user_id) if telegram_user_id else None
+            await _api_error_log_repo.record(
+                db,
+                endpoint=error.endpoint or "unknown",
+                error_category=_quiz_bank_error_category(error),
+                user_id=getattr(user, "id", None),
+                request_id=error.request_id,
+                status_code=error.status_code,
+                level=level,
+                theme=theme,
+                error_metadata={"message": error.message},
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
+
 async def _send_daily_limit_paywall(message: Message) -> None:
     await message.answer(
         PAYWALL_DAILY_LIMIT_TEXT,
@@ -300,6 +347,8 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
             if isinstance(exc, DailyLimitExceededError):
                 await _send_daily_limit_paywall(callback_query.message)
             else:
+                if isinstance(exc, QuizBankError):
+                    await _persist_quiz_bank_error(user_id, exc, level=level, theme=theme)
                 await callback_query.message.answer(_map_quizbank_error(exc))
             return
         except Exception:
@@ -355,6 +404,12 @@ async def handle_resume_training(callback_query: CallbackQuery) -> None:
                     QuizBankValidationError,
                 ),
             ):
+                await _persist_quiz_bank_error(
+                    user_id,
+                    exc,
+                    level=getattr(session, "level", None),
+                    theme=getattr(session, "theme", None),
+                )
                 await callback_query.message.answer(_map_quizbank_error(exc))
             elif isinstance(exc, DailyLimitExceededError):
                 await _send_daily_limit_paywall(callback_query.message)
@@ -410,6 +465,13 @@ async def handle_start_new_training(callback_query: CallbackQuery) -> None:
             if isinstance(exc, DailyLimitExceededError):
                 await _send_daily_limit_paywall(callback_query.message)
             else:
+                if isinstance(exc, QuizBankError):
+                    await _persist_quiz_bank_error(
+                        user_id,
+                        exc,
+                        level=getattr(active, "level", None),
+                        theme=getattr(active, "theme", None),
+                    )
                 await callback_query.message.answer(_map_quizbank_error(exc))
             return
         except Exception:
@@ -456,7 +518,7 @@ async def handle_cancel_training(callback_query: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith(CALLBACK_TRAIN_ANSWER_PREFIX + ":"))
-async def handle_submit_answer(callback_query: CallbackQuery) -> None:
+async def handle_submit_answer(callback_query: CallbackQuery, event_update: Update | None = None) -> None:
     await callback_query.answer()
     if callback_query.message is None:
         return
@@ -479,6 +541,7 @@ async def handle_submit_answer(callback_query: CallbackQuery) -> None:
                 session_id=session_id,
                 question_token=question_token,
                 selected_option_id=selected_option,
+                telegram_update_id=_extract_update_id(event_update),
             )
             await db.commit()
         except (
@@ -553,6 +616,12 @@ async def handle_next_question(callback_query: CallbackQuery) -> None:
         ) as exc:
             await db.rollback()
             if isinstance(exc, (QuizBankAuthError, QuizBankRateLimitError, QuizBankUnavailableError, QuizBankValidationError)):
+                await _persist_quiz_bank_error(
+                    user_id,
+                    exc,
+                    level=getattr(active, "level", None),
+                    theme=getattr(active, "theme", None),
+                )
                 await callback_query.message.answer(_map_quizbank_error(exc))
             elif isinstance(exc, DailyLimitExceededError):
                 await _send_daily_limit_paywall(callback_query.message)

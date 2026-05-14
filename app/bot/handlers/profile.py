@@ -19,7 +19,7 @@ from app.bot.texts import (
     PROFILE_TEXT,
     PROFILE_WEAK_THEMES_HEADER,
 )
-from app.bot.keyboards.main_menu import build_back_to_main_menu_button
+from app.bot.keyboards.main_menu import build_back_to_main_menu_button, build_progress_navigation_keyboard
 from app.bot.keyboards.subscription import build_paywall_keyboard
 from app.db.session import get_session as _get_session
 from app.services.entitlements import EntitlementService, FEATURE_FULL_PROGRESS_MAP
@@ -156,7 +156,7 @@ def _format_limited_progress_text(progress_records: list[object]) -> str:
 def _profile_keyboard(text: str):
     if PAYWALL_PROGRESS_TEXT in text:
         return build_paywall_keyboard()
-    return build_back_to_main_menu_button()
+    return build_progress_navigation_keyboard()
 
 
 @router.message(Command("profile"))

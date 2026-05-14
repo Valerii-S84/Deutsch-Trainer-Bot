@@ -6,6 +6,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.quiz_bank import QuizBankRequestContext, QuizBankService
+from app.quiz_bank.errors import (
+    QuizBankAuthError,
+    QuizBankError,
+    QuizBankRateLimitError,
+    QuizBankUnavailableError,
+    QuizBankValidationError,
+)
 from app.services.entitlements import EntitlementService, FEATURE_MISTAKE_REPEAT
 from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
@@ -30,6 +37,7 @@ from app.services.training_payloads import (
 )
 from app.repositories.answers import AnswerRepository
 from app.repositories.analytics_events import AnalyticsEventRepository
+from app.repositories.api_error_logs import ApiErrorLogRepository
 from app.repositories.question_references import QuestionReferenceRepository
 from app.repositories.quiz_sessions import QuizSessionRepository, QuizSessionStatus
 from app.repositories.training_session_items import TrainingSessionItemRepository
@@ -56,6 +64,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         session_repo: QuizSessionRepository | None = None,
         answer_repo: AnswerRepository | None = None,
         analytics_repo: AnalyticsEventRepository | None = None,
+        api_error_log_repo: ApiErrorLogRepository | None = None,
         question_reference_repo: QuestionReferenceRepository | None = None,
         session_item_repo: TrainingSessionItemRepository | None = None,
         quiz_service: QuizBankService | None = None,
@@ -67,6 +76,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         self._session_repo = session_repo or QuizSessionRepository()
         self._answer_repo = answer_repo or AnswerRepository()
         self._analytics_repo = analytics_repo or AnalyticsEventRepository()
+        self._api_error_log_repo = api_error_log_repo or ApiErrorLogRepository()
         self._question_reference_repo = question_reference_repo or QuestionReferenceRepository()
         self._session_item_repo = session_item_repo or TrainingSessionItemRepository()
         self._quiz_service = quiz_service
@@ -110,6 +120,68 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
             event_metadata=event_metadata,
             source="training",
         )
+
+    async def _record_quiz_bank_error(
+        self,
+        db: AsyncSession,
+        error: QuizBankError,
+        *,
+        user_id: int | None,
+        session_id: int | None,
+        level: str | None,
+        theme: str | None,
+    ) -> None:
+        await self._api_error_log_repo.record(
+            db,
+            endpoint=error.endpoint or "unknown",
+            error_category=_quiz_bank_error_category(error),
+            user_id=user_id,
+            session_id=session_id,
+            request_id=error.request_id,
+            status_code=error.status_code,
+            level=level,
+            theme=theme,
+            error_metadata={"message": error.message},
+        )
+
+    async def _available_items_count_for_question(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        session_id: int,
+        level: str,
+        theme: str | None,
+    ) -> int | None:
+        if not theme:
+            return None
+        quiz_service = self._quiz_bank_service
+        if not hasattr(quiz_service, "get_availability"):
+            return None
+        try:
+            availability = await quiz_service.get_availability(level=level, theme=theme)
+        except QuizBankError as exc:
+            await self._record_quiz_bank_error(
+                db,
+                exc,
+                user_id=user_id,
+                session_id=session_id,
+                level=level,
+                theme=theme,
+            )
+            return None
+        return availability.available_items_count
+
+    async def _get_answer_by_update_id(
+        self,
+        db: AsyncSession,
+        telegram_update_id: int | None,
+    ):
+        if telegram_update_id is None:
+            return None
+        if not hasattr(self._answer_repo, "get_by_telegram_update_id"):
+            return None
+        return await self._answer_repo.get_by_telegram_update_id(db, telegram_update_id)
 
     async def _completion_context(
         self,
@@ -219,12 +291,23 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
                 theme=session.theme,
             )
 
-        response = await self._quiz_bank_service.request_quiz(
-            level=session.level,
-            theme=session.theme,
-            limit=1,
-            user_context=request_context,
-        )
+        try:
+            response = await self._quiz_bank_service.request_quiz(
+                level=session.level,
+                theme=session.theme,
+                limit=1,
+                user_context=request_context,
+            )
+        except QuizBankError as exc:
+            await self._record_quiz_bank_error(
+                db,
+                exc,
+                user_id=user.id,
+                session_id=session.id,
+                level=session.level,
+                theme=session.theme,
+            )
+            raise
 
         if response.returned_count < 1 or not response.items:
             if is_review_session and self._mistakes_service is not None and mistake_item_ids:
@@ -240,13 +323,23 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
             raise NoMoreQuestionsError("Quiz Bank returned no questions")
 
         first = response.items[0]
+        metadata_snapshot = question_metadata_snapshot(first)
+        available_items_count = await self._available_items_count_for_question(
+            db,
+            user_id=user.id,
+            session_id=session.id,
+            level=first.level,
+            theme=first.theme,
+        )
+        if available_items_count is not None:
+            metadata_snapshot["available_items_count"] = available_items_count
         question_reference = await self._question_reference_repo.upsert_snapshot(
             db,
             item_id=first.item_id,
             level=first.level,
             theme=first.theme,
             theme_key=first.theme_key,
-            metadata_snapshot=question_metadata_snapshot(first),
+            metadata_snapshot=metadata_snapshot,
             content_version=first.content_version,
             question_text_snapshot=normalize_text(first.question_text),
             correct_answer_snapshot=answer_text(first, first.correct_answer.option_id),
@@ -289,6 +382,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
             total_questions=session.total_questions,
             question_reference_id=question_reference.id,
             training_session_item_id=session_item.id,
+            metadata_snapshot=metadata_snapshot,
         )
 
         await self._session_repo.set_pending_question(db, session, serialize_question_payload(payload))
@@ -332,6 +426,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         session_id: int,
         question_token: str,
         selected_option_id: str,
+        telegram_update_id: int | None = None,
     ) -> AnswerResult:
         user = await self.get_user(db, telegram_user_id)
 
@@ -357,6 +452,20 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         mistake = None
         new_mistakes_count = 0
 
+        existing_by_update = await self._get_answer_by_update_id(db, telegram_update_id)
+        if existing_by_update is not None:
+            if existing_by_update.user_id != user.id or existing_by_update.session_id != session.id:
+                raise QuestionStateError("Telegram update id does not belong to this session")
+            total_answers = await self._answer_repo.count_by_session(db, session.id)
+            return _duplicate_answer_result(
+                existing_by_update,
+                pending=pending,
+                selected_option_id=selected_option_id,
+                total_answers=total_answers,
+                session=session,
+                correct_answer_text=correct_answer_text,
+            )
+
         existing = await self._answer_repo.get_by_session_and_question(
             db,
             session_id=session.id,
@@ -365,17 +474,12 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         )
         if existing is not None:
             total_answers = await self._answer_repo.count_by_session(db, session.id)
-            return AnswerResult(
-                selected_answer=selected_option_id,
-                correct_answer=pending.correct_answer,
-                question_token=pending.question_token,
-                is_correct=existing.is_correct,
-                is_duplicate=True,
-                is_completed=total_answers >= session.total_questions,
-                explanation=pending.explanation,
-                correct_answers=session.correct_answers,
-                total_questions=session.total_questions,
-                session_id=session.id,
+            return _duplicate_answer_result(
+                existing,
+                pending=pending,
+                selected_option_id=selected_option_id,
+                total_answers=total_answers,
+                session=session,
                 correct_answer_text=correct_answer_text,
             )
 
@@ -397,6 +501,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
                 theme_key=pending.theme_key,
                 session_type=self._session_flow(session),
                 metadata_snapshot=pending.metadata_snapshot,
+                telegram_update_id=telegram_update_id,
             )
             if hasattr(self._session_repo, "increment_answered_count"):
                 await self._session_repo.increment_answered_count(db, session, 1)
@@ -410,27 +515,26 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
             await db.flush()
         except IntegrityError:
             await db.rollback()
-            existing = await self._answer_repo.get_by_session_and_question(
-                db,
-                session_id=session.id,
-                user_id=user.id,
-                external_quiz_id=pending.question_id,
-            )
+            existing = await self._get_answer_by_update_id(db, telegram_update_id)
+            if existing is None:
+                existing = await self._answer_repo.get_by_session_and_question(
+                    db,
+                    session_id=session.id,
+                    user_id=user.id,
+                    external_quiz_id=pending.question_id,
+                )
             if existing is None:
                 raise
+            if existing.user_id != user.id or existing.session_id != session.id:
+                raise QuestionStateError("Duplicate answer belongs to another session")
 
             total_answers = await self._answer_repo.count_by_session(db, session.id)
-            return AnswerResult(
-                selected_answer=selected_option_id,
-                correct_answer=pending.correct_answer,
-                question_token=pending.question_token,
-                is_correct=existing.is_correct,
-                is_duplicate=True,
-                is_completed=total_answers >= session.total_questions,
-                explanation=pending.explanation,
-                correct_answers=session.correct_answers,
-                total_questions=session.total_questions,
-                session_id=session.id,
+            return _duplicate_answer_result(
+                existing,
+                pending=pending,
+                selected_option_id=selected_option_id,
+                total_answers=total_answers,
+                session=session,
                 correct_answer_text=correct_answer_text,
             )
 
@@ -484,6 +588,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
                 user_answer_id=getattr(answer, "id", None),
                 item_id=pending.question_id,
                 theme_key=pending.theme_key,
+                available_items_count=_available_count_from_metadata(pending.metadata_snapshot),
                 metadata_snapshot=pending.metadata_snapshot,
                 reason_code="answer_accepted",
             )
@@ -556,3 +661,48 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
             new_mistakes_count=new_mistakes_count,
             recommendation_text=recommendation_text,
         )
+
+
+def _quiz_bank_error_category(error: QuizBankError) -> str:
+    if isinstance(error, QuizBankAuthError):
+        return "auth"
+    if isinstance(error, QuizBankRateLimitError):
+        return "rate_limit"
+    if isinstance(error, QuizBankValidationError):
+        return "validation"
+    if isinstance(error, QuizBankUnavailableError):
+        return "unavailable"
+    return "unknown"
+
+
+def _available_count_from_metadata(metadata_snapshot: dict[str, object] | None) -> int | None:
+    if metadata_snapshot is None:
+        return None
+    value = metadata_snapshot.get("available_items_count")
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
+
+
+def _duplicate_answer_result(
+    existing,
+    *,
+    pending: QuizQuestionPayload,
+    selected_option_id: str,
+    total_answers: int,
+    session,
+    correct_answer_text: str,
+) -> AnswerResult:
+    return AnswerResult(
+        selected_answer=selected_option_id,
+        correct_answer=pending.correct_answer,
+        question_token=pending.question_token,
+        is_correct=existing.is_correct,
+        is_duplicate=True,
+        is_completed=total_answers >= session.total_questions,
+        explanation=pending.explanation,
+        correct_answers=session.correct_answers,
+        total_questions=session.total_questions,
+        session_id=session.id,
+        correct_answer_text=correct_answer_text,
+    )

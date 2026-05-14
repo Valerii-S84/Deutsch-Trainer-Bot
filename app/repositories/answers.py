@@ -30,6 +30,7 @@ class AnswerRepository:
         theme_key: str | None = None,
         session_type: str = "regular",
         metadata_snapshot: dict[str, object] | None = None,
+        telegram_update_id: int | None = None,
     ) -> UserAnswer:
         answer = UserAnswer(
             session_id=session_id,
@@ -45,6 +46,7 @@ class AnswerRepository:
             is_correct=is_correct,
             session_type=session_type,
             metadata_snapshot=metadata_snapshot,
+            telegram_update_id=telegram_update_id,
             quiz_source=quiz_source,
             external_ref=external_ref,
         )
@@ -66,6 +68,14 @@ class AnswerRepository:
                 UserAnswer.external_quiz_id == external_quiz_id,
             ),
         )
+        return await db.scalar(query)
+
+    async def get_by_telegram_update_id(
+        self,
+        db: AsyncSession,
+        telegram_update_id: int,
+    ) -> UserAnswer | None:
+        query = select(UserAnswer).where(UserAnswer.telegram_update_id == telegram_update_id)
         return await db.scalar(query)
 
     async def count_by_session(self, db: AsyncSession, session_id: int) -> int:
