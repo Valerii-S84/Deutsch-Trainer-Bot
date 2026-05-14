@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     plus_duration_days: Optional[int] = Field(default=None, alias="PLUS_DURATION_DAYS")
     pro_duration_days: Optional[int] = Field(default=None, alias="PRO_DURATION_DAYS")
     tariff_public_copy: Optional[str] = Field(default=None, alias="TARIFF_PUBLIC_COPY")
+    free_daily_question_limit: int = Field(default=5, alias="FREE_DAILY_QUESTION_LIMIT")
+    plus_daily_question_limit: int = Field(default=25, alias="PLUS_DAILY_QUESTION_LIMIT")
+    pro_daily_question_limit: int = Field(default=100, alias="PRO_DAILY_QUESTION_LIMIT")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -77,6 +80,23 @@ class Settings(BaseSettings):
         if value < 0:
             raise ValueError("QUIZ_BANK_MAX_RETRIES must be >= 0")
         return value
+
+    @field_validator("free_daily_question_limit", "plus_daily_question_limit", "pro_daily_question_limit")
+    @classmethod
+    def validate_daily_limit(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Daily question limits must be > 0")
+        return value
+
+    @model_validator(mode="after")
+    def validate_limit_hierarchy(self) -> "Settings":
+        if not (
+            self.free_daily_question_limit
+            < self.plus_daily_question_limit
+            < self.pro_daily_question_limit
+        ):
+            raise ValueError("Daily question limits must satisfy Free < Plus < Pro")
+        return self
 
     @property
     def webhook_mode_enabled(self) -> bool:

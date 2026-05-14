@@ -6,7 +6,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Progress
+from app.db.models import Mistake, Progress, UserAnswer
+from app.services.progress_model import TopicAnswerEvent, TopicMistakeSignals, TopicScores
 
 
 class ProgressRepository:
@@ -79,7 +80,9 @@ class ProgressRepository:
         *,
         answered_delta: int,
         correct_delta: int,
+        now: datetime | None = None,
     ) -> Progress:
+        update_time = now or datetime.now(UTC)
         deltas = self._normalize_deltas(answered_delta=answered_delta, correct_delta=correct_delta)
         progress.total_answered = max(0, (progress.total_answered or 0) + deltas["answered_delta"])
         progress.total_correct = max(
@@ -100,11 +103,36 @@ class ProgressRepository:
             progress.accuracy = raw_accuracy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
         if hasattr(progress, "last_answered_at"):
-            progress.last_answered_at = datetime.now(UTC)
+            progress.last_answered_at = update_time
         if hasattr(progress, "last_wrong_at") and wrong_delta:
             progress.last_wrong_at = progress.last_answered_at
         if hasattr(progress, "last_recalculated_at"):
-            progress.last_recalculated_at = datetime.now(UTC)
+            progress.last_recalculated_at = update_time
+        return progress
+
+    async def apply_topic_scores(
+        self,
+        _db: AsyncSession,
+        progress: Progress,
+        *,
+        scores: TopicScores,
+        unique_items_seen: int,
+        available_items_count: int | None,
+        theme_key: str | None,
+        now: datetime | None = None,
+    ) -> Progress:
+        progress.unique_items_seen = max(0, unique_items_seen)
+        progress.available_items_count = available_items_count
+        progress.coverage_score = scores.coverage_score
+        progress.coverage_status = scores.coverage_status
+        progress.stability_score = scores.stability_score
+        progress.weakness_score = scores.weakness_score
+        progress.recency_score = scores.recency_score
+        progress.topic_status = scores.topic_status
+        if theme_key:
+            progress.theme_key = theme_key
+        if hasattr(progress, "last_recalculated_at"):
+            progress.last_recalculated_at = now or datetime.now(UTC)
         return progress
 
     async def update_streak_if_supported(self, progress: Progress, *, is_correct: bool) -> Progress:
@@ -141,6 +169,73 @@ class ProgressRepository:
         query = query.order_by(Progress.level.asc(), Progress.theme.asc())
         result = await db.execute(query)
         return list(result.scalars().all())
+
+    async def list_topic_answer_events(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        level: str,
+        theme: str | None,
+    ) -> list[TopicAnswerEvent]:
+        query = select(
+            UserAnswer.external_quiz_id,
+            UserAnswer.is_correct,
+            UserAnswer.answered_at,
+            UserAnswer.session_type,
+        ).where(
+            UserAnswer.user_id == user_id,
+            UserAnswer.level == level,
+        )
+        if theme is None:
+            query = query.where(UserAnswer.theme.is_(None))
+        else:
+            query = query.where(UserAnswer.theme == theme)
+
+        query = query.order_by(UserAnswer.answered_at.asc(), UserAnswer.id.asc())
+        rows = (await db.execute(query)).all()
+        return [
+            TopicAnswerEvent(
+                item_id=str(row.external_quiz_id),
+                is_correct=bool(row.is_correct),
+                answered_at=row.answered_at,
+                session_type=row.session_type,
+            )
+            for row in rows
+        ]
+
+    async def get_topic_mistake_signals(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        level: str,
+        theme: str | None,
+    ) -> TopicMistakeSignals:
+        query = select(
+            Mistake.item_id,
+            Mistake.external_quiz_id,
+            Mistake.mistake_count,
+        ).where(
+            Mistake.user_id == user_id,
+            Mistake.level == level,
+            Mistake.resolved_at.is_(None),
+        )
+        if theme is None:
+            query = query.where(Mistake.theme.is_(None))
+        else:
+            query = query.where(Mistake.theme == theme)
+
+        rows = (await db.execute(query)).all()
+        unresolved_item_ids = frozenset(str(row.item_id or row.external_quiz_id) for row in rows)
+        total_mistake_count = sum(max(0, int(row.mistake_count or 0)) for row in rows)
+        repeated_mistake_count = sum(max(0, int(row.mistake_count or 0) - 1) for row in rows)
+        return TopicMistakeSignals(
+            unresolved_count=len(rows),
+            total_mistake_count=total_mistake_count,
+            repeated_mistake_count=repeated_mistake_count,
+            unresolved_item_ids=unresolved_item_ids,
+        )
 
     @staticmethod
     def _normalize_deltas(*, answered_delta: int, correct_delta: int) -> dict[str, int]:

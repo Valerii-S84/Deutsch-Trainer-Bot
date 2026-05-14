@@ -46,13 +46,42 @@ PROFILE_EMPTY_STATE_TEXT = (
 )
 
 PROFILE_PROGRESS_TEMPLATE = (
-    "✅ {level} / {theme}: {correct}/{answered} korrekt ({accuracy}%)."
+    "{status_icon} {level} / {theme}: {correct}/{answered} korrekt ({accuracy}%). "
+    "Abdeckung: {coverage}. Stabilität: {stability}%. Schwäche: {weakness}%."
 )
 
+PROFILE_STRONG_THEMES_HEADER = "Starke Themen:"
+PROFILE_WEAK_THEMES_HEADER = "Schwache Themen:"
+PROFILE_DETAILS_HEADER = "Details:"
+PROFILE_RECOMMENDATION_HEADER = "Empfehlung für heute:"
+PROFILE_NO_STRONG_THEMES_TEXT = "Noch kein starkes Thema."
+PROFILE_NO_WEAK_THEMES_TEXT = "Keine klare Schwachstelle erkannt."
+
 SUBSCRIPTION_TEXT = (
-    "💳 Der Abo-Bereich ist vorbereitet. "
-    "Die Zahlungsanbindung wird in einem späteren Ausbauschritt implementiert."
+    "💳 Dein Abo\n\n"
+    "Aktueller Plan: {plan}\n"
+    "Status: {status}\n\n"
+    "Plus bietet mehr Übungen pro Tag, vollständigen Fortschritt und gezielte Fehlerwiederholung.\n"
+    "Pro enthält zusätzlich erweiterte Statistik und einen tieferen Fehlerüberblick."
 )
+
+SUBSCRIPTION_STATUS_FREE_TEXT = "Free"
+SUBSCRIPTION_STATUS_ACTIVE_TEXT = "Aktiv bis {expires_at}"
+SUBSCRIPTION_STATUS_INACTIVE_TEXT = "Kein aktives Abo"
+PAYWALL_DAILY_LIMIT_TEXT = (
+    "Dein Tageslimit ist erreicht.\n\n"
+    "Mit Plus kannst du heute weiter üben und deinen vollständigen Fortschritt sehen."
+)
+PAYWALL_PROGRESS_TEXT = (
+    "Ich habe deine Schwachstellen gefunden.\n\n"
+    "Mit Plus kannst du deinen vollständigen Fortschritt sehen und deine Fehler gezielt wiederholen."
+)
+PAYWALL_MISTAKE_REPEAT_TEXT = (
+    "Du hast offene Fehler.\n\n"
+    "Mit Plus kannst du sie gezielt wiederholen und schneller schließen."
+)
+PAYWALL_PLUS_BUTTON_TEXT = "⭐ Plus ansehen"
+PAYWALL_PRO_BUTTON_TEXT = "🚀 Pro ansehen"
 
 UNKNOWN_MESSAGE_TEXT = (
     "🔁 Diese Nachricht verstehe ich nicht. "

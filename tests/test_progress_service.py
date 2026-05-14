@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -7,7 +8,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.base import Base
-from app.db.models import Progress, User
+from app.db.models import Mistake, Progress, QuizSession, User, UserAnswer
 from app.services.progress import ProgressService
 from app.repositories.users import UserRepository
 
@@ -19,7 +20,13 @@ async def db_session() -> AsyncSession:
     async with engine.begin() as connection:
         await connection.run_sync(
             Base.metadata.create_all,
-            tables=[User.__table__, Progress.__table__],
+            tables=[
+                User.__table__,
+                QuizSession.__table__,
+                UserAnswer.__table__,
+                Progress.__table__,
+                Mistake.__table__,
+            ],
         )
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -77,6 +84,48 @@ def _progress_service(user_repo: _StaticUserRepository) -> ProgressService:
         user_repo=user_repo,
         progress_history_repo=_FakeProgressHistoryRepository(),
     )
+
+
+async def _add_session(db: AsyncSession, user: User, *, session_id: int) -> QuizSession:
+    session = QuizSession(
+        id=session_id,
+        user_id=user.id,
+        level="A1",
+        theme="Alltag",
+        status="active",
+        total_questions=20,
+        source="test",
+    )
+    db.add(session)
+    await db.flush()
+    return session
+
+
+async def _add_answer(
+    db: AsyncSession,
+    *,
+    answer_id: int,
+    session_id: int,
+    user: User,
+    item_id: str,
+    is_correct: bool,
+    answered_at: datetime,
+) -> UserAnswer:
+    answer = UserAnswer(
+        id=answer_id,
+        session_id=session_id,
+        user_id=user.id,
+        external_quiz_id=item_id,
+        level="A1",
+        theme="Alltag",
+        selected_answer="a1",
+        correct_answer="a1" if is_correct else "a2",
+        is_correct=is_correct,
+        answered_at=answered_at,
+    )
+    db.add(answer)
+    await db.flush()
+    return answer
 
 
 @pytest.mark.asyncio
@@ -220,3 +269,148 @@ async def test_record_answer_result_does_not_change_progress_for_duplicate(db_se
     assert first.total_answered == 1
     assert duplicate.total_answered == 1
     assert duplicate.total_correct == 1
+
+
+@pytest.mark.asyncio
+async def test_record_answer_result_updates_coverage_from_unique_items(db_session: AsyncSession) -> None:
+    user_repo = _StaticUserRepository()
+    service = _progress_service(user_repo)
+    user = await user_repo.create_if_missing(db_session, telegram_user_id=1116)
+    await _add_session(db_session, user, session_id=1)
+    answered_at = datetime(2026, 5, 14, 10, 0, tzinfo=UTC)
+    answer = await _add_answer(
+        db_session,
+        answer_id=1,
+        session_id=1,
+        user=user,
+        item_id="q1",
+        is_correct=True,
+        answered_at=answered_at,
+    )
+
+    progress = await service.record_answer_result(
+        db_session,
+        user.telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        is_correct=True,
+        is_duplicate=False,
+        item_id="q1",
+        available_items_count=10,
+        answered_at=answered_at,
+        user_answer_id=answer.id,
+    )
+
+    assert progress.unique_items_seen == 1
+    assert progress.available_items_count == 10
+    assert progress.coverage_score == Decimal("10.00")
+
+
+@pytest.mark.asyncio
+async def test_record_answer_result_counts_repeated_item_once_for_coverage(db_session: AsyncSession) -> None:
+    user_repo = _StaticUserRepository()
+    service = _progress_service(user_repo)
+    user = await user_repo.create_if_missing(db_session, telegram_user_id=1117)
+    first_time = datetime(2026, 5, 14, 10, 0, tzinfo=UTC)
+    second_time = datetime(2026, 5, 15, 10, 0, tzinfo=UTC)
+    await _add_session(db_session, user, session_id=1)
+    await _add_answer(
+        db_session,
+        answer_id=1,
+        session_id=1,
+        user=user,
+        item_id="q1",
+        is_correct=True,
+        answered_at=first_time,
+    )
+    await service.record_answer_result(
+        db_session,
+        user.telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        is_correct=True,
+        is_duplicate=False,
+        item_id="q1",
+        available_items_count=10,
+        answered_at=first_time,
+    )
+    await _add_session(db_session, user, session_id=2)
+    await _add_answer(
+        db_session,
+        answer_id=2,
+        session_id=2,
+        user=user,
+        item_id="q1",
+        is_correct=True,
+        answered_at=second_time,
+    )
+
+    progress = await service.record_answer_result(
+        db_session,
+        user.telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        is_correct=True,
+        is_duplicate=False,
+        item_id="q1",
+        available_items_count=10,
+        answered_at=second_time,
+    )
+
+    assert progress.total_answered == 2
+    assert progress.unique_items_seen == 1
+    assert progress.coverage_score == Decimal("10.00")
+
+
+@pytest.mark.asyncio
+async def test_record_answer_result_uses_berlin_days_for_stability(db_session: AsyncSession) -> None:
+    user_repo = _StaticUserRepository()
+    service = _progress_service(user_repo)
+    user = await user_repo.create_if_missing(db_session, telegram_user_id=1118)
+    first_time = datetime(2026, 5, 14, 21, 30, tzinfo=UTC)
+    second_time = datetime(2026, 5, 14, 22, 30, tzinfo=UTC)
+    await _add_session(db_session, user, session_id=1)
+    await _add_answer(
+        db_session,
+        answer_id=1,
+        session_id=1,
+        user=user,
+        item_id="q1",
+        is_correct=True,
+        answered_at=first_time,
+    )
+    await service.record_answer_result(
+        db_session,
+        user.telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        is_correct=True,
+        is_duplicate=False,
+        item_id="q1",
+        available_items_count=10,
+        answered_at=first_time,
+    )
+    await _add_session(db_session, user, session_id=2)
+    await _add_answer(
+        db_session,
+        answer_id=2,
+        session_id=2,
+        user=user,
+        item_id="q1",
+        is_correct=True,
+        answered_at=second_time,
+    )
+
+    progress = await service.record_answer_result(
+        db_session,
+        user.telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        is_correct=True,
+        is_duplicate=False,
+        item_id="q1",
+        available_items_count=10,
+        answered_at=second_time,
+    )
+
+    assert progress.stability_score == Decimal("75.00")

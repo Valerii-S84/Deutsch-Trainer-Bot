@@ -50,9 +50,12 @@ class ProgressHistoryRepository:
             "wrong_count": int(getattr(progress, "wrong_count", 0) or 0),
             "accuracy": _to_json_number(progress.accuracy),
             "coverage_score": _to_json_number(getattr(progress, "coverage_score", None)),
+            "coverage_status": getattr(progress, "coverage_status", None),
             "stability_score": _to_json_number(getattr(progress, "stability_score", None)),
             "weakness_score": _to_json_number(getattr(progress, "weakness_score", None)),
             "recency_score": _to_json_number(getattr(progress, "recency_score", None)),
+            "unique_items_seen": int(getattr(progress, "unique_items_seen", 0) or 0),
+            "available_items_count": getattr(progress, "available_items_count", None),
             "topic_status": progress.topic_status,
         }
 
@@ -67,6 +70,11 @@ class ProgressHistoryRepository:
             "answered_delta": int(new_scores["total_answered"]) - int(previous_scores["total_answered"]),
             "correct_delta": int(new_scores["total_correct"]) - int(previous_scores["total_correct"]),
             "wrong_delta": int(new_scores["wrong_count"]) - int(previous_scores["wrong_count"]),
+            "unique_items_seen_delta": int(new_scores["unique_items_seen"]) - int(previous_scores["unique_items_seen"]),
+            "accuracy_delta": _number_delta(previous_scores.get("accuracy"), new_scores.get("accuracy")),
+            "coverage_delta": _number_delta(previous_scores.get("coverage_score"), new_scores.get("coverage_score")),
+            "stability_delta": _number_delta(previous_scores.get("stability_score"), new_scores.get("stability_score")),
+            "weakness_delta": _number_delta(previous_scores.get("weakness_score"), new_scores.get("weakness_score")),
         }
 
     async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
@@ -85,3 +93,11 @@ def _to_json_number(value: object) -> float | None:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+
+
+def _number_delta(previous_value: object, new_value: object) -> float | None:
+    previous_number = _to_json_number(previous_value)
+    new_number = _to_json_number(new_value)
+    if previous_number is None or new_number is None:
+        return None
+    return round(new_number - previous_number, 2)

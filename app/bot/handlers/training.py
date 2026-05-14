@@ -13,6 +13,7 @@ from app.bot.keyboards.quiz import (
     build_question_options_keyboard,
     build_resume_keyboard,
 )
+from app.bot.keyboards.subscription import build_paywall_keyboard
 from app.bot.texts import (
     CALLBACK_THEME_PREFIX,
     CALLBACK_TRAIN_ANSWER_PREFIX,
@@ -41,6 +42,7 @@ from app.bot.texts import (
     TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
     TRAINING_QUIZBANK_VALIDATION_TEXT,
     TRAINING_ANSWER_DUPLICATE_TEXT,
+    PAYWALL_DAILY_LIMIT_TEXT,
 )
 from app.db.session import get_session as _get_session
 from app.quiz_bank.errors import (
@@ -57,6 +59,7 @@ from app.services.training_session import (
     QuestionStateError,
     TrainingSessionService,
 )
+from app.services.entitlements import DailyLimitExceededError, EntitlementService
 from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
 
@@ -66,6 +69,7 @@ router = Router(name="training")
 training_service = TrainingSessionService(
     progress_service=ProgressService(),
     mistakes_service=MistakeService(),
+    entitlement_service=EntitlementService(),
 )
 
 
@@ -181,6 +185,8 @@ def _map_quizbank_error(error: Exception) -> str:
 
 
 def _map_session_error(error: Exception) -> str:
+    if isinstance(error, DailyLimitExceededError):
+        return PAYWALL_DAILY_LIMIT_TEXT
     if isinstance(error, ActiveSessionNotFoundError):
         return TRAINING_SESSION_COMPLETED_TEXT
     if isinstance(error, NoMoreQuestionsError):
@@ -188,6 +194,13 @@ def _map_session_error(error: Exception) -> str:
     if isinstance(error, QuestionStateError):
         return TRAINING_SESSION_ERROR_TEXT
     return TRAINING_SESSION_ERROR_TEXT
+
+
+async def _send_daily_limit_paywall(message: Message) -> None:
+    await message.answer(
+        PAYWALL_DAILY_LIMIT_TEXT,
+        reply_markup=build_paywall_keyboard(include_progress=True),
+    )
 
 
 async def _send_question(message: Message, question) -> None:
@@ -281,9 +294,13 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
             QuizBankUnavailableError,
             QuizBankValidationError,
             NoMoreQuestionsError,
+            DailyLimitExceededError,
         ) as exc:
             await db.rollback()
-            await callback_query.message.answer(_map_quizbank_error(exc))
+            if isinstance(exc, DailyLimitExceededError):
+                await _send_daily_limit_paywall(callback_query.message)
+            else:
+                await callback_query.message.answer(_map_quizbank_error(exc))
             return
         except Exception:
             await db.rollback()
@@ -326,6 +343,7 @@ async def handle_resume_training(callback_query: CallbackQuery) -> None:
             QuizBankRateLimitError,
             QuizBankUnavailableError,
             QuizBankValidationError,
+            DailyLimitExceededError,
         ) as exc:
             await db.rollback()
             if isinstance(
@@ -338,6 +356,8 @@ async def handle_resume_training(callback_query: CallbackQuery) -> None:
                 ),
             ):
                 await callback_query.message.answer(_map_quizbank_error(exc))
+            elif isinstance(exc, DailyLimitExceededError):
+                await _send_daily_limit_paywall(callback_query.message)
             else:
                 await callback_query.message.answer(_map_session_error(exc))
             return
@@ -384,9 +404,13 @@ async def handle_start_new_training(callback_query: CallbackQuery) -> None:
             QuizBankUnavailableError,
             QuizBankValidationError,
             NoMoreQuestionsError,
+            DailyLimitExceededError,
         ) as exc:
             await db.rollback()
-            await callback_query.message.answer(_map_quizbank_error(exc))
+            if isinstance(exc, DailyLimitExceededError):
+                await _send_daily_limit_paywall(callback_query.message)
+            else:
+                await callback_query.message.answer(_map_quizbank_error(exc))
             return
         except Exception:
             await db.rollback()
@@ -525,10 +549,13 @@ async def handle_next_question(callback_query: CallbackQuery) -> None:
             QuizBankRateLimitError,
             QuizBankUnavailableError,
             QuizBankValidationError,
+            DailyLimitExceededError,
         ) as exc:
             await db.rollback()
             if isinstance(exc, (QuizBankAuthError, QuizBankRateLimitError, QuizBankUnavailableError, QuizBankValidationError)):
                 await callback_query.message.answer(_map_quizbank_error(exc))
+            elif isinstance(exc, DailyLimitExceededError):
+                await _send_daily_limit_paywall(callback_query.message)
             else:
                 await callback_query.message.answer(_map_session_error(exc))
             return

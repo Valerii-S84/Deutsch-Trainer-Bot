@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.entitlements import FEATURE_MISTAKE_REPEAT
 from app.services.training_payloads import (
     ActiveSessionConflictError,
     NoReviewItemsError,
@@ -67,6 +68,13 @@ class TrainingSessionLifecycleMixin:
         flow: str,
     ):
         user = await self.get_user(db, telegram_user_id)
+        if self._entitlement_service is not None:
+            await self._entitlement_service.ensure_daily_question_available(
+                db,
+                telegram_user_id,
+                level=level,
+                theme=theme,
+            )
         await self._user_repo.set_training_preferences(db, telegram_user_id, level=level, theme=theme)
         await db.flush()
         await self._replace_active_session_if_needed(db, user.id, force_new=force_new)
@@ -97,6 +105,16 @@ class TrainingSessionLifecycleMixin:
             raise NoReviewItemsError("Review service is not configured")
 
         user = await self.get_user(db, telegram_user_id)
+        if self._entitlement_service is not None:
+            await self._entitlement_service.ensure_entitlement(
+                db,
+                telegram_user_id,
+                feature=FEATURE_MISTAKE_REPEAT,
+            )
+            await self._entitlement_service.ensure_daily_question_available(
+                db,
+                telegram_user_id,
+            )
         await db.flush()
         review_items = await self._mistakes_service.get_review_items(db, telegram_user_id)
         if not review_items:

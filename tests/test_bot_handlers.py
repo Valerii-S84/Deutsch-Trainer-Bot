@@ -12,7 +12,7 @@ from app.bot.keyboards.main_menu import build_main_menu_keyboard
 from app.bot.texts import (
     LEVEL_CALLBACK_FALLBACK_TEXT,
     PROFILE_TEXT,
-    SUBSCRIPTION_TEXT,
+    SUBSCRIPTION_STATUS_FREE_TEXT,
     UNKNOWN_CALLBACK_TEXT,
     UNKNOWN_MESSAGE_TEXT,
     WELCOME_TEXT,
@@ -113,6 +113,8 @@ async def test_level_flow_with_unknown_level_is_safe() -> None:
     await level_handlers.level_selected(callback)
     callback.message.answer.assert_awaited_once()
     callback.message.answer.assert_awaited_with(LEVEL_CALLBACK_FALLBACK_TEXT)
+
+
 @pytest.mark.asyncio
 async def test_profile_entry_point_is_static_message() -> None:
     message = _Message(text="/profile")
@@ -128,7 +130,8 @@ async def test_subscription_entry_point_is_static_message() -> None:
     message = _Message(text="/subscription")
     await subscription.handle_subscription_message(message)
     args = message.answer.await_args.args
-    assert SUBSCRIPTION_TEXT in args[0]
+    assert "Dein Abo" in args[0]
+    assert SUBSCRIPTION_STATUS_FREE_TEXT in args[0]
     assert "Subscription" not in args[0]
     assert "Payment" not in args[0]
     assert "Milestone" not in args[0]

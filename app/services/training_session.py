@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.quiz_bank import QuizBankRequestContext, QuizBankService
+from app.services.entitlements import EntitlementService, FEATURE_MISTAKE_REPEAT
 from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
 from app.services.training_session_lifecycle import TrainingSessionLifecycleMixin
@@ -60,6 +61,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         quiz_service: QuizBankService | None = None,
         progress_service: ProgressService | None = None,
         mistakes_service: MistakeService | None = None,
+        entitlement_service: EntitlementService | None = None,
     ) -> None:
         self._user_repo = user_repo or UserRepository()
         self._session_repo = session_repo or QuizSessionRepository()
@@ -70,6 +72,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         self._quiz_service = quiz_service
         self._progress_service = progress_service
         self._mistakes_service = mistakes_service
+        self._entitlement_service = entitlement_service
 
     @property
     def _quiz_bank_service(self) -> QuizBankService:
@@ -188,6 +191,12 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
                 raise NoReviewItemsError("No active mistakes to review")
 
         if is_review_session and self._mistakes_service is not None:
+            if self._entitlement_service is not None:
+                await self._entitlement_service.ensure_entitlement(
+                    db,
+                    user.telegram_user_id,
+                    feature=FEATURE_MISTAKE_REPEAT,
+                )
             request_context = QuizBankRequestContext(
                 seen_item_ids=seen_item_ids,
                 target_level=session.level,
@@ -201,6 +210,15 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
                 session_type=self._session_flow(session),
             )
 
+        if self._entitlement_service is not None:
+            await self._entitlement_service.ensure_daily_question_available(
+                db,
+                user.telegram_user_id,
+                session_id=session.id,
+                level=session.level,
+                theme=session.theme,
+            )
+
         response = await self._quiz_bank_service.request_quiz(
             level=session.level,
             theme=session.theme,
@@ -209,6 +227,13 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         )
 
         if response.returned_count < 1 or not response.items:
+            if is_review_session and self._mistakes_service is not None and mistake_item_ids:
+                await self._mistakes_service.mark_review_items_unavailable(
+                    db,
+                    user.telegram_user_id,
+                    external_quiz_ids=mistake_item_ids,
+                    session_id=session.id,
+                )
             await self._session_repo.mark_failed(db, session)
             await self._session_repo.clear_pending_question(db, session)
             await db.flush()
@@ -243,7 +268,18 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         )
         if hasattr(self._session_repo, "increment_shown_questions_count") and existing_session_item is None:
             await self._session_repo.increment_shown_questions_count(db, session, 1)
-        if hasattr(self._session_item_repo, "mark_daily_limit_charged"):
+        if existing_session_item is None and self._entitlement_service is not None:
+            limit_state = await self._entitlement_service.charge_daily_question(
+                db,
+                user.telegram_user_id,
+            )
+            if hasattr(self._session_item_repo, "mark_daily_limit_charged"):
+                await self._session_item_repo.mark_daily_limit_charged(
+                    db,
+                    session_item,
+                    daily_limit_id=limit_state.daily_limit.id,
+                )
+        elif hasattr(self._session_item_repo, "mark_daily_limit_charged"):
             await self._session_item_repo.mark_daily_limit_charged(db, session_item)
         await db.flush()
         payload = build_question_payload(
@@ -446,6 +482,9 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
                 is_duplicate=False,
                 session_id=session.id,
                 user_answer_id=getattr(answer, "id", None),
+                item_id=pending.question_id,
+                theme_key=pending.theme_key,
+                metadata_snapshot=pending.metadata_snapshot,
                 reason_code="answer_accepted",
             )
 

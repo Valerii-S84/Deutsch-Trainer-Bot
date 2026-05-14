@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import User
@@ -23,7 +23,7 @@ class UserRepository:
         if user is not None:
             return user
 
-        user = User(telegram_user_id=telegram_user_id)
+        user = User(id=await self._next_id_if_needed(db), telegram_user_id=telegram_user_id)
         db.add(user)
         user.last_active_at = datetime.now(UTC)
         return user
@@ -55,3 +55,9 @@ class UserRepository:
             user.selected_theme = theme
         user.last_active_at = datetime.now(UTC)
         return user
+
+    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
+        if db.get_bind().dialect.name != "sqlite":
+            return None
+        max_id = await db.scalar(select(func.max(User.id)))
+        return (max_id or 0) + 1

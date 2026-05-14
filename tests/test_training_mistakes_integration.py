@@ -8,7 +8,7 @@ import pytest
 from app.quiz_bank import QuizBankRequestContext
 from app.quiz_bank.schemas import QuizAnswerOption, QuizCorrectAnswerReference, QuizItem, QuizQuestionsResponse
 from app.repositories.quiz_sessions import QuizSessionStatus
-from app.services.training_session import TrainingSessionService
+from app.services.training_session import NoMoreQuestionsError, TrainingSessionService
 
 
 @dataclass
@@ -319,11 +319,19 @@ class FakeSessionItemRepository:
         session_item.answered_at = "now"
         return session_item
 
-    async def mark_daily_limit_charged(self, db, session_item: FakeSessionItem) -> FakeSessionItem:
+    async def mark_daily_limit_charged(
+        self,
+        db,
+        session_item: FakeSessionItem,
+        *,
+        daily_limit_id: int | None = None,
+    ) -> FakeSessionItem:
         if session_item.shown_at is None:
             raise ValueError("Daily limit can only be charged after an item is shown")
         if session_item.daily_limit_charged_at is None:
             session_item.daily_limit_charged_at = "now"
+        if daily_limit_id is not None:
+            session_item.daily_limit_id = daily_limit_id
         return session_item
 
 
@@ -373,6 +381,7 @@ class FakeMistakeService:
         self.active_items = active_items
         self.wrong_calls: list[dict[str, object]] = []
         self.success_calls: list[dict[str, object]] = []
+        self.unavailable_calls: list[dict[str, object]] = []
 
     async def get_review_items(self, db, telegram_user_id: int) -> list[FakeMistake]:
         return self.active_items
@@ -382,6 +391,11 @@ class FakeMistakeService:
 
     async def record_review_success(self, db, telegram_user_id: int, **kwargs: object) -> None:
         self.success_calls.append(kwargs)
+
+    async def mark_review_items_unavailable(self, db, telegram_user_id: int, **kwargs: object) -> None:
+        self.unavailable_calls.append(kwargs)
+        unavailable_ids = set(kwargs.get("external_quiz_ids") or [])
+        self.active_items = [item for item in self.active_items if item.external_quiz_id not in unavailable_ids]
 
     async def get_weak_areas(self, db, telegram_user_id: int) -> list[dict[str, object]]:
         return []
@@ -517,3 +531,39 @@ async def test_submit_answer_records_review_success_for_review_session() -> None
     assert result.is_correct is True
     assert len(mistakes.success_calls) == 1
     assert mistakes.success_calls[0]["external_quiz_id"] == "q_review"
+
+
+@pytest.mark.asyncio
+async def test_review_empty_quiz_bank_marks_review_items_unavailable() -> None:
+    review_item = FakeMistake(id=1, level="A1", theme="Alltag", external_quiz_id="q_missing")
+    mistakes = FakeMistakeService(active_items=[review_item])
+    empty_response = QuizQuestionsResponse(
+        items=[],
+        requested_count=1,
+        returned_count=0,
+        has_more=False,
+    )
+    service = TrainingSessionService(
+        user_repo=FakeUserRepository(),
+        session_repo=FakeSessionRepository(),
+        answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
+        quiz_service=FakeQuizBankService([empty_response]),
+        mistakes_service=mistakes,
+    )
+    db = FakeDatabaseSession()
+    user_id = 114
+
+    await service.start_review_session(db, user_id, force_new=False, total_questions=1)
+    with pytest.raises(NoMoreQuestionsError):
+        await service.get_or_create_current_question(db, user_id, force_refresh=True)
+
+    assert mistakes.unavailable_calls == [
+        {
+            "external_quiz_ids": ["q_missing"],
+            "session_id": 1,
+        },
+    ]
+    assert mistakes.active_items == []

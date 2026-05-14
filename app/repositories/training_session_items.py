@@ -65,11 +65,15 @@ class TrainingSessionItemRepository:
         self,
         _db: AsyncSession,
         session_item: TrainingSessionItem,
+        *,
+        daily_limit_id: int | None = None,
     ) -> TrainingSessionItem:
         if session_item.shown_at is None:
             raise ValueError("Daily limit can only be charged after an item is shown")
         if session_item.daily_limit_charged_at is None:
             session_item.daily_limit_charged_at = datetime.now(UTC)
+        if daily_limit_id is not None:
+            session_item.daily_limit_id = daily_limit_id
         return session_item
 
     async def mark_answered(self, _db: AsyncSession, session_item: TrainingSessionItem) -> TrainingSessionItem:

@@ -7,6 +7,7 @@ import pytest
 
 from app.quiz_bank import QuizBankRequestContext
 from app.quiz_bank.schemas import QuizAnswerOption, QuizCorrectAnswerReference, QuizItem, QuizQuestionsResponse
+from app.services.entitlements import DailyLimitExceededError
 from app.services.training_session import (
     ActiveSessionConflictError,
     ActiveSessionNotFoundError,
@@ -323,11 +324,19 @@ class FakeSessionItemRepository:
         session_item.answered_at = "now"
         return session_item
 
-    async def mark_daily_limit_charged(self, db, session_item: FakeSessionItem) -> FakeSessionItem:
+    async def mark_daily_limit_charged(
+        self,
+        db,
+        session_item: FakeSessionItem,
+        *,
+        daily_limit_id: int | None = None,
+    ) -> FakeSessionItem:
         if session_item.shown_at is None:
             raise ValueError("Daily limit can only be charged after an item is shown")
         if session_item.daily_limit_charged_at is None:
             session_item.daily_limit_charged_at = "now"
+        if daily_limit_id is not None:
+            session_item.daily_limit_id = daily_limit_id
         return session_item
 
 
@@ -372,6 +381,34 @@ class StubQuizBankService:
     ):
         self.calls.append((level, theme, limit, user_context.model_dump(exclude_none=True) if user_context else None))
         return self._responses.pop(0)
+
+
+class FakeEntitlementService:
+    def __init__(self, *, limit_exceeded: bool = False) -> None:
+        self.limit_exceeded = limit_exceeded
+        self.ensure_calls: list[dict[str, object]] = []
+        self.charge_calls = 0
+
+    async def ensure_daily_question_available(self, db, telegram_user_id: int, **kwargs: object):
+        self.ensure_calls.append({"telegram_user_id": telegram_user_id, **kwargs})
+        if self.limit_exceeded:
+            state = SimpleNamespace(
+                plan="free",
+                question_limit=1,
+                questions_used=1,
+                remaining=0,
+                reset_at=None,
+                daily_limit=SimpleNamespace(id=77, user_id=telegram_user_id),
+            )
+            raise DailyLimitExceededError(state)
+        return SimpleNamespace(remaining=1)
+
+    async def charge_daily_question(self, db, telegram_user_id: int, **kwargs: object):
+        self.charge_calls += 1
+        return SimpleNamespace(daily_limit=SimpleNamespace(id=77))
+
+    async def ensure_entitlement(self, db, telegram_user_id: int, **kwargs: object):
+        return SimpleNamespace(allowed=True)
 
 
 def _question_payload(item_id: str = "q1", correct_answer: str = "a2") -> QuizQuestionsResponse:
@@ -649,6 +686,72 @@ async def test_get_question_marks_session_failed_when_quiz_bank_empty() -> None:
     user = await service.get_user(db, user_id)
     active = await service._session_repo.get_active_for_user(db, user.id)  # type: ignore[attr-defined]
     assert active is None
+
+
+@pytest.mark.asyncio
+async def test_get_question_charges_daily_limit_when_question_is_shown() -> None:
+    entitlement_service = FakeEntitlementService()
+    service = TrainingSessionService(
+        user_repo=FakeUserRepository(),
+        session_repo=FakeSessionRepository(),
+        answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
+        quiz_service=StubQuizBankService([_question_payload(item_id="q_limit")]),
+        entitlement_service=entitlement_service,
+    )
+    db = FakeDatabaseSession()
+    user_id = 334
+
+    await service.start_session(
+        db,
+        telegram_user_id=user_id,
+        level="A1",
+        theme="Alltag",
+        total_questions=1,
+        force_new=False,
+    )
+    question = await service.get_or_create_current_question(db, telegram_user_id=user_id, force_refresh=True)
+    session_item = await service._session_item_repo.get_by_session_item(  # type: ignore[attr-defined]
+        db,
+        session_id=question.session_id,
+        item_id="q_limit",
+    )
+
+    assert entitlement_service.charge_calls == 1
+    assert session_item is not None
+    assert session_item.daily_limit_charged_at == "now"
+    assert session_item.daily_limit_id == 77
+
+
+@pytest.mark.asyncio
+async def test_daily_limit_hit_blocks_quiz_request_before_api_call() -> None:
+    entitlement_service = FakeEntitlementService(limit_exceeded=True)
+    quiz_service = StubQuizBankService([_question_payload(item_id="q_never")])
+    service = TrainingSessionService(
+        user_repo=FakeUserRepository(),
+        session_repo=FakeSessionRepository(),
+        answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
+        quiz_service=quiz_service,
+        entitlement_service=entitlement_service,
+    )
+    db = FakeDatabaseSession()
+
+    with pytest.raises(DailyLimitExceededError):
+        await service.start_session(
+            db,
+            telegram_user_id=335,
+            level="A1",
+            theme="Alltag",
+            total_questions=1,
+            force_new=False,
+        )
+
+    assert quiz_service.calls == []
 
 
 def _force_new_replaces_active_session(service: TrainingSessionService, db: FakeDatabaseSession, user_id: int) -> None:

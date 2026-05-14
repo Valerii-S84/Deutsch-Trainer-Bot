@@ -8,6 +8,7 @@ import pytest
 from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.quiz import build_resume_keyboard
 from app.bot.texts import (
+    PAYWALL_DAILY_LIMIT_TEXT,
     TRAINING_ANSWER_DUPLICATE_TEXT,
     TRAINING_EXPLANATION_TEXT,
     TRAINING_FINISH_TEXT,
@@ -17,6 +18,7 @@ from app.bot.texts import (
     TRAINING_QUESTION_TEMPLATE,
     TRAINING_SESSION_RESUME_TEXT,
 )
+from app.services.entitlements import DailyLimitExceededError
 from app.services.training_session import AnswerResult, QuizQuestionPayload
 
 from app.bot.handlers import training
@@ -94,6 +96,18 @@ def _callback_payloads(markup) -> list[str]:
     return [button.callback_data for row in markup.inline_keyboard for button in row]
 
 
+def _daily_limit_error() -> DailyLimitExceededError:
+    state = SimpleNamespace(
+        plan="free",
+        question_limit=1,
+        questions_used=1,
+        remaining=0,
+        reset_at=None,
+        daily_limit=SimpleNamespace(id=77, user_id=111),
+    )
+    return DailyLimitExceededError(state)
+
+
 @pytest.mark.asyncio
 async def test_handle_theme_selected_starts_session_and_shows_question(monkeypatch) -> None:
     db = FakeDb()
@@ -124,6 +138,26 @@ async def test_handle_theme_selected_starts_session_and_shows_question(monkeypat
     assert TRAINING_QUESTION_TEMPLATE.format(position=1, total=3, question_text="Was ist korrekt?") in args[0]
     button_texts = [button.text for row in kwargs["reply_markup"].inline_keyboard for button in row]
     assert button_texts == ["Option A", "Option B", "🏠 Hauptmenü"]
+
+
+@pytest.mark.asyncio
+async def test_handle_theme_selected_shows_daily_limit_paywall(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.get_active_session.return_value = None
+    service.resume_or_start_session.side_effect = _daily_limit_error()
+
+    _patch_service(monkeypatch, service, db)
+
+    callback = _Callback(data="theme:A1:alltag")
+    await training.handle_theme_selected(callback)
+
+    assert db.rolled_back == 1
+    callback.message.answer.assert_awaited_once()
+    sent_text = _extract_text(callback.message.answer.await_args)
+    payloads = _callback_payloads(callback.message.answer.await_args.kwargs["reply_markup"])
+    assert PAYWALL_DAILY_LIMIT_TEXT == sent_text
+    assert "menu:subscription" in payloads
 
 
 @pytest.mark.asyncio

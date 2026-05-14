@@ -315,11 +315,19 @@ class FakeSessionItemRepository:
         session_item.answered_at = "now"
         return session_item
 
-    async def mark_daily_limit_charged(self, db, session_item: FakeSessionItem) -> FakeSessionItem:
+    async def mark_daily_limit_charged(
+        self,
+        db,
+        session_item: FakeSessionItem,
+        *,
+        daily_limit_id: int | None = None,
+    ) -> FakeSessionItem:
         if session_item.shown_at is None:
             raise ValueError("Daily limit can only be charged after an item is shown")
         if session_item.daily_limit_charged_at is None:
             session_item.daily_limit_charged_at = "now"
+        if daily_limit_id is not None:
+            session_item.daily_limit_id = daily_limit_id
         return session_item
 
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from app.db.models import Mistake
+from app.db.models import Mistake, MistakeStatus
 from app.repositories.mistake_history import MistakeHistoryRepository
 from app.repositories.mistakes import MistakeRepository
 from app.repositories.users import UserRepository
@@ -144,6 +145,7 @@ class MistakeService:
         session_id: int | None = None,
         user_answer_id: int | None = None,
         metadata_snapshot: dict[str, Any] | None = None,
+        answered_at: datetime | None = None,
     ) -> Mistake | None:
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
         if user is None:
@@ -158,18 +160,59 @@ class MistakeService:
             return None
 
         previous_status = _status_value(mistake.status)
-        resolved = await self._mistake_repo.resolve(db, mistake)
+        updated = await self._mistake_repo.record_successful_repeat(
+            db,
+            mistake,
+            correct_answer=correct_answer,
+            answered_at=answered_at,
+        )
+        event_type = "review_resolved" if _status_value(updated.status) == MistakeStatus.resolved.value else "review_improved"
         await self._record_history(
             db,
-            resolved,
-            event_type="review_success",
+            updated,
+            event_type=event_type,
             previous_status=previous_status,
             user_answer_id=user_answer_id,
             session_id=session_id,
             correct_answer=correct_answer,
             metadata_snapshot=metadata_snapshot,
         )
-        return resolved
+        return updated
+
+    async def mark_review_items_unavailable(
+        self,
+        db,
+        telegram_user_id: int,
+        *,
+        external_quiz_ids: list[str],
+        session_id: int | None = None,
+    ) -> list[Mistake]:
+        user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
+        if user is None:
+            return []
+
+        updated: list[Mistake] = []
+        for external_quiz_id in external_quiz_ids:
+            mistake = await self._mistake_repo.find_active_by_user_and_external_quiz_id(
+                db,
+                user_id=user.id,
+                external_quiz_id=external_quiz_id,
+            )
+            if mistake is None:
+                continue
+            previous_status = _status_value(mistake.status)
+            unavailable = await self._mistake_repo.mark_content_unavailable(db, mistake)
+            await self._record_history(
+                db,
+                unavailable,
+                event_type="content_unavailable",
+                previous_status=previous_status,
+                user_answer_id=None,
+                session_id=session_id,
+                metadata_snapshot={"external_quiz_id": external_quiz_id},
+            )
+            updated.append(unavailable)
+        return updated
 
     async def get_review_items(self, db, telegram_user_id: int) -> list[Mistake]:
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)

@@ -1,8 +1,33 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
 from app.repositories.progress_history import ProgressHistoryRepository
 from app.repositories.progress import ProgressRepository
 from app.repositories.users import UserRepository
+from app.services.progress_model import (
+    TopicAnswerEvent,
+    build_progress_recommendation,
+    calculate_topic_scores,
+    recency_risk_score,
+)
+
+
+@dataclass(frozen=True)
+class _ProgressAnswerUpdate:
+    user_id: int
+    level: str
+    theme: str | None
+    is_correct: bool
+    session_id: int | None
+    user_answer_id: int | None
+    item_id: str | None
+    theme_key: str | None
+    available_items_count: int | None
+    answered_at: datetime
+    metadata_snapshot: dict[str, object] | None
+    reason_code: str
 
 
 class ProgressService:
@@ -30,8 +55,14 @@ class ProgressService:
         is_duplicate: bool,
         session_id: int | None = None,
         user_answer_id: int | None = None,
+        item_id: str | None = None,
+        theme_key: str | None = None,
+        available_items_count: int | None = None,
+        answered_at: datetime | None = None,
+        metadata_snapshot: dict[str, object] | None = None,
         reason_code: str = "answer_accepted",
     ):
+        now = answered_at or datetime.now(UTC)
         user = await self._user_repo.create_if_missing(db, telegram_user_id)
         progress = await self._progress_repo.get_or_create(
             db,
@@ -41,34 +72,123 @@ class ProgressService:
         )
         await db.flush()
 
+        if theme_key:
+            progress.theme_key = theme_key
+
         if is_duplicate:
             return progress
 
+        answer_update = _ProgressAnswerUpdate(
+            user_id=user.id,
+            level=level,
+            theme=theme,
+            is_correct=is_correct,
+            session_id=session_id,
+            user_answer_id=user_answer_id,
+            item_id=item_id,
+            theme_key=theme_key,
+            available_items_count=available_items_count,
+            answered_at=now,
+            metadata_snapshot=metadata_snapshot,
+            reason_code=reason_code,
+        )
+        return await self._record_new_answer(
+            db,
+            progress=progress,
+            answer_update=answer_update,
+        )
+
+    async def _record_new_answer(
+        self,
+        db,
+        *,
+        progress,
+        answer_update: _ProgressAnswerUpdate,
+    ):
         previous_status = progress.topic_status
         previous_scores = self._progress_history_repo.snapshot_scores(progress)
         await self._progress_repo.update_totals(
             db,
             progress,
             answered_delta=1,
-            correct_delta=1 if is_correct else 0,
+            correct_delta=1 if answer_update.is_correct else 0,
+            now=answer_update.answered_at,
         )
-        await self._progress_repo.update_streak_if_supported(progress, is_correct=is_correct)
+        await self._progress_repo.update_streak_if_supported(progress, is_correct=answer_update.is_correct)
+        await self._apply_progress_model(
+            db,
+            progress=progress,
+            answer_update=answer_update,
+        )
         await self._progress_history_repo.record_answer_change(
             db,
             progress=progress,
             previous_status=previous_status,
             previous_scores=previous_scores,
-            session_id=session_id,
-            user_answer_id=user_answer_id,
-            reason_code=reason_code,
+            session_id=answer_update.session_id,
+            user_answer_id=answer_update.user_answer_id,
+            reason_code=answer_update.reason_code,
         )
         return progress
+
+    async def _apply_progress_model(
+        self,
+        db,
+        *,
+        progress,
+        answer_update: _ProgressAnswerUpdate,
+    ) -> None:
+        effective_available_items_count = _available_items_count(
+            explicit_value=answer_update.available_items_count,
+            metadata_snapshot=answer_update.metadata_snapshot,
+            current_value=progress.available_items_count,
+        )
+        answer_events = await self._progress_repo.list_topic_answer_events(
+            db,
+            user_id=answer_update.user_id,
+            level=answer_update.level,
+            theme=answer_update.theme,
+        )
+        answer_events = _with_current_event(
+            answer_events,
+            item_id=answer_update.item_id,
+            is_correct=answer_update.is_correct,
+            answered_at=answer_update.answered_at,
+        )
+        mistake_signals = await self._progress_repo.get_topic_mistake_signals(
+            db,
+            user_id=answer_update.user_id,
+            level=answer_update.level,
+            theme=answer_update.theme,
+        )
+        unique_items_seen = len({event.item_id for event in answer_events})
+        scores = calculate_topic_scores(
+            total_answered=int(progress.total_answered or 0),
+            accuracy_score=progress.accuracy,
+            unique_items_seen=unique_items_seen,
+            available_items_count=effective_available_items_count,
+            last_answered_at=progress.last_answered_at,
+            answer_events=answer_events,
+            mistake_signals=mistake_signals,
+            now=answer_update.answered_at,
+        )
+        await self._progress_repo.apply_topic_scores(
+            db,
+            progress,
+            scores=scores,
+            unique_items_seen=unique_items_seen,
+            available_items_count=effective_available_items_count,
+            theme_key=answer_update.theme_key,
+            now=answer_update.answered_at,
+        )
 
     async def get_user_summary(self, db, telegram_user_id: int) -> list:
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
         if user is None:
             return []
-        return await self._progress_repo.get_user_summary(db, user_id=user.id)
+        records = await self._progress_repo.get_user_summary(db, user_id=user.id)
+        _refresh_recency_for_display(records)
+        return records
 
     async def get_level_theme_summary(
         self,
@@ -81,9 +201,53 @@ class ProgressService:
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
         if user is None:
             return []
-        return await self._progress_repo.get_level_theme_summary(
+        records = await self._progress_repo.get_level_theme_summary(
             db,
             user_id=user.id,
             level=level,
             theme=theme,
         )
+        _refresh_recency_for_display(records)
+        return records
+
+    def build_recommendation_text(self, progress_records: list[object]) -> str:
+        return build_progress_recommendation(progress_records).copy_de
+
+
+def _available_items_count(
+    *,
+    explicit_value: int | None,
+    metadata_snapshot: dict[str, object] | None,
+    current_value: int | None,
+) -> int | None:
+    if explicit_value is not None:
+        return explicit_value
+    if metadata_snapshot is not None:
+        raw_value = metadata_snapshot.get("available_items_count")
+        if isinstance(raw_value, int) and raw_value >= 0:
+            return raw_value
+    return current_value
+
+
+def _with_current_event(
+    answer_events: list[TopicAnswerEvent],
+    *,
+    item_id: str | None,
+    is_correct: bool,
+    answered_at: datetime,
+) -> list[TopicAnswerEvent]:
+    if not item_id:
+        return answer_events
+    if any(event.item_id == item_id and event.answered_at == answered_at for event in answer_events):
+        return answer_events
+    return [
+        *answer_events,
+        TopicAnswerEvent(item_id=item_id, is_correct=is_correct, answered_at=answered_at),
+    ]
+
+
+def _refresh_recency_for_display(progress_records: list[object]) -> None:
+    for record in progress_records:
+        if not hasattr(record, "last_answered_at") or not hasattr(record, "recency_score"):
+            continue
+        record.recency_score = recency_risk_score(getattr(record, "last_answered_at", None))

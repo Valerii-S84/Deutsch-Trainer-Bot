@@ -11,6 +11,7 @@ from app.bot.formatting import escape_markdown_text
 from app.bot.keyboards.main_menu import build_back_to_main_menu_button
 from app.bot.keyboards.quiz import build_question_options_keyboard
 from app.bot.keyboards.review import build_review_empty_keyboard
+from app.bot.keyboards.subscription import build_paywall_keyboard
 from app.bot.texts import (
     CALLBACK_REVIEW,
     REVIEW_EMPTY_STATE_TEXT,
@@ -21,6 +22,8 @@ from app.bot.texts import (
     TRAINING_QUESTION_TEMPLATE,
     TRAINING_SESSION_ERROR_TEXT,
     TRAINING_SESSION_RESUME_TEXT,
+    PAYWALL_MISTAKE_REPEAT_TEXT,
+    PAYWALL_DAILY_LIMIT_TEXT,
 )
 from app.db.session import get_session as _get_session
 from app.quiz_bank.errors import (
@@ -30,6 +33,7 @@ from app.quiz_bank.errors import (
     QuizBankValidationError,
 )
 from app.services.mistakes import MistakeService
+from app.services.entitlements import EntitlementDeniedError, DailyLimitExceededError, EntitlementService
 from app.services.training_session import (
     ActiveSessionConflictError,
     NoMoreQuestionsError,
@@ -40,7 +44,10 @@ from app.services.training_session import (
 
 router = Router(name="review")
 
-review_service = TrainingSessionService(mistakes_service=MistakeService())
+review_service = TrainingSessionService(
+    mistakes_service=MistakeService(),
+    entitlement_service=EntitlementService(),
+)
 
 
 def _extract_user_id(event: CallbackQuery) -> int | None:
@@ -110,6 +117,20 @@ async def handle_review_entry(callback_query: CallbackQuery) -> None:
             await callback_query.message.answer(
                 REVIEW_EMPTY_STATE_TEXT,
                 reply_markup=build_review_empty_keyboard(),
+            )
+            return
+        except EntitlementDeniedError:
+            await db.rollback()
+            await callback_query.message.answer(
+                PAYWALL_MISTAKE_REPEAT_TEXT,
+                reply_markup=build_paywall_keyboard(),
+            )
+            return
+        except DailyLimitExceededError:
+            await db.rollback()
+            await callback_query.message.answer(
+                PAYWALL_DAILY_LIMIT_TEXT,
+                reply_markup=build_paywall_keyboard(include_progress=True),
             )
             return
         except ActiveSessionConflictError:
