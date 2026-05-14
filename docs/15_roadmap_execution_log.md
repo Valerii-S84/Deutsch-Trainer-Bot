@@ -69,7 +69,13 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 
 ## Milestone 2+ — Code/migration/data work
 
-- Старт відкрито після завершення Milestone 1.
+- 2026-05-14: старт відкрито після Milestone 1, оновлено до стану базового
+  data layer execution.
+- 2026-05-14: виконано:
+  - schema-моделі `users`, `quiz_sessions`, `user_answers`, `progress`,
+    `mistakes`, `subscriptions`, `payments`, `analytics_events`;
+  - початкова Alembic міграція `202605140001_initial_schema.py`;
+  - оновлення логу виконання та базових тести для metadata/constraints/indexes.
 
 ## Активні ризики (витяг з roadmap, секції 19)
 
