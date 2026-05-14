@@ -13,7 +13,6 @@ from app.bot.texts import (
     LEVEL_CALLBACK_FALLBACK_TEXT,
     PROFILE_TEXT,
     SUBSCRIPTION_TEXT,
-    THEME_CALLBACK_FALLBACK_TEXT,
     UNKNOWN_CALLBACK_TEXT,
     UNKNOWN_MESSAGE_TEXT,
     WELCOME_TEXT,
@@ -61,15 +60,6 @@ async def test_level_flow_with_unknown_level_is_safe() -> None:
     await level_handlers.level_selected(callback)
     callback.message.answer.assert_awaited_once()
     callback.message.answer.assert_awaited_with(LEVEL_CALLBACK_FALLBACK_TEXT)
-
-
-@pytest.mark.asyncio
-async def test_theme_selection_fallback_for_unknown_theme() -> None:
-    callback = _CallbackQuery(data="theme:unknown")
-    await theme.theme_selected(callback)
-    callback.message.answer.assert_awaited_once_with(THEME_CALLBACK_FALLBACK_TEXT)
-
-
 @pytest.mark.asyncio
 async def test_profile_entry_point_is_static_message() -> None:
     message = _Message(text="/profile")

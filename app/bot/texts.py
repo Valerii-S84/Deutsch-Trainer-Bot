@@ -11,8 +11,7 @@ WELCOME_TEXT = (
 MENU_PROMPT = "Was möchtest du als Nächstes tun?"
 
 TRAINING_PROMPT = (
-    "📘 Wähle ein Level, um eine neue Übung einzuleiten. "
-    "Der eigentliche Quiz-Flow wird in einem späteren Meilenstein implementiert."
+    "📘 Wähle ein Level, um eine neue Übungsrunde zu starten."
 )
 
 LEVEL_SELECTED_TEXT = "✅ {level} wurde ausgewählt. Jetzt wähle bitte ein Thema."
@@ -20,11 +19,12 @@ LEVEL_SELECTED_TEXT = "✅ {level} wurde ausgewählt. Jetzt wähle bitte ein The
 THEME_PROMPT = "📚 Wähle ein Thema für die nächste Übung."
 
 THEME_SELECTED_TEXT = (
-    "✅ Thema *{theme}* ist gewählt. "
-    "Die Trainingsauslieferung ist in dieser Milestone noch nicht aktiv."
+    "✅ Thema *{theme}* ist gewählt für Niveau *{level}*. "
+    "Die erste Frage wird geladen."
 )
 
 THEME_ENTRY_TEXT = "🎯 Wähle zuerst ein Thema für dein Training."
+TRAINING_NEW_SESSION_BUTTON_TEXT = "🆕 Neues Training"
 
 LEVEL_CALLBACK_FALLBACK_TEXT = (
     "⚠️ Dieses Niveau ist aktuell nicht verfügbar. "
@@ -81,3 +81,46 @@ CALLBACK_PROFILE = "menu:profile"
 CALLBACK_SUBSCRIPTION = "menu:subscription"
 CALLBACK_LEVEL_PREFIX = "level:"
 CALLBACK_THEME_PREFIX = "theme:"
+
+CALLBACK_TRAIN_ANSWER_PREFIX = "train:ans"
+CALLBACK_TRAIN_NEXT_PREFIX = "train:next"
+CALLBACK_TRAIN_RESUME_PREFIX = "train:resume"
+CALLBACK_TRAIN_NEW_PREFIX = "train:new"
+CALLBACK_TRAIN_CANCEL_PREFIX = "train:cancel"
+
+TRAINING_QUESTION_TEMPLATE = (
+    "🧠 Frage {position}/{total}\n\n{question_text}\n\n"
+    "Wähle eine Antwort mit einem Button."
+)
+TRAINING_CORRECT_ANSWER_TEXT = "✅ Richtig! Das ist die korrekte Antwort."
+TRAINING_INCORRECT_ANSWER_TEXT = "❌ Nicht korrekt. Richtige Antwort: `{correct_answer}`."
+TRAINING_ANSWER_DUPLICATE_TEXT = "⚠️ Diese Frage wurde bereits beantwortet."
+TRAINING_EXPLANATION_TEXT = "💡 Erklärung: {explanation}"
+TRAINING_NEXT_BUTTON_TEXT = "➡️ Nächste Frage"
+TRAINING_FINISH_TEXT = (
+    "🎉 Training beendet!\n\n"
+    "✅ Richtig: {correct}/{total} ({percent}%)"
+)
+TRAINING_SESSION_RESUME_TEXT = (
+    "⚠️ Du hast bereits eine aktive Trainingsrunde.\n"
+    "Möchtest du sie fortsetzen oder eine neue Runde starten?"
+)
+TRAINING_RESUME_NO_ACTIVE_TEXT = (
+    "⚠️ Die aktive Sitzung wurde bereits abgeschlossen oder nicht mehr gefunden."
+)
+TRAINING_SESSION_COMPLETED_TEXT = "🏁 Diese Runde ist bereits beendet."
+TRAINING_SESSION_CANCELLED_TEXT = "✅ Sitzung wurde beendet."
+TRAINING_NO_LEVEL_SELECTED_TEXT = "⚠️ Bitte wähle zuerst ein Niveau bevor du ein Thema auswählst."
+TRAINING_THEME_NOT_AVAILABLE_TEXT = "⚠️ Dieses Thema ist aktuell nicht verfügbar."
+
+TRAINING_QUIZBANK_AUTH_ERROR_TEXT = (
+    "🔒 Quiz-Bank Authentifizierung fehlgeschlagen. Bitte versuche es später erneut."
+)
+TRAINING_QUIZBANK_RATE_LIMIT_TEXT = (
+    "⏳ Quiz-Bank ist gerade ausgelastet. Bitte in einem Moment erneut versuchen."
+)
+TRAINING_QUIZBANK_UNAVAILABLE_TEXT = (
+    "🌐 Quiz-Bank ist vorübergehend nicht erreichbar. Bitte versuche es später erneut."
+)
+TRAINING_QUIZBANK_VALIDATION_TEXT = "⚠️ Quiz-Frage-Daten sind ungültig."
+TRAINING_SESSION_ERROR_TEXT = "⚠️ Trainingsrunde konnte nicht geladen werden. Bitte erneut versuchen."

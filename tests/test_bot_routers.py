@@ -8,7 +8,7 @@ from app.bot.middlewares.logging import LoggingMiddleware
 def test_root_router_contains_all_feature_routers() -> None:
     router = build_root_router()
     names = {sub.name for sub in router.sub_routers}
-    assert names == {"start", "menu", "level", "theme", "profile", "subscription", "fallback"}
+    assert names == {"start", "menu", "level", "theme", "training", "profile", "subscription", "fallback"}
 
 
 def test_dispatcher_includes_root_router() -> None:

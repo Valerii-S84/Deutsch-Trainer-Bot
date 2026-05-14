@@ -148,3 +148,42 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 ### Критерії для завершення milestone
 
 - повна продакшн-сумісна інтеграція без флоу доставки quiz-питань у цьому milestone.
+
+## Milestone 5 — Training Session Engine
+
+### Поточний статус
+
+`2026-05-14`: core flow implemented (runtime session service, repos, handler flow, keyboards, docs).
+
+### Що виконано в цьому вікні
+
+- додано/оновлено runtime-оркестратор `TrainingSessionService` (`app/services/training_session.py`):
+  - bootstrap користувача з `users` repo;
+  - створення/закриття сесій (`active`/`completed`/`cancelled`/`failed`);
+  - запит питання через `QuizBankService.request_quiz(... )`;
+  - кешування pending питання в `api_metadata`;
+  - обробка відповіді з перевіркою duplicate та захистом від дублювання score;
+  - завершення сесії при досягненні `total_questions`.
+- додано/підтримано репозиторії:
+  - `app/repositories/users.py`
+  - `app/repositories/quiz_sessions.py`
+  - `app/repositories/answers.py`
+- додано training callbacks/UI:
+  - start by theme, next question, finish, resume, new, cancel;
+  - безпечний callback (короткий, без повного тексту питання), пояснення після відповіді;
+  - дубль відповідей не створює новий answer і не змінює `correct_answers`.
+- додано тести:
+  - `tests/test_training_session_service.py`
+  - `tests/test_training_handlers.py`
+  - `tests/test_quiz_keyboards.py`
+- оновлено тексти/маршрутизацію/клавіатуру:
+  - `app/bot/texts.py`
+  - `app/bot/keyboards/quiz.py`
+  - `app/bot/handlers/training.py`
+  - `app/bot/routers.py`
+
+### Відкриті для наступних milestone
+
+- розгорнута progress aggregation (Milestone 6)
+- mistakes lifecycle/review (Milestone 7)
+- paywall/subscription/payment logic (Milestone 8/9)

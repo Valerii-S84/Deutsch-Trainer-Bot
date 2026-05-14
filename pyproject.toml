@@ -27,6 +27,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "asyncio: marks tests using asyncio event loop",
+]
 
 [tool.setuptools]
 package-dir = {"" = "."}

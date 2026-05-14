@@ -12,10 +12,15 @@ from app.bot.texts import (
 )
 
 
-def build_theme_keyboard():
+def build_theme_keyboard(selected_level: str | None = None):
     builder = InlineKeyboardBuilder()
+    selected_level = (selected_level or "").strip()
     for theme in THEMES:
-        builder.button(text=theme, callback_data=f"{CALLBACK_THEME_PREFIX}{theme.lower()}")
+        key = f"{selected_level}:{theme.lower()}"
+        builder.button(
+            text=theme,
+            callback_data=f"{CALLBACK_THEME_PREFIX}{key}",
+        )
     builder.button(text=MENU_BUTTON_HOME, callback_data=CALLBACK_HOME)
     builder.adjust(2)
     return builder.as_markup()

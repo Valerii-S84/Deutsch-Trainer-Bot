@@ -40,5 +40,5 @@ async def level_selected(callback_query: CallbackQuery) -> None:
     if callback_query.message is not None:
         await callback_query.message.answer(
             LEVEL_SELECTED_TEXT.format(level=level),
-            reply_markup=build_theme_keyboard(),
+            reply_markup=build_theme_keyboard(selected_level=level),
         )
