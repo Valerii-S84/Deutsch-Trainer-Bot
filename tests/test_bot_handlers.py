@@ -62,7 +62,13 @@ class _CallbackQuery:
     def __init__(self, data: str | None = None, text: str | None = None) -> None:
         self.data = data
         self.message = _Message(text=text, first_name="Test")
+        self.from_user = SimpleNamespace(id=111)
         self.answer = AsyncMock()
+
+
+class _TrainingService:
+    def __init__(self) -> None:
+        self.cancel_active_session = AsyncMock(return_value=True)
 
 
 @pytest.mark.asyncio
@@ -86,9 +92,17 @@ async def test_start_handler_shows_main_menu_and_remembers_user(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_open_menu_from_callback_shows_menu() -> None:
+async def test_open_menu_from_callback_shows_menu(monkeypatch) -> None:
+    db = _Db()
+    training_service = _TrainingService()
+    monkeypatch.setattr(menu, "_session_factory", lambda: _SessionContext(db))
+    monkeypatch.setattr(menu, "_training_service", training_service)
+
     callback = _CallbackQuery(data="bot:home", text="menu")
     await menu.open_menu_from_callback(callback)
+
+    training_service.cancel_active_session.assert_awaited_once_with(db, 111)
+    db.commit.assert_awaited_once()
     callback.message.answer.assert_awaited_once()
     callback.answer.assert_awaited_once()
 

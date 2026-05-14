@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import quote
+from uuid import uuid4
 
 import httpx
 
@@ -18,6 +22,8 @@ from .errors import (
     QuizBankValidationError,
 )
 from .schemas import QuizBankErrorResponse
+
+logger = logging.getLogger(__name__)
 
 
 def _as_str_secret(value: object) -> str | None:
@@ -40,6 +46,8 @@ class QuizBankAsyncClient:
         consumer_id: str | None = None,
         timeout_seconds: int = 3,
         max_retries: int = 2,
+        circuit_breaker_failure_threshold: int = 3,
+        circuit_breaker_reset_seconds: int = 30,
         settings: Settings | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -70,17 +78,24 @@ class QuizBankAsyncClient:
         self._consumer_id = resolved_consumer_id
         self._timeout_seconds = resolved_timeout
         self._max_retries = resolved_retries
+        self._circuit_breaker_failure_threshold = max(1, circuit_breaker_failure_threshold)
+        self._circuit_breaker_reset_seconds = max(1, circuit_breaker_reset_seconds)
+        self._consecutive_transient_failures = 0
+        self._circuit_open_until = 0.0
         self._http_client = http_client or httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout_seconds)
 
     @property
     def base_url(self) -> str:
         return self._base_url
 
-    def _auth_headers(self) -> dict[str, str]:
+    def _headers(self, request_id: str) -> dict[str, str]:
         return {
             "X-API-Key": self._edge_api_key,
             "X-QuizBank-API-Key": self._consumer_api_key,
             "X-Consumer-Id": self._consumer_id,
+            "X-Request-Id": request_id,
+            "Accept": "application/json",
+            "User-Agent": "deutsch-trainer-bot/0.1",
         }
 
     async def close(self) -> None:
@@ -94,25 +109,28 @@ class QuizBankAsyncClient:
         *,
         params: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        self._raise_if_circuit_open(path)
         timeout = httpx.Timeout(self._timeout_seconds)
         attempt = 0
         max_attempts = max(0, self._max_retries) + 1
+        can_retry = method.upper() == "GET"
 
         while attempt < max_attempts:
             attempt += 1
-            request_id = f"qb-{attempt}-{id(self)}"
+            request_id = f"qb-{uuid4().hex}"
             try:
                 response = await self._http_client.request(
                     method=method,
                     url=path,
                     params=params,
-                    headers=self._auth_headers(),
+                    headers=self._headers(request_id),
                     timeout=timeout,
                 )
             except httpx.RequestError as exc:
-                if attempt < max_attempts:
+                if can_retry and attempt < max_attempts:
                     await self._sleep_with_backoff(attempt, self._max_retries)
                     continue
+                self._record_transient_failure(path, request_id=request_id, error_category="transport")
                 raise QuizBankUnavailableError(
                     "Quiz Bank API request failed after retries",
                     request_id=request_id,
@@ -120,6 +138,7 @@ class QuizBankAsyncClient:
                 ) from exc
 
             if response.status_code == 401 or response.status_code == 403:
+                self._record_permanent_error(path, response.status_code, request_id, "auth")
                 raise QuizBankAuthError(
                     "Quiz Bank authentication failed",
                     status_code=response.status_code,
@@ -128,6 +147,7 @@ class QuizBankAsyncClient:
                 )
 
             if response.status_code == 404:
+                self._record_permanent_error(path, response.status_code, request_id, "not_found")
                 raise QuizBankUnavailableError(
                     "Quiz Bank content not found",
                     status_code=response.status_code,
@@ -136,9 +156,15 @@ class QuizBankAsyncClient:
                 )
 
             if response.status_code == 429:
-                if attempt < max_attempts:
+                if can_retry and attempt < max_attempts:
                     await self._sleep_with_backoff(attempt, self._max_retries)
                     continue
+                self._record_transient_failure(
+                    path,
+                    request_id=request_id,
+                    status_code=response.status_code,
+                    error_category="rate_limit",
+                )
                 raise QuizBankRateLimitError(
                     "Quiz Bank API rate limit exceeded",
                     status_code=response.status_code,
@@ -147,9 +173,15 @@ class QuizBankAsyncClient:
                 )
 
             if 500 <= response.status_code < 600:
-                if attempt < max_attempts:
+                if can_retry and attempt < max_attempts:
                     await self._sleep_with_backoff(attempt, self._max_retries)
                     continue
+                self._record_transient_failure(
+                    path,
+                    request_id=request_id,
+                    status_code=response.status_code,
+                    error_category="server",
+                )
                 raise QuizBankUnavailableError(
                     "Quiz Bank API server error",
                     status_code=response.status_code,
@@ -167,6 +199,7 @@ class QuizBankAsyncClient:
                     pass
                 except Exception:
                     message = "Quiz Bank API returned invalid JSON error response"
+                self._record_permanent_error(path, response.status_code, request_id, "validation")
                 raise QuizBankValidationError(
                     message,
                     status_code=response.status_code,
@@ -174,6 +207,7 @@ class QuizBankAsyncClient:
                     request_id=request_id,
                 )
 
+            self._reset_circuit()
             return self._parse_json(response)
 
         # Defensive fallback; loop should return or raise above.
@@ -181,6 +215,51 @@ class QuizBankAsyncClient:
             "Quiz Bank API request was not completed",
             endpoint=path,
         )
+
+    def _raise_if_circuit_open(self, path: str) -> None:
+        if time.monotonic() < self._circuit_open_until:
+            raise QuizBankUnavailableError(
+                "Quiz Bank API circuit breaker is open",
+                endpoint=path,
+            )
+
+    def _record_transient_failure(
+        self,
+        path: str,
+        *,
+        request_id: str,
+        error_category: str,
+        status_code: int | None = None,
+    ) -> None:
+        self._consecutive_transient_failures += 1
+        if self._consecutive_transient_failures >= self._circuit_breaker_failure_threshold:
+            self._circuit_open_until = time.monotonic() + self._circuit_breaker_reset_seconds
+        logger.warning(
+            "quiz_bank_api_error endpoint=%s status_code=%s request_id=%s category=%s",
+            path,
+            status_code,
+            request_id,
+            error_category,
+        )
+
+    def _record_permanent_error(
+        self,
+        path: str,
+        status_code: int,
+        request_id: str,
+        error_category: str,
+    ) -> None:
+        logger.warning(
+            "quiz_bank_api_error endpoint=%s status_code=%s request_id=%s category=%s",
+            path,
+            status_code,
+            request_id,
+            error_category,
+        )
+
+    def _reset_circuit(self) -> None:
+        self._consecutive_transient_failures = 0
+        self._circuit_open_until = 0.0
 
     async def _sleep_with_backoff(self, attempt: int, max_retries: int) -> None:
         delay = 0.05 * (2 ** (attempt - 1))
@@ -225,6 +304,37 @@ class QuizBankAsyncClient:
             params["count"] = 1
 
         return await self.request_json("GET", "/questions", params=params)
+
+    async def fetch_health(self) -> dict[str, Any]:
+        return await self.request_json("GET", "/health")
+
+    async def fetch_levels(self) -> dict[str, Any]:
+        return await self.request_json("GET", "/levels")
+
+    async def fetch_themes(
+        self,
+        *,
+        level: str,
+        include_counts: bool = True,
+        active_only: bool = True,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "GET",
+            f"/levels/{quote(level.strip(), safe='')}/themes",
+            params={
+                "include_counts": include_counts,
+                "active_only": active_only,
+            },
+        )
+
+    async def fetch_availability(self, *, level: str, theme: str) -> dict[str, Any]:
+        return await self.request_json("GET", "/availability", params={"level": level, "theme": theme})
+
+    async def fetch_question(self, *, item_id: str) -> dict[str, Any]:
+        return await self.request_json("GET", f"/questions/{quote(item_id.strip(), safe='')}")
+
+    async def fetch_metadata(self) -> dict[str, Any]:
+        return await self.request_json("GET", "/metadata")
 
     def _compact_context(self, user_context: Mapping[str, Any]) -> dict[str, Any]:
         items: dict[str, Any] = {}

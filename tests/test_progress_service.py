@@ -49,10 +49,41 @@ class _StaticUserRepository(UserRepository):
         return user
 
 
+class _FakeProgressHistoryRepository:
+    def __init__(self) -> None:
+        self.records: list[dict[str, object]] = []
+
+    def snapshot_scores(self, progress: Progress) -> dict[str, object]:
+        return {
+            "total_answered": int(progress.total_answered or 0),
+            "total_correct": int(progress.total_correct or 0),
+            "accuracy": float(progress.accuracy or 0),
+            "topic_status": progress.topic_status,
+        }
+
+    async def record_answer_change(self, db, *, progress: Progress, **kwargs: object) -> None:
+        self.records.append(
+            {
+                "progress_id": progress.id,
+                "total_answered": progress.total_answered,
+                "total_correct": progress.total_correct,
+                **kwargs,
+            },
+        )
+
+
+def _progress_service(user_repo: _StaticUserRepository) -> ProgressService:
+    return ProgressService(
+        user_repo=user_repo,
+        progress_history_repo=_FakeProgressHistoryRepository(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_record_answer_result_creates_progress_for_first_answer(db_session: AsyncSession) -> None:
     user_repo = _StaticUserRepository()
-    service = ProgressService(user_repo=user_repo)
+    history_repo = _FakeProgressHistoryRepository()
+    service = ProgressService(user_repo=user_repo, progress_history_repo=history_repo)
     user = await user_repo.create_if_missing(db_session, telegram_user_id=1111)
 
     progress = await service.record_answer_result(
@@ -68,12 +99,14 @@ async def test_record_answer_result_creates_progress_for_first_answer(db_session
     assert progress.total_answered == 1
     assert progress.total_correct == 1
     assert progress.accuracy == Decimal("100.00")
+    assert len(history_repo.records) == 1
+    assert history_repo.records[0]["reason_code"] == "answer_accepted"
 
 
 @pytest.mark.asyncio
 async def test_record_answer_result_updates_total_answered(db_session: AsyncSession) -> None:
     user_repo = _StaticUserRepository()
-    service = ProgressService(user_repo=user_repo)
+    service = _progress_service(user_repo)
     user = await user_repo.create_if_missing(db_session, telegram_user_id=1112)
 
     first = await service.record_answer_result(
@@ -101,7 +134,7 @@ async def test_record_answer_result_updates_total_answered(db_session: AsyncSess
 @pytest.mark.asyncio
 async def test_record_answer_result_updates_correct_only_for_correct_answers(db_session: AsyncSession) -> None:
     user_repo = _StaticUserRepository()
-    service = ProgressService(user_repo=user_repo)
+    service = _progress_service(user_repo)
     user = await user_repo.create_if_missing(db_session, telegram_user_id=1113)
 
     await service.record_answer_result(
@@ -128,7 +161,7 @@ async def test_record_answer_result_updates_correct_only_for_correct_answers(db_
 @pytest.mark.asyncio
 async def test_record_answer_result_calculates_accuracy(db_session: AsyncSession) -> None:
     user_repo = _StaticUserRepository()
-    service = ProgressService(user_repo=user_repo)
+    service = _progress_service(user_repo)
     user = await user_repo.create_if_missing(db_session, telegram_user_id=1114)
 
     await service.record_answer_result(
@@ -164,7 +197,7 @@ async def test_record_answer_result_calculates_accuracy(db_session: AsyncSession
 @pytest.mark.asyncio
 async def test_record_answer_result_does_not_change_progress_for_duplicate(db_session: AsyncSession) -> None:
     user_repo = _StaticUserRepository()
-    service = ProgressService(user_repo=user_repo)
+    service = _progress_service(user_repo)
     user = await user_repo.create_if_missing(db_session, telegram_user_id=1115)
 
     first = await service.record_answer_result(

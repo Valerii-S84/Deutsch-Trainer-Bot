@@ -111,6 +111,9 @@ TRAINING_FINISH_TEXT = (
     "🎉 Training beendet!\n\n"
     "✅ Richtig: {correct}/{total} ({percent}%)"
 )
+TRAINING_FINISH_NEW_MISTAKES_TEXT = "🧠 Neue Fehler: {count}"
+TRAINING_FINISH_WEAK_THEME_TEXT = "🎯 Schwerpunkt: {theme}"
+TRAINING_FINISH_RECOMMENDATION_TEXT = "➡️ Empfehlung: {recommendation}"
 TRAINING_SESSION_RESUME_TEXT = (
     "⚠️ Du hast bereits eine aktive Trainingsrunde.\n"
     "Möchtest du sie fortsetzen oder eine neue Runde starten?"

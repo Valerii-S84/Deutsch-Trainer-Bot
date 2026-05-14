@@ -199,11 +199,29 @@ class FakeDb:
     pass
 
 
+class FakeMistakeHistoryRepository:
+    def __init__(self) -> None:
+        self.records: list[dict[str, object]] = []
+
+    async def record(self, db, *, mistake: FakeMistake, event_type: str, **kwargs: object) -> None:
+        self.records.append({"mistake_id": mistake.id, "event_type": event_type, **kwargs})
+
+
+def _mistake_service(user_repo: FakeUserRepository, repo: FakeMistakeRepository) -> MistakeService:
+    return MistakeService(
+        user_repo=user_repo,
+        mistake_repo=repo,
+        mistake_history_repo=FakeMistakeHistoryRepository(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_record_wrong_answer_creates_new_mistake_on_first_wrong() -> None:
+    history_repo = FakeMistakeHistoryRepository()
     service = MistakeService(
         user_repo=FakeUserRepository(),
         mistake_repo=FakeMistakeRepository(),
+        mistake_history_repo=history_repo,
     )
     db = FakeDb()
 
@@ -220,13 +238,15 @@ async def test_record_wrong_answer_creates_new_mistake_on_first_wrong() -> None:
     assert mistake is not None
     assert mistake.external_quiz_id == "q1"
     assert mistake.mistake_count == 1
+    assert len(history_repo.records) == 1
+    assert history_repo.records[0]["event_type"] == "wrong_created"
 
 
 @pytest.mark.asyncio
 async def test_record_wrong_answer_increments_count_for_active_repeat() -> None:
     user_repo = FakeUserRepository()
     repo = FakeMistakeRepository()
-    service = MistakeService(user_repo=user_repo, mistake_repo=repo)
+    service = _mistake_service(user_repo, repo)
     db = FakeDb()
 
     await service.record_wrong_answer(
@@ -258,7 +278,7 @@ async def test_record_wrong_answer_increments_count_for_active_repeat() -> None:
 async def test_record_wrong_answer_is_duplicate_does_not_change_state() -> None:
     user_repo = FakeUserRepository()
     repo = FakeMistakeRepository()
-    service = MistakeService(user_repo=user_repo, mistake_repo=repo)
+    service = _mistake_service(user_repo, repo)
     db = FakeDb()
 
     first = await service.record_wrong_answer(
@@ -292,7 +312,7 @@ async def test_record_wrong_answer_is_duplicate_does_not_change_state() -> None:
 async def test_record_wrong_answer_reopens_resolved_mistake() -> None:
     user_repo = FakeUserRepository()
     repo = FakeMistakeRepository()
-    service = MistakeService(user_repo=user_repo, mistake_repo=repo)
+    service = _mistake_service(user_repo, repo)
     db = FakeDb()
 
     first = await service.record_wrong_answer(
@@ -335,7 +355,7 @@ async def test_record_wrong_answer_reopens_resolved_mistake() -> None:
 async def test_get_weak_areas_uses_repository_summary() -> None:
     user_repo = FakeUserRepository()
     repo = FakeMistakeRepository()
-    service = MistakeService(user_repo=user_repo, mistake_repo=repo)
+    service = _mistake_service(user_repo, repo)
     db = FakeDb()
 
     await service.record_wrong_answer(

@@ -4,14 +4,20 @@ import pytest
 from pydantic import ValidationError
 
 from app.quiz_bank import (
+    QuizAvailabilityResponse,
     QuizAnswerOption,
     QuizBankErrorResponse,
     QuizCorrectAnswerReference,
+    QuizHealthResponse,
     QuizItem,
+    QuizLevelsResponse,
+    QuizMetadataResponse,
     QuizQuestionExplanation,
+    QuizQuestionLookupResponse,
     QuizRequestLimit,
     QuizSourceMetadata,
     QuizQuestionsResponse,
+    QuizThemesResponse,
 )
 
 
@@ -41,6 +47,25 @@ def test_quiz_item_validates_option_count_and_correct_reference() -> None:
     }
     item = QuizItem.model_validate(payload)
     assert item.item_id == "itm-1"
+    assert item.correct_answer.option_id == "o1"
+
+
+def test_quiz_item_accepts_string_correct_answer_reference() -> None:
+    item = QuizItem.model_validate(
+        {
+            "item_id": "itm-1",
+            "level": "A1",
+            "theme": "Artikel",
+            "question_text": "Was ist korrekt?",
+            "answer_options": [
+                {"option_id": "o1", "text": "A"},
+                {"option_id": "o2", "text": "B"},
+            ],
+            "correct_answer": "o1",
+            "explanation": "Richtig.",
+            "metadata": {"progress_theme_key": "artikel"},
+        },
+    )
     assert item.correct_answer.option_id == "o1"
 
 
@@ -133,6 +158,114 @@ def test_quiz_question_batch_schema_rejects_wrong_count() -> None:
     }
     with pytest.raises(ValidationError):
         QuizQuestionsResponse.model_validate(payload)
+
+
+def test_quiz_question_batch_schema_rejects_mismatched_returned_count() -> None:
+    payload = {
+        "items": [
+            {
+                "item_id": "itm-1",
+                "level": "A1",
+                "theme": "Artikel",
+                "question_text": "Was ist korrekt?",
+                "answer_options": [
+                    {"option_id": "o1", "text": "A"},
+                    {"option_id": "o2", "text": "B"},
+                ],
+                "correct_answer": {"option_id": "o1"},
+                "explanation": "Richtig.",
+                "metadata": {"progress_theme_key": "artikel"},
+            }
+        ],
+        "requested_count": 2,
+        "returned_count": 2,
+    }
+    with pytest.raises(ValidationError):
+        QuizQuestionsResponse.model_validate(payload)
+
+
+def test_quiz_item_requires_progress_theme_key_metadata() -> None:
+    payload = {
+        "item_id": "itm-1",
+        "level": "A1",
+        "theme": "Artikel",
+        "question_text": "Was ist korrekt?",
+        "answer_options": [
+            {"option_id": "o1", "text": "A"},
+            {"option_id": "o2", "text": "B"},
+        ],
+        "correct_answer": {"option_id": "o1"},
+        "explanation": "Richtig.",
+        "metadata": {"skill_area": "grammar"},
+    }
+    with pytest.raises(ValidationError):
+        QuizItem.model_validate(payload)
+
+
+def test_catalog_and_lookup_schemas_validate() -> None:
+    health = QuizHealthResponse.model_validate(
+        {
+            "status": "ok",
+            "service": "quiz-bank",
+            "checked_at": "2026-05-14T10:00:00Z",
+        },
+    )
+    levels = QuizLevelsResponse.model_validate(
+        {"levels": [{"code": "A1", "display_name": "A1", "is_active": True}]},
+    )
+    themes = QuizThemesResponse.model_validate(
+        {
+            "level": "A1",
+            "themes": [
+                {
+                    "theme": "Artikel",
+                    "theme_key": "artikel",
+                    "available_items_count": 12,
+                    "is_active": True,
+                }
+            ],
+        },
+    )
+    availability = QuizAvailabilityResponse.model_validate(
+        {
+            "level": "A1",
+            "theme": "Artikel",
+            "theme_key": "artikel",
+            "available_items_count": 12,
+            "generated_at": "2026-05-14T10:00:00Z",
+        },
+    )
+    metadata = QuizMetadataResponse.model_validate(
+        {
+            "levels": ["A1"],
+            "themes": ["Artikel"],
+            "metadata_version": "v1",
+            "generated_at": "2026-05-14T10:00:00Z",
+        },
+    )
+    lookup = QuizQuestionLookupResponse.model_validate(
+        {
+            "item_id": "itm-1",
+            "level": "A1",
+            "theme": "Artikel",
+            "question_text": "Was ist korrekt?",
+            "answer_options": [
+                {"option_id": "o1", "text": "A"},
+                {"option_id": "o2", "text": "B"},
+            ],
+            "correct_answer": "o1",
+            "explanation": "Richtig.",
+            "metadata": {"progress_theme_key": "artikel"},
+            "is_active": True,
+        },
+    )
+
+    assert health.status == "ok"
+    assert levels.levels[0].code == "A1"
+    assert themes.themes[0].theme_key == "artikel"
+    assert availability.available_items_count == 12
+    assert metadata.metadata_version == "v1"
+    assert lookup.is_active is True
 
 
 def test_api_error_schema_parses() -> None:

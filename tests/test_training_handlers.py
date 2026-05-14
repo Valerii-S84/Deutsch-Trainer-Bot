@@ -223,6 +223,34 @@ async def test_handle_submit_answer_shows_duplicate_warning_and_next_button(monk
 
 
 @pytest.mark.asyncio
+async def test_handle_submit_answer_shows_correct_answer_text_not_option_id(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.submit_answer.return_value = AnswerResult(
+        selected_answer="b",
+        correct_answer="a",
+        question_token="tok12345",
+        is_correct=False,
+        is_duplicate=False,
+        is_completed=False,
+        explanation=None,
+        correct_answers=0,
+        total_questions=3,
+        session_id=10,
+        correct_answer_text="Option A",
+    )
+
+    _patch_service(monkeypatch, service, db)
+
+    callback = _Callback(data="train:ans:10:tok12345:b")
+    await training.handle_submit_answer(callback)
+
+    text = _extract_text(callback.message.answer.await_args)
+    assert "Option A" in text
+    assert "`a`" not in text
+
+
+@pytest.mark.asyncio
 async def test_handle_next_question_shows_new_question(monkeypatch) -> None:
     db = FakeDb()
     service = AsyncMock()
@@ -237,7 +265,12 @@ async def test_handle_next_question_shows_new_question(monkeypatch) -> None:
     callback = _Callback(data="train:next:10:tok12345")
     await training.handle_next_question(callback)
 
-    service.get_next_question.assert_awaited_once_with(db, 111)
+    service.get_next_question.assert_awaited_once_with(
+        db,
+        111,
+        session_id=10,
+        answered_question_token="tok12345",
+    )
     callback.message.answer.assert_awaited_once()
     args = callback.message.answer.await_args.args
     assert TRAINING_QUESTION_TEMPLATE.format(position=1, total=3, question_text="Was ist korrekt?") in args[0]

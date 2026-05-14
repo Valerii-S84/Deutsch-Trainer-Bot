@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
 from app.quiz_bank import QuizBankRequestContext
 from app.quiz_bank.schemas import QuizAnswerOption, QuizCorrectAnswerReference, QuizItem, QuizQuestionsResponse
-from app.services.training_session import ActiveSessionConflictError, NoMoreQuestionsError, TrainingSessionService
+from app.services.training_session import (
+    ActiveSessionConflictError,
+    ActiveSessionNotFoundError,
+    NoMoreQuestionsError,
+    QuestionStateError,
+    TrainingSessionService,
+)
 from app.repositories.quiz_sessions import QuizSessionStatus
 
 
@@ -27,6 +34,7 @@ class FakeSession:
     status: str
     total_questions: int
     correct_answers: int = 0
+    shown_questions_count: int = 0
     source_metadata: dict | None = None
     api_metadata: dict | None = None
     finished_at: str | None = None
@@ -34,12 +42,33 @@ class FakeSession:
 
 @dataclass
 class FakeAnswer:
+    id: int
     session_id: int
     user_id: int
     external_quiz_id: str
     selected_answer: str
     correct_answer: str
     is_correct: bool
+
+
+@dataclass
+class FakeQuestionReference:
+    id: int
+    item_id: str
+
+
+@dataclass
+class FakeSessionItem:
+    id: int
+    session_id: int
+    user_id: int
+    question_reference_id: int
+    item_id: str
+    position: int
+    status: str = "shown"
+    shown_at: str | None = "now"
+    answered_at: str | None = None
+    daily_limit_charged_at: str | None = None
 
 
 class FakeDatabaseSession:
@@ -165,11 +194,16 @@ class FakeSessionRepository:
         session.correct_answers = session.correct_answers + delta
         return session.correct_answers
 
+    async def increment_shown_questions_count(self, db, session: FakeSession, delta: int) -> int:
+        session.shown_questions_count += delta
+        return session.shown_questions_count
+
 
 class FakeAnswerRepository:
     def __init__(self) -> None:
         self._answers: list[FakeAnswer] = []
         self.create_calls = 0
+        self._next_id = 1
 
     async def create(
         self,
@@ -181,10 +215,18 @@ class FakeAnswerRepository:
         selected_answer: str,
         correct_answer: str,
         is_correct: bool,
+        training_session_item_id: int | None = None,
+        question_reference_id: int | None = None,
         quiz_source: str | None = None,
         external_ref: str | None = None,
+        level: str | None = None,
+        theme: str | None = None,
+        theme_key: str | None = None,
+        session_type: str = "regular",
+        metadata_snapshot: dict[str, object] | None = None,
     ) -> FakeAnswer:
         answer = FakeAnswer(
+            id=self._next_id,
             session_id=session_id,
             user_id=user_id,
             external_quiz_id=external_quiz_id,
@@ -192,6 +234,7 @@ class FakeAnswerRepository:
             correct_answer=correct_answer,
             is_correct=is_correct,
         )
+        self._next_id += 1
         self.create_calls += 1
         self._answers.append(answer)
         return answer
@@ -222,6 +265,96 @@ class FakeAnswerRepository:
             for answer in self._answers
             if answer.session_id == session_id
         ]
+
+
+class FakeQuestionReferenceRepository:
+    def __init__(self) -> None:
+        self._items: dict[str, FakeQuestionReference] = {}
+        self._next_id = 1
+
+    async def upsert_snapshot(self, db, *, item_id: str, **kwargs: object) -> FakeQuestionReference:
+        existing = self._items.get(item_id)
+        if existing is not None:
+            return existing
+        item = FakeQuestionReference(id=self._next_id, item_id=item_id)
+        self._next_id += 1
+        self._items[item_id] = item
+        return item
+
+
+class FakeSessionItemRepository:
+    def __init__(self) -> None:
+        self._items: list[FakeSessionItem] = []
+        self._next_id = 1
+
+    async def get_by_session_item(self, db, *, session_id: int, item_id: str) -> FakeSessionItem | None:
+        for item in self._items:
+            if item.session_id == session_id and item.item_id == item_id:
+                return item
+        return None
+
+    async def create_shown(
+        self,
+        db,
+        *,
+        session_id: int,
+        user_id: int,
+        question_reference_id: int,
+        item_id: str,
+        position: int,
+    ) -> FakeSessionItem:
+        existing = await self.get_by_session_item(db, session_id=session_id, item_id=item_id)
+        if existing is not None:
+            return existing
+        item = FakeSessionItem(
+            id=self._next_id,
+            session_id=session_id,
+            user_id=user_id,
+            question_reference_id=question_reference_id,
+            item_id=item_id,
+            position=position,
+        )
+        self._next_id += 1
+        self._items.append(item)
+        return item
+
+    async def mark_answered(self, db, session_item: FakeSessionItem) -> FakeSessionItem:
+        session_item.status = "answered"
+        session_item.answered_at = "now"
+        return session_item
+
+    async def mark_daily_limit_charged(self, db, session_item: FakeSessionItem) -> FakeSessionItem:
+        if session_item.shown_at is None:
+            raise ValueError("Daily limit can only be charged after an item is shown")
+        if session_item.daily_limit_charged_at is None:
+            session_item.daily_limit_charged_at = "now"
+        return session_item
+
+
+class FakeAnalyticsRepository:
+    def __init__(self) -> None:
+        self.events: list[SimpleNamespace] = []
+
+    async def record(
+        self,
+        db,
+        *,
+        event_name: str,
+        user_id: int | None,
+        session_id: int | None = None,
+        event_metadata: dict | None = None,
+        source: str = "bot",
+    ) -> SimpleNamespace:
+        event = SimpleNamespace(
+            id=len(self.events) + 1,
+            event_name=event_name,
+            user_id=user_id,
+            session_id=session_id,
+            event_metadata=event_metadata or {},
+            source=source,
+        )
+        self.events.append(event)
+        return event
 
 
 class StubQuizBankService:
@@ -269,6 +402,9 @@ def _make_service(quiz_responses: list[object]) -> TrainingSessionService:
         user_repo=FakeUserRepository(),
         session_repo=FakeSessionRepository(),
         answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
         quiz_service=StubQuizBankService(quiz_responses),
     )
 
@@ -282,6 +418,9 @@ async def test_user_bootstrap_created_once_for_same_telegram_id() -> None:
         user_repo=user_repo,
         session_repo=session_repo,
         answer_repo=answer_repo,
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
         quiz_service=StubQuizBankService([]),
     )
     db = FakeDatabaseSession()
@@ -343,6 +482,94 @@ async def test_submit_answer_marks_score_once_for_duplicate_click() -> None:
 
 
 @pytest.mark.asyncio
+async def test_current_question_creates_shown_item_lifecycle() -> None:
+    service = _make_service([_question_payload(item_id="q_lifecycle")])
+    db = FakeDatabaseSession()
+    user_id = 322
+
+    await service.start_session(db, telegram_user_id=user_id, level="A1", theme="Alltag", total_questions=2, force_new=False)
+    question = await service.get_or_create_current_question(db, telegram_user_id=user_id, force_refresh=True)
+
+    user = await service.get_user(db, user_id)
+    active_session = await service._session_repo.get_active_for_user(db, user.id)  # type: ignore[attr-defined]
+    session_item = await service._session_item_repo.get_by_session_item(  # type: ignore[attr-defined]
+        db,
+        session_id=question.session_id,
+        item_id="q_lifecycle",
+    )
+
+    assert question.training_session_item_id is not None
+    assert question.question_reference_id is not None
+    assert question.metadata_snapshot == {"progress_theme_key": "alltag"}
+    assert active_session is not None
+    assert active_session.shown_questions_count == 1
+    assert session_item is not None
+    assert session_item.status == "shown"
+    assert session_item.daily_limit_charged_at == "now"
+
+
+@pytest.mark.asyncio
+async def test_get_next_question_rejects_stale_token_before_fetching() -> None:
+    service = _make_service([_question_payload(item_id="q1"), _question_payload(item_id="q2")])
+    db = FakeDatabaseSession()
+    user_id = 323
+
+    await service.start_session(db, telegram_user_id=user_id, level="A1", theme="Alltag", total_questions=2, force_new=False)
+    question = await service.get_or_create_current_question(db, telegram_user_id=user_id, force_refresh=True)
+
+    with pytest.raises(QuestionStateError):
+        await service.get_next_question(
+            db,
+            telegram_user_id=user_id,
+            session_id=question.session_id,
+            answered_question_token="stale",
+        )
+
+    assert len(service._quiz_service.calls) == 1  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_submit_answer_rejects_unknown_option_without_answer_row() -> None:
+    service = _make_service([_question_payload()])
+    db = FakeDatabaseSession()
+    user_id = 324
+
+    await service.start_session(db, telegram_user_id=user_id, level="A1", theme="Alltag", total_questions=2, force_new=False)
+    question = await service.get_or_create_current_question(db, telegram_user_id=user_id, force_refresh=True)
+
+    with pytest.raises(QuestionStateError):
+        await service.submit_answer(
+            db,
+            telegram_user_id=user_id,
+            session_id=question.session_id,
+            question_token=question.question_token,
+            selected_option_id="unknown",
+        )
+
+    assert service._answer_repo.create_calls == 0  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_submit_answer_from_another_user_is_rejected() -> None:
+    service = _make_service([_question_payload()])
+    db = FakeDatabaseSession()
+
+    await service.start_session(db, telegram_user_id=401, level="A1", theme="Alltag", total_questions=2, force_new=False)
+    question = await service.get_or_create_current_question(db, telegram_user_id=401, force_refresh=True)
+
+    with pytest.raises(ActiveSessionNotFoundError):
+        await service.submit_answer(
+            db,
+            telegram_user_id=402,
+            session_id=question.session_id,
+            question_token=question.question_token,
+            selected_option_id="a2",
+        )
+
+    assert service._answer_repo.create_calls == 0  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
 async def test_submit_answer_completes_session_and_clears_pending() -> None:
     service = _make_service([_question_payload(correct_answer="a2")])
     db = FakeDatabaseSession()
@@ -361,11 +588,46 @@ async def test_submit_answer_completes_session_and_clears_pending() -> None:
 
     user = await service.get_user(db, user_id)
     completed_session = await service._session_repo.get_by_id_for_user(db, question.session_id, user.id)  # type: ignore[attr-defined]
+    session_item = await service._session_item_repo.get_by_session_item(  # type: ignore[attr-defined]
+        db,
+        session_id=question.session_id,
+        item_id=question.question_id,
+    )
     assert result.is_completed is True
     assert result.correct_answers == 1
     assert completed_session is not None
     assert completed_session.status == QuizSessionStatus.completed
     assert completed_session.api_metadata.get("pending_question") is None
+    assert session_item is not None
+    assert session_item.status == "answered"
+    event_names = [event.event_name for event in service._analytics_repo.events]  # type: ignore[attr-defined]
+    assert event_names == ["training_started", "question_answered", "training_completed", "result_shown"]
+
+
+@pytest.mark.asyncio
+async def test_completed_session_does_not_accept_new_answer() -> None:
+    service = _make_service([_question_payload(correct_answer="a2")])
+    db = FakeDatabaseSession()
+    user_id = 223
+
+    await service.start_session(db, telegram_user_id=user_id, level="A1", theme="Alltag", total_questions=1, force_new=False)
+    question = await service.get_or_create_current_question(db, telegram_user_id=user_id, force_refresh=True)
+    await service.submit_answer(
+        db,
+        telegram_user_id=user_id,
+        session_id=question.session_id,
+        question_token=question.question_token,
+        selected_option_id="a2",
+    )
+
+    with pytest.raises(ActiveSessionNotFoundError):
+        await service.submit_answer(
+            db,
+            telegram_user_id=user_id,
+            session_id=question.session_id,
+            question_token=question.question_token,
+            selected_option_id="a2",
+        )
 
 
 @pytest.mark.asyncio

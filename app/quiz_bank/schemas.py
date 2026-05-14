@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -97,6 +98,160 @@ class QuizSourceMetadata(BaseModel):
         return value
 
 
+class QuizHealthResponse(BaseModel):
+    """Contract for /health endpoint."""
+
+    status: str
+    service: str
+    checked_at: datetime
+    version: str | None = None
+    content_version: str | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("status")
+    @classmethod
+    def known_status(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"ok", "degraded", "unavailable"}:
+            raise ValueError("unsupported health status")
+        return value
+
+    @field_validator("service")
+    @classmethod
+    def non_empty_service(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("service must be non-empty")
+        return value
+
+
+class QuizLevel(BaseModel):
+    """Level catalog entry."""
+
+    code: str
+    display_name: str
+    is_active: bool
+
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not value:
+            raise ValueError("level code must be non-empty")
+        return value
+
+    @field_validator("display_name")
+    @classmethod
+    def non_empty_display_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("display_name must be non-empty")
+        return value
+
+
+class QuizLevelsResponse(BaseModel):
+    """Contract for /levels endpoint."""
+
+    levels: list[QuizLevel]
+    content_version: str | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class QuizTheme(BaseModel):
+    """Theme catalog entry for a level."""
+
+    theme: str
+    theme_key: str
+    is_active: bool
+    available_items_count: int | None = Field(default=None, ge=0)
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("theme", "theme_key")
+    @classmethod
+    def non_empty_theme_fields(cls, value: str, info: ValidationInfo) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError(f"{info.field_name} must be non-empty")
+        return value
+
+
+class QuizThemesResponse(BaseModel):
+    """Contract for /levels/{level}/themes endpoint."""
+
+    level: str
+    themes: list[QuizTheme]
+    content_version: str | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("level")
+    @classmethod
+    def supported_level(cls, value: str) -> str:
+        value = value.strip().upper()
+        if value not in SUPPORTED_LEVELS:
+            raise ValueError(f"unsupported level: {value}")
+        return value
+
+
+class QuizAvailabilityResponse(BaseModel):
+    """Contract for /availability endpoint."""
+
+    level: str
+    theme: str
+    theme_key: str
+    available_items_count: int = Field(ge=0)
+    generated_at: datetime
+    active_items_count: int | None = Field(default=None, ge=0)
+    inactive_items_count: int | None = Field(default=None, ge=0)
+    content_version: str | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("level")
+    @classmethod
+    def supported_level(cls, value: str) -> str:
+        value = value.strip().upper()
+        if value not in SUPPORTED_LEVELS:
+            raise ValueError(f"unsupported level: {value}")
+        return value
+
+    @field_validator("theme", "theme_key")
+    @classmethod
+    def non_empty_availability_fields(cls, value: str, info: ValidationInfo) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError(f"{info.field_name} must be non-empty")
+        return value
+
+
+class QuizMetadataResponse(BaseModel):
+    """Contract for /metadata endpoint."""
+
+    levels: list[str]
+    themes: list[str]
+    metadata_version: str
+    generated_at: datetime
+    question_types: list[str] | None = None
+    difficulty_scale: dict[str, Any] | None = None
+    skill_areas: list[str] | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("metadata_version")
+    @classmethod
+    def non_empty_metadata_version(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("metadata_version must be non-empty")
+        return value
+
+
 class QuizItem(BaseModel):
     """Validated quiz question item."""
 
@@ -113,6 +268,13 @@ class QuizItem(BaseModel):
     source_metadata: QuizSourceMetadata | None = None
 
     model_config = ConfigDict(extra="allow")
+
+    @field_validator("correct_answer", mode="before")
+    @classmethod
+    def normalize_correct_answer(cls, value: object) -> object:
+        if isinstance(value, str):
+            return {"option_id": value}
+        return value
 
     @field_validator("item_id", "level", "theme", "question_text")
     @classmethod
@@ -139,12 +301,37 @@ class QuizItem(BaseModel):
             raise ValueError("answer option ids must be unique")
         return value
 
+    @field_validator("explanation")
+    @classmethod
+    def validate_explanation(cls, value: QuizQuestionExplanation | str) -> QuizQuestionExplanation | str:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("explanation must be non-empty")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_progress_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not value:
+            raise ValueError("metadata must be non-empty")
+        progress_theme_key = value.get("progress_theme_key")
+        if not isinstance(progress_theme_key, str) or not progress_theme_key.strip():
+            raise ValueError("metadata.progress_theme_key is required")
+        return value
+
     @model_validator(mode="after")
     def validate_correct_answer(self) -> "QuizItem":
         option_ids = {option.option_id for option in self.answer_options}
         if self.correct_answer.option_id not in option_ids:
             raise ValueError("correct_answer must reference an existing option_id")
         return self
+
+
+class QuizQuestionLookupResponse(QuizItem):
+    """Contract for /questions/{item_id} endpoint."""
+
+    is_active: bool
+    replaced_by_item_id: str | None = None
+    deactivated_reason: str | None = None
 
 
 class QuizQuestionsResponse(BaseModel):
@@ -168,6 +355,14 @@ class QuizQuestionsResponse(BaseModel):
         if value < 0:
             raise ValueError("returned_count must be >= 0")
         return value
+
+    @model_validator(mode="after")
+    def validate_returned_count(self) -> "QuizQuestionsResponse":
+        if self.returned_count != len(self.items):
+            raise ValueError("returned_count must match items length")
+        if self.returned_count > self.requested_count:
+            raise ValueError("returned_count must not exceed requested_count")
+        return self
 
 
 class QuizBankErrorResponse(BaseModel):

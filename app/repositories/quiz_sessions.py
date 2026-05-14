@@ -124,3 +124,7 @@ class QuizSessionRepository:
     async def increment_answered_count(self, db: AsyncSession, session: QuizSession, delta: int) -> int:
         session.answered_count = int(getattr(session, "answered_count", 0) or 0) + delta
         return session.answered_count
+
+    async def increment_shown_questions_count(self, db: AsyncSession, session: QuizSession, delta: int) -> int:
+        session.shown_questions_count = int(getattr(session, "shown_questions_count", 0) or 0) + delta
+        return session.shown_questions_count

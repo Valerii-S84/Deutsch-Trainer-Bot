@@ -1,77 +1,42 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from hashlib import sha1
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.quiz_bank import QuizBankRequestContext, QuizBankService
-from app.quiz_bank.schemas import QuizItem
 from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
+from app.services.training_session_lifecycle import TrainingSessionLifecycleMixin
+from app.services.training_payloads import (
+    ActiveSessionConflictError,
+    ActiveSessionNotFoundError,
+    AnswerResult,
+    NoMoreQuestionsError,
+    NoReviewItemsError,
+    QuestionStateError,
+    QuizQuestionPayload,
+    answer_text,
+    build_question_payload,
+    deserialize_question_payload,
+    normalize_explanation,
+    normalize_text,
+    option_ids,
+    option_text,
+    question_metadata_snapshot,
+    serialize_question_payload,
+)
 from app.repositories.answers import AnswerRepository
+from app.repositories.analytics_events import AnalyticsEventRepository
+from app.repositories.question_references import QuestionReferenceRepository
 from app.repositories.quiz_sessions import QuizSessionRepository, QuizSessionStatus
+from app.repositories.training_session_items import TrainingSessionItemRepository
 from app.repositories.users import UserRepository
 
 
-@dataclass(frozen=True)
-class QuizQuestionPayload:
-    session_id: int
-    question_token: str
-    question_id: str
-    question_text: str
-    answer_options: tuple[tuple[str, str], ...]
-    correct_answer: str
-    explanation: str | None
-    position: int
-    total_questions: int
-    level: str
-    theme: str | None
-
-
-@dataclass(frozen=True)
-class AnswerResult:
-    selected_answer: str
-    correct_answer: str
-    question_token: str
-    is_correct: bool
-    is_duplicate: bool
-    is_completed: bool
-    explanation: str | None
-    correct_answers: int
-    total_questions: int
-    session_id: int
-
-
-class TrainingFlowError(Exception):
-    """Base error for the training flow."""
-
-
-class ActiveSessionConflictError(TrainingFlowError):
-    """Raised when an active session already exists."""
-
-
-class ActiveSessionNotFoundError(TrainingFlowError):
-    """Raised when an active session does not exist for the user."""
-
-
-class QuestionStateError(TrainingFlowError):
-    """Raised when pending question state is missing or invalid."""
-
-
-class NoMoreQuestionsError(TrainingFlowError):
-    """Raised when the Quiz Bank returns no available questions."""
-
-
-class NoReviewItemsError(TrainingFlowError):
-    """Raised when review flow has no active mistake items."""
-
-
-class TrainingSessionService:
-    """Runtime session orchestration without progress/mistake side effects."""
+class TrainingSessionService(TrainingSessionLifecycleMixin):
+    """Runtime session orchestration with learning-state side effects."""
 
     ACTIVE_SESSION_STATUS = QuizSessionStatus.active
     COMPLETED_SESSION_STATUS = QuizSessionStatus.completed
@@ -81,6 +46,7 @@ class TrainingSessionService:
     QUIZ_SOURCE = "quiz_bank_api"
     SESSION_FLOW_REGULAR = "regular"
     SESSION_FLOW_REVIEW = "mistake_review"
+    SESSION_FLOW_RECOMMENDED = "recommended"
 
     def __init__(
         self,
@@ -88,6 +54,9 @@ class TrainingSessionService:
         user_repo: UserRepository | None = None,
         session_repo: QuizSessionRepository | None = None,
         answer_repo: AnswerRepository | None = None,
+        analytics_repo: AnalyticsEventRepository | None = None,
+        question_reference_repo: QuestionReferenceRepository | None = None,
+        session_item_repo: TrainingSessionItemRepository | None = None,
         quiz_service: QuizBankService | None = None,
         progress_service: ProgressService | None = None,
         mistakes_service: MistakeService | None = None,
@@ -95,6 +64,9 @@ class TrainingSessionService:
         self._user_repo = user_repo or UserRepository()
         self._session_repo = session_repo or QuizSessionRepository()
         self._answer_repo = answer_repo or AnswerRepository()
+        self._analytics_repo = analytics_repo or AnalyticsEventRepository()
+        self._question_reference_repo = question_reference_repo or QuestionReferenceRepository()
+        self._session_item_repo = session_item_repo or TrainingSessionItemRepository()
         self._quiz_service = quiz_service
         self._progress_service = progress_service
         self._mistakes_service = mistakes_service
@@ -104,22 +76,6 @@ class TrainingSessionService:
         if self._quiz_service is None:
             self._quiz_service = QuizBankService()
         return self._quiz_service
-
-    @staticmethod
-    def _normalize_text(value: str | None) -> str:
-        return (value or "").strip()
-
-    @staticmethod
-    def _normalize_explanation(explanation: str | Any | None) -> str | None:
-        if explanation is None:
-            return None
-        if hasattr(explanation, "text"):
-            return TrainingSessionService._normalize_text(getattr(explanation, "text", ""))
-        return TrainingSessionService._normalize_text(str(explanation)) or None
-
-    @staticmethod
-    def _question_token(external_quiz_id: str) -> str:
-        return sha1(external_quiz_id.encode("utf-8")).hexdigest()[:8]
 
     def _session_flow(self, session) -> str:
         metadata = session.source_metadata or {}
@@ -133,6 +89,42 @@ class TrainingSessionService:
             "flow": flow,
             "created_by": str(telegram_user_id),
         }
+
+    async def _record_analytics(
+        self,
+        db: AsyncSession,
+        *,
+        event_name: str,
+        user_id: int | None,
+        session_id: int | None,
+        event_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        await self._analytics_repo.record(
+            db,
+            event_name=event_name,
+            user_id=user_id,
+            session_id=session_id,
+            event_metadata=event_metadata,
+            source="training",
+        )
+
+    async def _completion_context(
+        self,
+        db: AsyncSession,
+        telegram_user_id: int,
+        *,
+        new_mistakes_count: int,
+    ) -> tuple[str | None, str]:
+        weak_theme = None
+        if self._mistakes_service is not None:
+            weak_areas = await self._mistakes_service.get_weak_areas(db, telegram_user_id)
+            if weak_areas:
+                weak_theme = str(weak_areas[0].get("theme") or "")
+        if weak_theme:
+            return weak_theme, f"Wiederhole deine Fehler in {weak_theme}."
+        if new_mistakes_count:
+            return None, "Wiederhole deine neuen Fehler, bevor du weitergehst."
+        return None, "Starte eine neue Runde, um weiter zu üben."
 
     @staticmethod
     def _session_question_limit(requested_total_questions: int, review_items: list[object] | None = None) -> int:
@@ -153,191 +145,6 @@ class TrainingSessionService:
         theme: str | None = None,
     ) -> None:
         await self._user_repo.set_training_preferences(db, telegram_user_id, level=level, theme=theme)
-
-    async def start_session(
-        self,
-        db: AsyncSession,
-        telegram_user_id: int,
-        level: str,
-        theme: str | None,
-        *,
-        total_questions: int,
-        force_new: bool,
-    ):
-        user = await self.get_user(db, telegram_user_id)
-        await self._user_repo.set_training_preferences(db, telegram_user_id, level=level, theme=theme)
-
-        existing = await self._session_repo.get_active_for_user(db, user.id)
-        if existing is not None:
-            if not force_new:
-                raise ActiveSessionConflictError("Active training session exists")
-            await self._session_repo.mark_cancelled(db, existing)
-
-        session = await self._session_repo.create(
-            db,
-            user_id=user.id,
-            level=level,
-            theme=theme,
-            total_questions=max(1, total_questions),
-            source=self.QUIZ_SOURCE,
-            source_metadata=self._default_source_metadata(self.SESSION_FLOW_REGULAR, telegram_user_id),
-            api_metadata={"started_at": datetime.now(UTC).isoformat()},
-        )
-        await db.flush()
-        return session
-
-    async def start_review_session(
-        self,
-        db: AsyncSession,
-        telegram_user_id: int,
-        *,
-        force_new: bool,
-        total_questions: int,
-    ):
-        if self._mistakes_service is None:
-            raise NoReviewItemsError("Review service is not configured")
-
-        user = await self.get_user(db, telegram_user_id)
-
-        review_items = await self._mistakes_service.get_review_items(db, telegram_user_id)
-        if not review_items:
-            raise NoReviewItemsError("No active mistakes to review")
-
-        existing = await self._session_repo.get_active_for_user(db, user.id)
-        if existing is not None:
-            if self._is_review_session(existing):
-                if not force_new:
-                    return existing
-                await self._session_repo.mark_cancelled(db, existing)
-            elif not force_new:
-                raise ActiveSessionConflictError("Active training session exists")
-            else:
-                await self._session_repo.mark_cancelled(db, existing)
-
-        first_item = review_items[0]
-        total = self._session_question_limit(total_questions, review_items)
-        session = await self._session_repo.create(
-            db,
-            user_id=user.id,
-            level=first_item.level,
-            theme=first_item.theme,
-            total_questions=total,
-            source=self.QUIZ_SOURCE,
-            source_metadata=self._default_source_metadata(self.SESSION_FLOW_REVIEW, telegram_user_id),
-            api_metadata={"review_count": len(review_items)},
-        )
-        await db.flush()
-        return session
-
-    async def resume_or_start_review_session(
-        self,
-        db: AsyncSession,
-        telegram_user_id: int,
-        *,
-        force_new: bool,
-        total_questions: int,
-    ) -> tuple[Any, QuizQuestionPayload]:
-        session = await self.start_review_session(
-            db,
-            telegram_user_id,
-            force_new=force_new,
-            total_questions=total_questions,
-        )
-        question = await self.get_or_create_current_question(
-            db,
-            telegram_user_id,
-            force_refresh=True,
-        )
-        return session, question
-
-    async def get_active_session(self, db: AsyncSession, telegram_user_id: int):
-        user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
-        if not user:
-            return None
-        return await self._session_repo.get_active_for_user(db, user.id)
-
-    async def cancel_active_session(self, db: AsyncSession, telegram_user_id: int) -> bool:
-        user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
-        if not user:
-            return False
-
-        session = await self._session_repo.get_active_for_user(db, user.id)
-        if not session:
-            return False
-
-        await self._session_repo.mark_cancelled(db, session)
-        await self._session_repo.clear_pending_question(db, session)
-        await db.flush()
-        return True
-
-    def _build_question_payload(
-        self,
-        session_id: int,
-        question: QuizItem,
-        *,
-        position: int,
-        total_questions: int,
-    ) -> QuizQuestionPayload:
-        return QuizQuestionPayload(
-            session_id=session_id,
-            question_token=self._question_token(question.item_id),
-            question_id=question.item_id,
-            question_text=self._normalize_text(question.question_text),
-            answer_options=tuple((item.option_id, self._normalize_text(item.text)) for item in question.answer_options),
-            correct_answer=question.correct_answer.option_id,
-            explanation=self._normalize_explanation(question.explanation),
-            position=position,
-            total_questions=total_questions,
-            level=question.level,
-            theme=question.theme,
-        )
-
-    def _serialize_question_payload(self, payload: QuizQuestionPayload) -> dict[str, object]:
-        return {
-            "session_id": payload.session_id,
-            "question_token": payload.question_token,
-            "question_id": payload.question_id,
-            "question_text": payload.question_text,
-            "answer_options": [{"option_id": option_id, "text": text} for option_id, text in payload.answer_options],
-            "correct_answer": payload.correct_answer,
-            "explanation": payload.explanation,
-            "position": payload.position,
-            "total_questions": payload.total_questions,
-            "level": payload.level,
-            "theme": payload.theme,
-        }
-
-    def _deserialize_question_payload(self, payload: dict[str, object]) -> QuizQuestionPayload:
-        options_raw = payload.get("answer_options")
-        if not isinstance(options_raw, list):
-            raise QuestionStateError("pending question payload is missing options")
-
-        options: list[tuple[str, str]] = []
-        for option in options_raw:
-            if not isinstance(option, dict):
-                raise QuestionStateError("invalid option payload")
-            option_id = option.get("option_id")
-            text = option.get("text")
-            if not isinstance(option_id, str) or not isinstance(text, str):
-                raise QuestionStateError("invalid option payload")
-            options.append((option_id, text))
-
-        try:
-            return QuizQuestionPayload(
-                session_id=int(payload["session_id"]),
-                question_token=str(payload["question_token"]),
-                question_id=str(payload["question_id"]),
-                question_text=str(payload["question_text"]),
-                answer_options=tuple(options),
-                correct_answer=str(payload["correct_answer"]),
-                explanation=payload.get("explanation") if isinstance(payload.get("explanation"), str) else None,
-                position=int(payload["position"]),
-                total_questions=int(payload["total_questions"]),
-                level=str(payload["level"]),
-                theme=str(payload["theme"]) if payload.get("theme") is not None else None,
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise QuestionStateError("pending question payload is invalid") from exc
 
     async def get_or_create_current_question(
         self,
@@ -364,7 +171,7 @@ class TrainingSessionService:
         if not force_refresh:
             pending = metadata.get("pending_question")
             if isinstance(pending, dict):
-                payload = self._deserialize_question_payload(pending)
+                payload = deserialize_question_payload(pending)
                 if payload.session_id == session.id and payload.total_questions == session.total_questions:
                     return payload
 
@@ -408,14 +215,47 @@ class TrainingSessionService:
             raise NoMoreQuestionsError("Quiz Bank returned no questions")
 
         first = response.items[0]
-        payload = self._build_question_payload(
+        question_reference = await self._question_reference_repo.upsert_snapshot(
+            db,
+            item_id=first.item_id,
+            level=first.level,
+            theme=first.theme,
+            theme_key=first.theme_key,
+            metadata_snapshot=question_metadata_snapshot(first),
+            content_version=first.content_version,
+            question_text_snapshot=normalize_text(first.question_text),
+            correct_answer_snapshot=answer_text(first, first.correct_answer.option_id),
+            explanation_snapshot=normalize_explanation(first.explanation),
+        )
+        await db.flush()
+        existing_session_item = await self._session_item_repo.get_by_session_item(
+            db,
+            session_id=session.id,
+            item_id=first.item_id,
+        )
+        session_item = await self._session_item_repo.create_shown(
+            db,
+            session_id=session.id,
+            user_id=user.id,
+            question_reference_id=question_reference.id,
+            item_id=first.item_id,
+            position=answered + 1,
+        )
+        if hasattr(self._session_repo, "increment_shown_questions_count") and existing_session_item is None:
+            await self._session_repo.increment_shown_questions_count(db, session, 1)
+        if hasattr(self._session_item_repo, "mark_daily_limit_charged"):
+            await self._session_item_repo.mark_daily_limit_charged(db, session_item)
+        await db.flush()
+        payload = build_question_payload(
             session_id=session.id,
             question=first,
             position=answered + 1,
             total_questions=session.total_questions,
+            question_reference_id=question_reference.id,
+            training_session_item_id=session_item.id,
         )
 
-        await self._session_repo.set_pending_question(db, session, self._serialize_question_payload(payload))
+        await self._session_repo.set_pending_question(db, session, serialize_question_payload(payload))
 
         api_metadata = dict(session.api_metadata or {})
         api_metadata["requested_count"] = response.requested_count
@@ -428,7 +268,25 @@ class TrainingSessionService:
     async def get_current_question(self, db: AsyncSession, telegram_user_id: int) -> QuizQuestionPayload:
         return await self.get_or_create_current_question(db, telegram_user_id, force_refresh=False)
 
-    async def get_next_question(self, db: AsyncSession, telegram_user_id: int) -> QuizQuestionPayload:
+    async def get_next_question(
+        self,
+        db: AsyncSession,
+        telegram_user_id: int,
+        *,
+        session_id: int | None = None,
+        answered_question_token: str | None = None,
+    ) -> QuizQuestionPayload:
+        if session_id is not None or answered_question_token is not None:
+            active = await self.get_active_session(db, telegram_user_id)
+            if active is None or active.id != session_id:
+                raise ActiveSessionNotFoundError("Session is not active")
+            metadata = active.api_metadata or {}
+            pending_raw = metadata.get("pending_question") if isinstance(metadata, dict) else None
+            if not isinstance(pending_raw, dict):
+                raise QuestionStateError("No active question in session")
+            pending = deserialize_question_payload(pending_raw)
+            if pending.question_token != answered_question_token:
+                raise QuestionStateError("Question token is stale")
         return await self.get_or_create_current_question(db, telegram_user_id, force_refresh=True)
 
     async def submit_answer(
@@ -452,9 +310,16 @@ class TrainingSessionService:
         if not isinstance(pending_raw, dict):
             raise QuestionStateError("No active question in session")
 
-        pending = self._deserialize_question_payload(pending_raw)
+        pending = deserialize_question_payload(pending_raw)
         if pending.question_token != question_token or pending.session_id != session.id:
             raise QuestionStateError("Question token is stale")
+        if selected_option_id not in option_ids(pending):
+            raise QuestionStateError("Selected answer is invalid")
+
+        correct_answer_text = pending.correct_answer_text or option_text(pending, pending.correct_answer)
+        answer = None
+        mistake = None
+        new_mistakes_count = 0
 
         existing = await self._answer_repo.get_by_session_and_question(
             db,
@@ -475,11 +340,12 @@ class TrainingSessionService:
                 correct_answers=session.correct_answers,
                 total_questions=session.total_questions,
                 session_id=session.id,
+                correct_answer_text=correct_answer_text,
             )
 
         is_correct = selected_option_id == pending.correct_answer
         try:
-            await self._answer_repo.create(
+            answer = await self._answer_repo.create(
                 db,
                 session_id=session.id,
                 user_id=user.id,
@@ -487,10 +353,24 @@ class TrainingSessionService:
                 selected_answer=selected_option_id,
                 correct_answer=pending.correct_answer,
                 is_correct=is_correct,
+                training_session_item_id=pending.training_session_item_id,
+                question_reference_id=pending.question_reference_id,
                 quiz_source=self.QUIZ_SOURCE,
+                level=pending.level,
+                theme=pending.theme,
+                theme_key=pending.theme_key,
+                session_type=self._session_flow(session),
+                metadata_snapshot=pending.metadata_snapshot,
             )
             if hasattr(self._session_repo, "increment_answered_count"):
                 await self._session_repo.increment_answered_count(db, session, 1)
+            session_item = await self._session_item_repo.get_by_session_item(
+                db,
+                session_id=session.id,
+                item_id=pending.question_id,
+            )
+            if session_item is not None:
+                await self._session_item_repo.mark_answered(db, session_item)
             await db.flush()
         except IntegrityError:
             await db.rollback()
@@ -515,6 +395,7 @@ class TrainingSessionService:
                 correct_answers=session.correct_answers,
                 total_questions=session.total_questions,
                 session_id=session.id,
+                correct_answer_text=correct_answer_text,
             )
 
         if is_correct:
@@ -530,9 +411,12 @@ class TrainingSessionService:
                         question_level=pending.level,
                         question_theme=pending.theme,
                         correct_answer=pending.correct_answer,
+                        session_id=session.id,
+                        user_answer_id=getattr(answer, "id", None),
+                        metadata_snapshot=pending.metadata_snapshot,
                     )
             else:
-                await self._mistakes_service.record_wrong_answer(
+                mistake = await self._mistakes_service.record_wrong_answer(
                     db,
                     telegram_user_id,
                     external_quiz_id=pending.question_id,
@@ -543,24 +427,77 @@ class TrainingSessionService:
                     source_snapshot={
                         "session_type": self._session_flow(session),
                         "question_token": pending.question_token,
+                        "metadata_snapshot": pending.metadata_snapshot,
                     },
+                    session_id=session.id,
+                    user_answer_id=getattr(answer, "id", None),
+                    metadata_snapshot=pending.metadata_snapshot,
                 )
+                if mistake is not None and int(getattr(mistake, "mistake_count", 0) or 0) == 1:
+                    new_mistakes_count = 1
 
         if not existing and self._progress_service is not None:
             await self._progress_service.record_answer_result(
                 db,
                 user.telegram_user_id,
-                level=session.level,
-                theme=session.theme,
+                level=pending.level,
+                theme=pending.theme,
                 is_correct=is_correct,
                 is_duplicate=False,
+                session_id=session.id,
+                user_answer_id=getattr(answer, "id", None),
+                reason_code="answer_accepted",
             )
+
+        await self._record_analytics(
+            db,
+            event_name="question_answered",
+            user_id=user.id,
+            session_id=session.id,
+            event_metadata={
+                "session_type": self._session_flow(session),
+                "level": pending.level,
+                "theme": pending.theme,
+                "item_id": pending.question_id,
+                "is_correct": is_correct,
+                "position": pending.position,
+            },
+        )
 
         total_answers = await self._answer_repo.count_by_session(db, session.id)
         completed = total_answers >= session.total_questions
+        weak_theme = None
+        recommendation_text = None
         if completed:
             await self._session_repo.mark_completed(db, session)
             await self._session_repo.clear_pending_question(db, session)
+            weak_theme, recommendation_text = await self._completion_context(
+                db,
+                user.telegram_user_id,
+                new_mistakes_count=new_mistakes_count,
+            )
+            completion_metadata = {
+                "session_type": self._session_flow(session),
+                "level": session.level,
+                "theme": session.theme,
+                "answered_count": total_answers,
+                "correct_answers": session.correct_answers,
+                "planned_question_count": session.total_questions,
+            }
+            await self._record_analytics(
+                db,
+                event_name="training_completed",
+                user_id=user.id,
+                session_id=session.id,
+                event_metadata=completion_metadata,
+            )
+            await self._record_analytics(
+                db,
+                event_name="result_shown",
+                user_id=user.id,
+                session_id=session.id,
+                event_metadata=completion_metadata,
+            )
 
         await db.flush()
 
@@ -575,25 +512,8 @@ class TrainingSessionService:
             correct_answers=session.correct_answers,
             total_questions=session.total_questions,
             session_id=session.id,
+            correct_answer_text=correct_answer_text,
+            weak_theme=weak_theme,
+            new_mistakes_count=new_mistakes_count,
+            recommendation_text=recommendation_text,
         )
-
-    async def resume_or_start_session(
-        self,
-        db: AsyncSession,
-        telegram_user_id: int,
-        level: str,
-        theme: str,
-        *,
-        force_new: bool,
-        total_questions: int,
-    ) -> tuple[Any, QuizQuestionPayload]:
-        session = await self.start_session(
-            db,
-            telegram_user_id,
-            level=level,
-            theme=theme,
-            total_questions=total_questions,
-            force_new=force_new,
-        )
-        question = await self.get_or_create_current_question(db, telegram_user_id, force_refresh=True)
-        return session, question

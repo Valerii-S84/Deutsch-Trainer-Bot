@@ -24,6 +24,9 @@ from app.bot.texts import (
     TRAINING_CORRECT_ANSWER_TEXT,
     TRAINING_EXPLANATION_TEXT,
     TRAINING_FINISH_TEXT,
+    TRAINING_FINISH_NEW_MISTAKES_TEXT,
+    TRAINING_FINISH_RECOMMENDATION_TEXT,
+    TRAINING_FINISH_WEAK_THEME_TEXT,
     TRAINING_INCORRECT_ANSWER_TEXT,
     TRAINING_QUESTION_TEMPLATE,
     TRAINING_NO_LEVEL_SELECTED_TEXT,
@@ -140,7 +143,7 @@ def _result_message(result: AnswerResult) -> str:
     if result.is_correct:
         text = TRAINING_CORRECT_ANSWER_TEXT
     else:
-        correct_answer = escape_markdown_text(result.correct_answer)
+        correct_answer = escape_markdown_text(result.correct_answer_text or result.correct_answer)
         text = TRAINING_INCORRECT_ANSWER_TEXT.format(correct_answer=correct_answer)
     if result.is_duplicate:
         text = f"{TRAINING_ANSWER_DUPLICATE_TEXT}\n\n{text}"
@@ -210,6 +213,19 @@ def _build_finish_message(correct_answers: int, total_questions: int) -> str:
 def _build_completed_feedback(result: AnswerResult) -> str:
     message = _result_message(result)
     finish = _build_finish_message(result.correct_answers, result.total_questions)
+    details: list[str] = []
+    if result.new_mistakes_count:
+        details.append(TRAINING_FINISH_NEW_MISTAKES_TEXT.format(count=result.new_mistakes_count))
+    if result.weak_theme:
+        details.append(TRAINING_FINISH_WEAK_THEME_TEXT.format(theme=escape_markdown_text(result.weak_theme)))
+    if result.recommendation_text:
+        details.append(
+            TRAINING_FINISH_RECOMMENDATION_TEXT.format(
+                recommendation=escape_markdown_text(result.recommendation_text),
+            ),
+        )
+    if details:
+        finish = f"{finish}\n" + "\n".join(details)
     return f"{message}\n\n{finish}"
 
 
@@ -494,7 +510,12 @@ async def handle_next_question(callback_query: CallbackQuery) -> None:
             if _pending_question_token(active) != question_token:
                 await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
                 return
-            question = await training_service.get_next_question(db, user_id)
+            question = await training_service.get_next_question(
+                db,
+                user_id,
+                session_id=session_id,
+                answered_question_token=question_token,
+            )
             await db.commit()
         except (
             ActiveSessionNotFoundError,
