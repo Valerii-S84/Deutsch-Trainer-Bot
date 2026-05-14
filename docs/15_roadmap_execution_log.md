@@ -10,8 +10,7 @@
 ## Поточний стан (2026-05-14)
 
 - Виконання: Architecture Lock completed.
-- Поточний статус: Milestone 0 завершено, Milestone 1 (Repository and Foundation) виконується.
-- Наступний крок: завершити Milestone 1 і перейти до Milestone 2.
+- Поточний статус: Milestone 0 завершено, Milestone 1 (Repository and Foundation) completed, Milestone 2 (Domain and schema planning) готовий до старту.
 
 ## Milestone 0 — Architecture Lock
 
@@ -47,12 +46,30 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 
 ## Milestone 1 — Repository and Foundation
 
-- Стартовано на основі `docs/16_architecture_lock.md` (`docs/17_foundation_setup.md` підготовлено).
+### Completion check (Foundation gate)
+
+- Milestone 1 завершується лише після проходження:
+  - `python3 -m venv .venv`
+  - `. .venv/bin/activate`
+  - `python -m pip install -e ".[dev]"`
+  - `bash scripts/local_ci.sh`
+- Системний Python не є цільовим середовищем для `foundation`-перевірок.
+  Його падіння через `PEP 668`/`externally managed environment` не є blocker для продовження roadmap, якщо в CI/venv ці перевірки проходять.
+
+- Верифікацію виконано для `venv/CI`:
+- `python -m compileall app tests`
+- `python -m pytest -q` (у `scripts/local_ci.sh` виконуються з `--capture=no` для стабільності в середовищі)
+
 - Базову структуру створено: pyproject, Docker, app package, tests, alembic scaffold.
+
+### Standard checks
+
+- `bash scripts/local_ci.sh` (локально)
+- `python -m pytest -q` in CI after installing `.[dev]` (локально виконується через `scripts/local_ci.sh`/`Makefile` у venv)
 
 ## Milestone 2+ — Code/migration/data work
 
-- Старт відкладено до завершення Milestone 1.
+- Старт відкрито після завершення Milestone 1.
 
 ## Активні ризики (витяг з roadmap, секції 19)
 

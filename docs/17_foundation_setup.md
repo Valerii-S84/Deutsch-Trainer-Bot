@@ -19,6 +19,34 @@ This milestone sets up a production-oriented code foundation and does not includ
 
 ## Foundation runbook
 
+### Why venv-only checks
+
+System Python in this environment is not the target for project verification.
+Tests and checks are intended to run in an isolated virtual environment (or CI)
+so dependencies are reproducible and no system-level Python policy (for example,
+`externally managed environment`) can block local checks.
+
+### Local verification in venv
+
+```bash
+# 1) Create isolated environment
+python3 -m venv .venv
+
+# 2) Activate it
+. .venv/bin/activate
+
+# 3) Install project + dev dependencies
+python -m pip install -e ".[dev]"
+
+# 4) Install and run local checks
+bash scripts/local_ci.sh
+
+# Or use make check
+make check
+```
+
+### Baseline runtime setup
+
 1. Copy environment template:
 
 ```bash
@@ -38,15 +66,8 @@ docker compose up --build
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-5. Run foundation tests:
-
-```bash
-pytest
-```
-
 ## Security notes
 
 - Secrets must be supplied through env.
 - No real secrets are stored in repository files.
 - `.env` is ignored by git.
-
