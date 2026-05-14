@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy import CheckConstraint
 from sqlalchemy.dialects.postgresql import JSONB
+import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import text
 from sqlalchemy.sql import func
@@ -37,10 +38,20 @@ class Mistake(Base, TimestampMixin):
     theme: Mapped[str] = mapped_column(String(255), nullable=False)
     wrong_answer: Mapped[str] = mapped_column(Text, nullable=False)
     correct_answer: Mapped[str] = mapped_column(Text, nullable=False)
-    mistake_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    mistake_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default=sa.text("1"),
+    )
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    status: Mapped[MistakeStatus] = mapped_column(String(32), nullable=False, default=MistakeStatus.new)
+    status: Mapped[MistakeStatus] = mapped_column(
+        String(32),
+        nullable=False,
+        default=MistakeStatus.new,
+        server_default=sa.text("'new'"),
+    )
     source_snapshot: Mapped[Optional[dict[str, object]]] = mapped_column(JSONB(), nullable=True)
 
     user = relationship("User", back_populates="mistakes")

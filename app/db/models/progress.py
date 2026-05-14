@@ -6,6 +6,7 @@ from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy import CheckConstraint
+import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -24,10 +25,30 @@ class Progress(Base, TimestampMixin):
     )
     level: Mapped[str] = mapped_column(String(8), nullable=False)
     theme: Mapped[str] = mapped_column(String(255), nullable=False)
-    total_answered: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_correct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    accuracy: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=0)
-    streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_answered: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
+    total_correct: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
+    accuracy: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2),
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
+    streak: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
     last_answered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     user = relationship("User", back_populates="progress_records")
 

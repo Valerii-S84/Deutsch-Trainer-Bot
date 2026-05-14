@@ -5,6 +5,7 @@ from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy import CheckConstraint, Index
+import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -25,12 +26,32 @@ class QuizSession(Base, TimestampMixin):
     )
     level: Mapped[str] = mapped_column(String(8), nullable=False)
     theme: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="created")
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="created",
+        server_default=sa.text("'created'"),
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    total_questions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    correct_answers: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    source: Mapped[str] = mapped_column(String(64), nullable=False, default="quiz_bank_api")
+    total_questions: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
+    correct_answers: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
+    source: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="quiz_bank_api",
+        server_default=sa.text("'quiz_bank_api'"),
+    )
     source_metadata: Mapped[Optional[dict[str, object]]] = mapped_column(JSONB(), nullable=True)
     api_request_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     api_metadata: Mapped[Optional[dict[str, object]]] = mapped_column(JSONB(), nullable=True)

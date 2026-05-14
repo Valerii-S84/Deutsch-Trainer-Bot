@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String
 from sqlalchemy import CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+import sqlalchemy as sa
 
 from app.db.base import Base, TimestampMixin
 
@@ -22,10 +23,20 @@ class Subscription(Base, TimestampMixin):
         nullable=False,
     )
     plan: Mapped[str] = mapped_column(String(16), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="active",
+        server_default=sa.text("'active'"),
+    )
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    source: Mapped[str] = mapped_column(String(64), nullable=False, default="telegram_stars")
+    source: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="telegram_stars",
+        server_default=sa.text("'telegram_stars'"),
+    )
     provider_reference: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     payment_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 

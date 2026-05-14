@@ -10,7 +10,8 @@
 ## Поточний стан (2026-05-14)
 
 - Виконання: Architecture Lock completed.
-- Поточний статус: Milestone 0 завершено, Milestone 1 (Repository and Foundation) completed, Milestone 2 (Domain and schema planning) готовий до старту.
+- Поточний статус: Milestone 0 завершено, Milestone 1 (Repository and Foundation) completed,
+  Milestone 2 (Domain and schema planning) completed (PostgreSQL runtime proof passed).
 
 ## Milestone 0 — Architecture Lock
 
@@ -80,11 +81,34 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
   - `scripts/db_runtime_check.sh`
   - `tests/test_db_runtime_schema.py`
   - `docs/19_database_runtime_verification.md`
-- 2026-05-14: runtime verification blocker:
-  - `docker` у WSL не має доступу до Docker Linux Engine;
-  - локального PostgreSQL сервісу немає;
-  - `alembic upgrade head`, `alembic current`, `alembic check` падають з
-    `ConnectionRefusedError` до `127.0.0.1:5432`.
+- 2026-05-14: runtime verification completed on PostgreSQL:
+  - `docker compose` доступний (`version: 28.4.0`, `context: default`).
+  - `docker compose -f docker-compose.yml -f /tmp/compose-db-runtime.yml up -d db`
+    (temporary runtime override with `ports: ["5433:5432"]`).
+  - `docker compose -f docker-compose.yml -f /tmp/compose-db-runtime.yml ps` показав `db` up з портом `5433`.
+  - `DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5433/deutsch_trainer'`
+    `alembic upgrade head` → success.
+  - `alembic current` → `202605140001 (head)`.
+  - `alembic check` → `No new upgrade operations detected.`
+  - `bash scripts/db_runtime_check.sh` → passed (`tables`, `indexes`, `constraints`,
+    `partial unique index`, `jsonb` checks passed).
+  - `python -m pytest -q tests/test_db_runtime_schema.py --capture=no` → passed (schema tests).
+  - `bash scripts/local_ci.sh` → passed.
+  - Confirmed DB objects:
+    - Tables: `users`, `quiz_sessions`, `user_answers`, `progress`, `mistakes`,
+      `subscriptions`, `payments`, `analytics_events`
+    - Indexes: `ix_users_telegram_user_id`, `ix_users_language_code`, `ix_user_answers_user_id`,
+      `ix_user_answers_session_id`, `ix_user_answers_external_quiz_id`, `ix_mistakes_user_id`,
+      `ix_mistakes_external_quiz_id`, `ix_mistakes_active_user_external` (partial unique),
+      `ix_progress_level_theme`, `ix_progress_user_id`, `ix_payments_user_id`,
+      `ix_subscriptions_user_id`, `ix_subscriptions_status_expires_at`,
+      `ix_analytics_events_user_id`, `ix_analytics_events_session_id`, `ix_analytics_events_event_name_time`,
+      `ix_quiz_sessions_user_id`
+    - Unique constraints: `uq_users_telegram_user_id`, `uq_user_answers_user_session_external_quiz`,
+      `uq_progress_user_level_theme`, `uq_payments_idempotency_key`,
+      `uq_payments_provider_payment_charge_id`
+    - JSONB columns confirmed: `quiz_sessions.source_metadata`, `quiz_sessions.api_metadata`,
+      `mistakes.source_snapshot`, `payments.audit_metadata`, `analytics_events.event_metadata`
 
 ## Активні ризики (витяг з roadmap, секції 19)
 
