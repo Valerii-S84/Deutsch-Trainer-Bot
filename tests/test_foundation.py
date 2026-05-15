@@ -56,8 +56,12 @@ def test_logging_redacts_sensitive_values_for_child_loggers() -> None:
     for handler in logging.getLogger().handlers:
         handler.stream = stream
 
+    telegram_token = "1234567890:" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
     logging.getLogger("app.test").info(
-        "token=dummy-token secret=hidden api-key=edge-key password=pwd authorization=Bearer auth-token, user_id=1",
+        "token=dummy-token secret=hidden api-key=edge-key password=pwd "
+        "authorization=Bearer auth-token, credential=runtime-credential "
+        "database_url=postgresql://user:password@db/app %s, user_id=1",
+        telegram_token,
     )
 
     output = stream.getvalue()
@@ -65,8 +69,13 @@ def test_logging_redacts_sensitive_values_for_child_loggers() -> None:
     assert "hidden" not in output
     assert "edge-key" not in output
     assert "auth-token" not in output
+    assert "runtime-credential" not in output
+    assert "postgresql://user:password@db/app" not in output
+    assert telegram_token not in output
     assert "token=***" in output
     assert "authorization=***" in output
+    assert "credential=***" in output
+    assert "database_url=***" in output
 
 
 def test_no_obvious_secret_placeholders_in_code() -> None:

@@ -446,3 +446,40 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - `. .venv/bin/activate && python scripts/secret_scan.py` — passed
 - `git diff --check` — no whitespace/trailing issues
 - Міграції не додавались: потрібні таблиці `analytics_events`, `api_error_logs`, `users`, `quiz_sessions`, `user_answers`, `subscriptions` і `payments` уже існують.
+
+## Milestone 11 — Security and Abuse Protection
+
+### Поточний статус
+
+`2026-05-15`: completed.
+
+### Що виконано в цьому вікні
+
+- додано process-local security controls:
+  - `app/security/rate_limits.py`;
+  - sliding-window rate limits для `/start`, training start, answer callbacks, retry/next, paywall click, payment start і admin;
+  - bounded duplicate Telegram update guard.
+- додано Telegram security middleware:
+  - `app/bot/middlewares/security.py`;
+  - middleware підключено в `app/bot/dispatcher.py`;
+  - duplicate updates drop without handler execution;
+  - rate-limit hits return safe German copy without raw payload logging.
+- оновлено webhook/config security:
+  - webhook mode outside development requires HTTPS URL and webhook secret;
+  - duplicate update TTL and rate-limit switch are environment-driven settings.
+- посилено secret/privacy controls:
+  - log redaction covers authorization, bearer values, credentials, database URLs, Telegram token shape and private-key blocks;
+  - analytics metadata rejects unsafe secret-like keys and values through `analytics_event_rejected`.
+- підтверджено existing ownership/idempotency controls додатковими regression tests:
+  - payment pre-checkout rejects invoice owned by another Telegram user;
+  - duplicate update middleware prevents repeated handler execution;
+  - duplicate provider payment event behavior лишається idempotent from Milestone 9 tests.
+
+### Підтвердження завершення milestone
+
+- `. .venv/bin/activate && python -m pytest -q tests/test_security_controls.py tests/test_bot_routers.py tests/test_foundation.py tests/test_analytics_service.py tests/test_payments_service.py --capture=no` — passed
+- `. .venv/bin/activate && python scripts/secret_scan.py` — passed
+- `. .venv/bin/activate && bash scripts/local_ci.sh` — passed
+- `git diff --check` — no whitespace/trailing issues
+- Міграції не додавались: Milestone 11 реалізовано через middleware/config/service-level controls і tests без зміни schema.
+- Обмеження: rate limiter є process-local; cross-process/global rate limiting через Redis не додавався в цьому milestone.

@@ -130,6 +130,24 @@ async def test_pre_checkout_rejects_amount_mismatch(db_session: AsyncSession) ->
 
 
 @pytest.mark.asyncio
+async def test_pre_checkout_rejects_invoice_owned_by_another_user(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+    invoice = await service.create_invoice(db_session, 119, plan=PLAN_PLUS)
+
+    with pytest.raises(PaymentVerificationError):
+        await service.verify_pre_checkout(
+            db_session,
+            120,
+            invoice_payload=invoice.payload,
+            currency=invoice.currency,
+            total_amount=invoice.amount_stars,
+        )
+
+    payment = await _payment_by_id(db_session, invoice.payment_id)
+    assert payment.status == "created"
+
+
+@pytest.mark.asyncio
 async def test_payment_success_does_not_unlock_before_credit(db_session: AsyncSession) -> None:
     service = PaymentService(settings=_settings())
     entitlements = EntitlementService(settings=_settings())

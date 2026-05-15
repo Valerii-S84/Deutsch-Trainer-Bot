@@ -16,11 +16,18 @@ _UNSAFE_METADATA_KEY_PARTS = (
     "authorization",
     "credential",
     "debug_payload",
+    "dsn",
     "password",
     "provider_payload",
     "raw_payload",
     "secret",
     "token",
+)
+_UNSAFE_METADATA_VALUE_RE = re.compile(
+    r"(?i)(\bbearer\s+[A-Za-z0-9._~+/=-]+"
+    r"|\b(?:authorization|token|secret|api[_-]?key|password|credential|database_url|dsn)\b\s*[:=]"
+    r"|\b\d{8,12}:[A-Za-z0-9_-]{35,}"
+    r"|-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----)",
 )
 
 
@@ -95,21 +102,23 @@ def _rejection_reason(
         return "invalid_event_name"
     if not _SOURCE_RE.match(source):
         return "invalid_source"
-    if _metadata_has_unsafe_key(event_metadata):
+    if _metadata_has_unsafe_content(event_metadata):
         return "unsafe_metadata"
     return None
 
 
-def _metadata_has_unsafe_key(value: object) -> bool:
+def _metadata_has_unsafe_content(value: object) -> bool:
     if isinstance(value, dict):
         for key, child in value.items():
             key_text = str(key).lower()
             if any(part in key_text for part in _UNSAFE_METADATA_KEY_PARTS):
                 return True
-            if _metadata_has_unsafe_key(child):
+            if _metadata_has_unsafe_content(child):
                 return True
     if isinstance(value, list):
-        return any(_metadata_has_unsafe_key(item) for item in value)
+        return any(_metadata_has_unsafe_content(item) for item in value)
+    if isinstance(value, str):
+        return bool(_UNSAFE_METADATA_VALUE_RE.search(value))
     return False
 
 

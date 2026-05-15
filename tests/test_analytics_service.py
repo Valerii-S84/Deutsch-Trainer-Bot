@@ -58,6 +58,28 @@ async def test_analytics_repository_rejects_unsafe_metadata(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
+async def test_analytics_repository_rejects_unsafe_metadata_values(db_session: AsyncSession) -> None:
+    repo = AnalyticsEventRepository()
+
+    await repo.record(
+        db_session,
+        event_name="quiz_api_request_failed",
+        user_id=1,
+        event_metadata={"message": "authorization=Bearer secret-token"},
+        source="training",
+    )
+    await db_session.flush()
+
+    event = await db_session.scalar(select(AnalyticsEvent))
+    assert event is not None
+    assert event.event_name == "analytics_event_rejected"
+    assert event.event_metadata == {
+        "rejected_event_name": "quiz_api_request_failed",
+        "reason_code": "unsafe_metadata",
+    }
+
+
+@pytest.mark.asyncio
 async def test_analytics_tracker_does_not_raise_when_repository_fails() -> None:
     class FailingRepository:
         async def record(self, *args, **kwargs):

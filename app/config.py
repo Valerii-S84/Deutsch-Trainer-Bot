@@ -25,9 +25,12 @@ class Settings(BaseSettings):
     telegram_webhook_url: Optional[str] = None
     telegram_webhook_secret: Optional[SecretStr] = None
     telegram_webhook_path: str = "/telegram/webhook"
+    telegram_webhook_require_https: bool = True
+    telegram_duplicate_update_ttl_seconds: int = 300
     bot_webhook_enabled: bool = False
     bot_polling_enabled: bool = True
     bot_max_request_timeout: int = 30
+    security_rate_limit_enabled: bool = True
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/deutsch_trainer"
     redis_url: str = "redis://localhost:6379/0"
@@ -66,6 +69,13 @@ class Settings(BaseSettings):
     def validate_timeout(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("BOT_MAX_REQUEST_TIMEOUT must be > 0")
+        return value
+
+    @field_validator("telegram_duplicate_update_ttl_seconds")
+    @classmethod
+    def validate_duplicate_update_ttl(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("TELEGRAM_DUPLICATE_UPDATE_TTL_SECONDS must be > 0")
         return value
 
     @field_validator("quiz_bank_timeout_seconds")
@@ -130,6 +140,21 @@ class Settings(BaseSettings):
             < self.pro_daily_question_limit
         ):
             raise ValueError("Daily question limits must satisfy Free < Plus < Pro")
+        return self
+
+    @model_validator(mode="after")
+    def validate_webhook_security(self) -> "Settings":
+        if not self.bot_webhook_enabled or self.app_env == AppEnvironment.development:
+            return self
+
+        if not self.telegram_webhook_url:
+            raise ValueError("TELEGRAM_WEBHOOK_URL is required when webhook mode is enabled")
+        if not self.telegram_webhook_secret or not self.telegram_webhook_secret.get_secret_value():
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET is required when webhook mode is enabled")
+        if self.telegram_webhook_require_https and not self.telegram_webhook_url.startswith("https://"):
+            raise ValueError("TELEGRAM_WEBHOOK_URL must use HTTPS outside development")
+        if not self.telegram_webhook_path.startswith("/"):
+            raise ValueError("TELEGRAM_WEBHOOK_PATH must start with /")
         return self
 
     @property
