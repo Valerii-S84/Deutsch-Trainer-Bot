@@ -150,19 +150,19 @@ async def handle_review_entry(callback_query: CallbackQuery) -> None:
 
     async with _session_context() as db:
         try:
-            await entitlement_service.ensure_entitlement(db, user_id, feature=FEATURE_MISTAKE_REPEAT)
             review_items = await mistake_service.get_review_items(db, user_id)
+            if not review_items:
+                await callback_query.message.answer(
+                    REVIEW_EMPTY_STATE_TEXT,
+                    reply_markup=build_review_empty_keyboard(),
+                )
+                return
+            await entitlement_service.ensure_entitlement(db, user_id, feature=FEATURE_MISTAKE_REPEAT)
         except EntitlementDeniedError:
             await db.rollback()
             await callback_query.message.answer(
                 PAYWALL_MISTAKE_REPEAT_TEXT,
                 reply_markup=build_paywall_keyboard(),
-            )
-            return
-        if not review_items:
-            await callback_query.message.answer(
-                REVIEW_EMPTY_STATE_TEXT,
-                reply_markup=build_review_empty_keyboard(),
             )
             return
 

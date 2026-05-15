@@ -63,14 +63,18 @@ PROFILE_NO_WEAK_THEMES_TEXT = "Keine klare Schwachstelle erkannt."
 
 SUBSCRIPTION_TEXT = (
     "💳 Dein Abo\n\n"
-    "Aktueller Plan: {plan}\n"
-    "Status: {status}\n\n"
+    "Aktueller Zugang: {access_plan}\n"
+    "Abo-Status: {status}\n\n"
     "Plus bietet mehr Übungen pro Tag, vollständigen Fortschritt und gezielte Fehlerwiederholung.\n"
     "Pro enthält zusätzlich erweiterte Statistik und einen tieferen Fehlerüberblick."
 )
 
 SUBSCRIPTION_STATUS_FREE_TEXT = "Free"
-SUBSCRIPTION_STATUS_ACTIVE_TEXT = "Aktiv bis {expires_at}"
+SUBSCRIPTION_STATUS_ACTIVE_TEXT = "{plan} aktiv bis {expires_at}"
+SUBSCRIPTION_STATUS_PENDING_TEXT = "{plan} wartet auf Zahlungsbestätigung"
+SUBSCRIPTION_STATUS_EXPIRED_TEXT = "{plan} ist am {expires_at} abgelaufen"
+SUBSCRIPTION_STATUS_CANCELLED_TEXT = "{plan} wurde beendet"
+SUBSCRIPTION_STATUS_FAILED_TEXT = "{plan} konnte nicht aktiviert werden"
 SUBSCRIPTION_STATUS_INACTIVE_TEXT = "Kein aktives Abo"
 PAYWALL_DAILY_LIMIT_TEXT = (
     "Dein Tageslimit ist erreicht.\n\n"

@@ -308,3 +308,41 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
   - `tests/test_mistakes_service.py::test_record_wrong_answer_is_duplicate_does_not_change_state`;
   - `tests/test_training_mistakes_integration.py::test_submit_answer_does_not_repeat_wrong_mistake_on_duplicate_click`.
 - Review mode підтверджено тестом `tests/test_review_handlers.py`.
+
+## Milestone 8 — Limits, Entitlements and Subscriptions
+
+### Поточний статус
+
+`2026-05-15`: completed.
+
+### Що виконано в цьому вікні
+
+- оновлено `app/services/entitlements.py`:
+  - додано `SubscriptionStatusState` для status screen;
+  - active paid access лишається доступним тільки для `active` paid subscription з credited payment;
+  - pending, expired, cancelled і failed subscription не відкривають paid access;
+  - expiration порівнюється з timezone-normalized UTC datetime;
+  - Free/Plus/Pro daily limit hierarchy лишається config-driven через `Settings`.
+- оновлено `app/repositories/subscriptions.py`:
+  - додано читання останньої subscription для status screen без зміни схеми.
+- оновлено subscription UI:
+  - `app/bot/handlers/subscription.py`;
+  - `app/bot/texts.py`;
+  - status screen показує реальний access plan і стан активної, pending або expired paid subscription німецькою.
+- уточнено review paywall order:
+  - `app/bot/handlers/review.py`;
+  - `app/services/training_session_lifecycle.py`;
+  - якщо активних помилок немає, показується empty state без paid paywall.
+- додано/оновлено тести:
+  - `tests/test_entitlements_service.py`;
+  - `tests/test_subscription_handlers.py`;
+  - `tests/test_review_handlers.py`.
+
+### Підтвердження завершення milestone
+
+- `. .venv/bin/activate && python -m pytest -q tests/test_entitlements_service.py tests/test_subscription_handlers.py tests/test_review_handlers.py tests/test_bot_handlers.py --capture=no` — passed
+- `. .venv/bin/activate && python -m pytest -q tests/test_entitlements_service.py tests/test_subscription_handlers.py tests/test_review_handlers.py tests/test_bot_handlers.py tests/test_training_session_service.py tests/test_training_mistakes_integration.py tests/test_training_handlers.py tests/test_profile_handlers.py --capture=no` — passed
+- `. .venv/bin/activate && bash scripts/local_ci.sh` — passed
+- `git diff --check` — no whitespace/trailing issues
+- Міграції не додавались: потрібні таблиці `daily_limits`, `subscriptions` і `payments` уже існують.
+- Monthly limits і paywall cooldown не реалізовувались, бо в roadmap вони лишаються Decision Required/config-dependent.

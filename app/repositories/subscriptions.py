@@ -39,6 +39,20 @@ class SubscriptionRepository:
         )
         return await db.scalar(query)
 
+    async def get_latest_for_user(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+    ) -> Subscription | None:
+        query = (
+            select(Subscription)
+            .where(Subscription.user_id == user_id)
+            .order_by(desc(Subscription.created_at), desc(Subscription.id))
+            .limit(1)
+        )
+        return await db.scalar(query)
+
     async def list_user_subscriptions(
         self,
         db: AsyncSession,

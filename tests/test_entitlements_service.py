@@ -200,6 +200,77 @@ async def test_pending_or_uncredited_subscription_does_not_unlock(db_session: As
 
 
 @pytest.mark.asyncio
+async def test_subscription_status_reports_active_credited_paid_access(db_session: AsyncSession) -> None:
+    user = await _user(db_session, user_id=36, telegram_user_id=361)
+    await _credited_subscription(
+        db_session,
+        user=user,
+        plan=PLAN_PLUS,
+        expires_at=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
+    )
+    service = EntitlementService(settings=_settings())
+
+    status_state = await service.get_subscription_status_state(
+        db_session,
+        user.telegram_user_id,
+        now=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+    )
+
+    assert status_state.access_plan == PLAN_PLUS
+    assert status_state.status_plan == PLAN_PLUS
+    assert status_state.status == "active"
+    assert status_state.subscription is not None
+
+
+@pytest.mark.asyncio
+async def test_subscription_status_preserves_pending_plan_without_paid_access(db_session: AsyncSession) -> None:
+    user = await _user(db_session, user_id=34, telegram_user_id=341)
+    await _credited_subscription(
+        db_session,
+        user=user,
+        plan=PLAN_PRO,
+        expires_at=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
+        credited=False,
+        subscription_status="pending",
+    )
+    service = EntitlementService(settings=_settings())
+
+    status_state = await service.get_subscription_status_state(
+        db_session,
+        user.telegram_user_id,
+        now=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+    )
+
+    assert status_state.access_plan == PLAN_FREE
+    assert status_state.status_plan == PLAN_PRO
+    assert status_state.status == "pending"
+    assert status_state.subscription is not None
+
+
+@pytest.mark.asyncio
+async def test_subscription_status_treats_time_expired_subscription_as_expired(db_session: AsyncSession) -> None:
+    user = await _user(db_session, user_id=35, telegram_user_id=351)
+    await _credited_subscription(
+        db_session,
+        user=user,
+        plan=PLAN_PLUS,
+        expires_at=datetime(2026, 5, 14, 10, 0, tzinfo=UTC),
+    )
+    service = EntitlementService(settings=_settings())
+
+    status_state = await service.get_subscription_status_state(
+        db_session,
+        user.telegram_user_id,
+        now=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+    )
+
+    assert status_state.access_plan == PLAN_FREE
+    assert status_state.status_plan == PLAN_PLUS
+    assert status_state.status == "expired"
+    assert status_state.expires_at == datetime(2026, 5, 14, 10, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
 async def test_expired_subscription_returns_to_free_without_deleting_data(db_session: AsyncSession) -> None:
     user = await _user(db_session, user_id=4, telegram_user_id=115)
     subscription = await _credited_subscription(

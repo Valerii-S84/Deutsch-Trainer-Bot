@@ -105,6 +105,10 @@ class TrainingSessionLifecycleMixin:
             raise NoReviewItemsError("Review service is not configured")
 
         user = await self.get_user(db, telegram_user_id)
+        review_items = await self._mistakes_service.get_review_items(db, telegram_user_id)
+        if not review_items:
+            raise NoReviewItemsError("No active mistakes to review")
+
         if self._entitlement_service is not None:
             await self._entitlement_service.ensure_entitlement(
                 db,
@@ -116,9 +120,6 @@ class TrainingSessionLifecycleMixin:
                 telegram_user_id,
             )
         await db.flush()
-        review_items = await self._mistakes_service.get_review_items(db, telegram_user_id)
-        if not review_items:
-            raise NoReviewItemsError("No active mistakes to review")
 
         existing = await self._replace_review_session_if_needed(db, user.id, force_new=force_new)
         if existing is not None:

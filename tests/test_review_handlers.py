@@ -77,8 +77,10 @@ class FakeMistakeService:
 class FakeEntitlementService:
     def __init__(self, should_raise: Exception | None = None) -> None:
         self.should_raise = should_raise
+        self.called = False
 
     async def ensure_entitlement(self, db, user_id: int, *, feature: str):
+        self.called = True
         if self.should_raise is not None:
             raise self.should_raise
         return SimpleNamespace(allowed=True)
@@ -100,8 +102,9 @@ def _daily_limit_error() -> DailyLimitExceededError:
 async def test_review_entry_shows_empty_state_when_no_active_mistakes(monkeypatch) -> None:
     db = FakeDb()
     fake_mistakes = FakeMistakeService(items=[])
+    fake_entitlements = FakeEntitlementService()
     monkeypatch.setattr(review, "mistake_service", fake_mistakes)
-    monkeypatch.setattr(review, "entitlement_service", FakeEntitlementService())
+    monkeypatch.setattr(review, "entitlement_service", fake_entitlements)
     monkeypatch.setattr(review, "_session_factory", lambda: db)
 
     callback = FakeCallback(data="menu:review")
@@ -114,6 +117,7 @@ async def test_review_entry_shows_empty_state_when_no_active_mistakes(monkeypatc
     assert REVIEW_EMPTY_STATE_TEXT == text
     assert call_kwargs["reply_markup"] is not None
     assert fake_mistakes.called
+    assert not fake_entitlements.called
 
 
 @pytest.mark.asyncio

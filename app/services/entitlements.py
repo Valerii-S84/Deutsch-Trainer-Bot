@@ -65,6 +65,16 @@ class AccessState:
 
 
 @dataclass(frozen=True)
+class SubscriptionStatusState:
+    user_id: int
+    access_plan: str
+    status_plan: str
+    status: str
+    expires_at: datetime | None
+    subscription: Subscription | None
+
+
+@dataclass(frozen=True)
 class DailyLimitState:
     plan: str
     question_limit: int
@@ -119,6 +129,53 @@ class EntitlementService:
         )
         plan = subscription.plan if subscription is not None else PLAN_FREE
         return AccessState(user_id=user.id, plan=plan, subscription=subscription)
+
+    async def get_subscription_status_state(
+        self,
+        db,
+        telegram_user_id: int,
+        *,
+        now: datetime | None = None,
+    ) -> SubscriptionStatusState:
+        user = await self._user_repo.create_if_missing(db, telegram_user_id)
+        if getattr(user, "id", None) is None and hasattr(db, "flush"):
+            await db.flush()
+
+        current_time = _as_aware_utc(now or datetime.now(UTC))
+        subscription = await self._subscription_repo.get_effective_paid_subscription(
+            db,
+            user_id=user.id,
+            now=current_time,
+        )
+        if subscription is not None:
+            return SubscriptionStatusState(
+                user_id=user.id,
+                access_plan=subscription.plan,
+                status_plan=subscription.plan,
+                status="active",
+                expires_at=_as_aware_utc(subscription.expires_at),
+                subscription=subscription,
+            )
+
+        latest_subscription = await self._subscription_repo.get_latest_for_user(db, user_id=user.id)
+        if latest_subscription is None:
+            return SubscriptionStatusState(
+                user_id=user.id,
+                access_plan=PLAN_FREE,
+                status_plan=PLAN_FREE,
+                status="inactive",
+                expires_at=None,
+                subscription=None,
+            )
+
+        return SubscriptionStatusState(
+            user_id=user.id,
+            access_plan=PLAN_FREE,
+            status_plan=latest_subscription.plan,
+            status=_subscription_status(latest_subscription, current_time),
+            expires_at=_as_aware_utc(latest_subscription.expires_at),
+            subscription=latest_subscription,
+        )
 
     async def check_entitlement(
         self,
@@ -248,6 +305,26 @@ class EntitlementService:
 
 def plan_includes(user_plan: str, required_plan: str) -> bool:
     return PLAN_RANK[user_plan] >= PLAN_RANK[required_plan]
+
+
+def _subscription_status(subscription: Subscription, current_time: datetime) -> str:
+    status = str(subscription.status or "inactive")
+    expires_at = _as_aware_utc(subscription.expires_at)
+    if status == "active" and expires_at is not None and expires_at <= _as_aware_utc(current_time):
+        return "expired"
+    if status == "active" and subscription.plan != PLAN_FREE:
+        return "pending"
+    if status in {"pending", "expired", "cancelled", "failed"}:
+        return status
+    return "inactive"
+
+
+def _as_aware_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _daily_limit_state(plan: str, daily_limit: DailyLimit) -> DailyLimitState:
