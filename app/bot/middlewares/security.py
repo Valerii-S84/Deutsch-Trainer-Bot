@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from inspect import isawaitable
 from typing import Any
 
 from aiogram import BaseMiddleware
@@ -29,6 +30,7 @@ from app.security.rate_limits import (
     ACTION_TRAINING_START,
     DuplicateUpdateGuard,
     InMemoryRateLimiter,
+    RateLimitBackendError,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,8 +42,8 @@ class SecurityMiddleware(BaseMiddleware):
     def __init__(
         self,
         *,
-        rate_limiter: InMemoryRateLimiter | None = None,
-        duplicate_guard: DuplicateUpdateGuard | None = None,
+        rate_limiter: Any | None = None,
+        duplicate_guard: Any | None = None,
         rate_limit_enabled: bool = True,
     ) -> None:
         self._rate_limiter = rate_limiter or InMemoryRateLimiter()
@@ -51,7 +53,13 @@ class SecurityMiddleware(BaseMiddleware):
     async def __call__(self, handler: Any, event: Any, data: dict[str, Any]) -> Any:
         update = data.get("event_update") or event
         update_id = _update_id(update)
-        if not self._duplicate_guard.accept(update_id):
+        try:
+            accepted = await _maybe_await(self._duplicate_guard.accept(update_id))
+        except RateLimitBackendError:
+            logger.warning("telegram security state backend unavailable: update_id=%s", update_id)
+            await _notify_rate_limit(update)
+            return None
+        if not accepted:
             logger.info("duplicate telegram update ignored: update_id=%s", update_id)
             return None
 
@@ -63,7 +71,17 @@ class SecurityMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         identity = _rate_limit_identity(update)
-        decision = self._rate_limiter.check(action=action, identity=identity)
+        try:
+            decision = await _maybe_await(self._rate_limiter.check(action=action, identity=identity))
+        except RateLimitBackendError:
+            logger.warning(
+                "telegram rate limit backend unavailable: action=%s identity=%s update_id=%s",
+                action,
+                identity,
+                update_id,
+            )
+            await _notify_rate_limit(update)
+            return None
         if decision.allowed:
             return await handler(event, data)
 
@@ -183,3 +201,9 @@ async def _notify_rate_limit(update: Any) -> None:
     message = _message(update)
     if message is not None and hasattr(message, "answer"):
         await message.answer(RATE_LIMIT_HIT_TEXT)
+
+
+async def _maybe_await(value: Any) -> Any:
+    if isawaitable(value):
+        return await value
+    return value

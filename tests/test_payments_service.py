@@ -246,6 +246,31 @@ async def test_duplicate_payload_with_different_provider_reference_is_rejected(d
 
 
 @pytest.mark.asyncio
+async def test_reused_provider_reference_for_another_payment_is_rejected(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+    first_invoice = await service.create_invoice(db_session, 121, plan=PLAN_PLUS)
+    second_invoice = await service.create_invoice(db_session, 121, plan=PLAN_PRO)
+    first_confirmation = _confirmation(first_invoice)
+    await service.confirm_and_credit_payment(db_session, 121, first_confirmation)
+
+    with pytest.raises(PaymentVerificationError, match="provider_reference_reused"):
+        await service.confirm_and_credit_payment(
+            db_session,
+            121,
+            PaymentConfirmation(
+                invoice_payload=second_invoice.payload,
+                currency=PAYMENT_CURRENCY,
+                total_amount=second_invoice.amount_stars,
+                telegram_payment_charge_id=first_confirmation.telegram_payment_charge_id,
+                provider_payment_charge_id=first_confirmation.provider_payment_charge_id,
+            ),
+        )
+
+    subscription_count = await db_session.scalar(select(func.count(Subscription.id)))
+    assert subscription_count == 1
+
+
+@pytest.mark.asyncio
 async def test_failed_payment_does_not_unlock_access(db_session: AsyncSession) -> None:
     service = PaymentService(settings=_settings())
     entitlements = EntitlementService(settings=_settings())
@@ -262,7 +287,20 @@ async def test_failed_payment_does_not_unlock_access(db_session: AsyncSession) -
 
 @pytest.mark.asyncio
 async def test_missing_launch_config_blocks_invoice_creation(db_session: AsyncSession) -> None:
-    service = PaymentService(settings=Settings())
+    service = PaymentService(
+        settings=Settings(
+            PLUS_PRICE_STARS=None,
+            PLUS_DURATION_DAYS=None,
+        ),
+    )
 
     with pytest.raises(PaymentConfigurationError):
         await service.create_invoice(db_session, 117, plan=PLAN_PLUS)
+
+
+@pytest.mark.asyncio
+async def test_unsupported_plan_blocks_invoice_creation(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+
+    with pytest.raises(PaymentConfigurationError, match="unsupported_plan"):
+        await service.create_invoice(db_session, 122, plan="enterprise")

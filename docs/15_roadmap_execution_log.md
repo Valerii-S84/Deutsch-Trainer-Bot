@@ -9,11 +9,28 @@
 
 ## Поточний стан (2026-05-15)
 
-- Виконання: Milestone 0-7 acceptance recovery completed against roadmap gates.
+- Виконання: Milestone 0-9 and M11 closure work completed locally against roadmap gates where credentials are not required.
 - Поточний статус: Milestone 0-7 закрито після усунення розривів між roadmap/docs/code/tests:
   Home/onboarding, Quiz Bank availability-driven themes, persisted API error logs,
   Telegram update idempotency, progress rows for available unanswered topics,
   explicit Mistake Screen before review session.
+- Додатково 2026-05-15: M0 production decisions re-locked; M8 limits/entitlements,
+  M9 payment idempotency and M11 Redis-backed security controls implemented with tests.
+
+## Final Closure Gate — M0/M8/M9/M11
+
+### 2026-05-15
+
+- `. .venv/bin/activate && bash scripts/local_ci.sh` — passed.
+- Initial `bash scripts/db_runtime_check.sh` without `DATABASE_URL` stopped as expected with
+  `DATABASE_URL or TEST_DATABASE_URL is required for runtime verification`.
+- PostgreSQL runtime check was then run against Docker PostgreSQL on `localhost:5433`:
+  - `DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5433/deutsch_trainer' alembic upgrade head` — passed.
+  - `DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5433/deutsch_trainer' bash scripts/db_runtime_check.sh` — passed.
+  - Runtime schema verification finished with Alembic current `202605140002 (head)` and `alembic check` reporting `No new upgrade operations detected`.
+- Focused payment/security regression:
+  - `python -m pytest -q tests/test_security_controls.py tests/test_entitlements_service.py tests/test_payments_service.py tests/test_payment_handlers.py tests/test_admin_handlers.py tests/test_analytics_service.py tests/test_foundation.py --capture=no` — passed.
+- `git diff --check` — passed.
 
 ## Milestone 0 — Architecture Lock
 
@@ -33,19 +50,105 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - Security model: env-only secrets, webhook secret, no secrets in logs, API keys protected, rate limits, payment audit log  
 - QA model: pytest + unit/integration/Telegram flow/Quiz Bank integration/payment-subscription-progress regression  
 
-### Open, але не блокують Foundation
+### Release 1 launch configuration
 
-- exact Plus price (Decision Required Before Payment Implementation)
-- exact Pro price (Decision Required Before Payment Implementation)
-- Plus duration (Decision Required Before Payment Implementation)
-- Pro duration (Decision Required Before Payment Implementation)
-- final Telegram Stars package values (Decision Required Before Payment Implementation)
-- final public tariff copy (Decision Required Before Payment Implementation)
+- Free daily limit: `5`.
+- Plus daily limit: `25`.
+- Pro daily limit: `100`.
+- Plus package: `100` Telegram Stars / `30` days.
+- Pro package: `250` Telegram Stars / `90` days.
+- Telegram Stars mode: `test` by default, `prod` required by production secret validation.
+- Monthly limits: Decision closed as `not in Release 1`.
+- Paywall cooldown: Decision closed as `none`.
 
 ### Gate
 
 - Milestone 1 can start.  
 - Milestone 2 can start after DB schema planning and migration design.
+
+## Milestone 8 — Limits, Entitlements and Subscriptions
+
+### Поточний статус
+
+`2026-05-15`: completed for Release 1 code scope.
+
+### Що виконано
+
+- Daily limits are config-driven with locked defaults:
+  `FREE_DAILY_QUESTION_LIMIT=5`, `PLUS_DAILY_QUESTION_LIMIT=25`,
+  `PRO_DAILY_QUESTION_LIMIT=100`.
+- Config validation enforces `Free < Plus < Pro`.
+- Monthly limits are explicitly not in Release 1.
+- Paywall cooldown policy is explicitly `none`.
+- Service-layer entitlements require Plus/Pro for paid features independently from UI.
+- Active paid access requires an active non-expired subscription joined to a credited payment.
+- Pending/uncredited subscriptions do not unlock paid access.
+- Expiration returns the user to Free access without deleting progress, mistakes, payments or subscription history.
+
+### Evidence
+
+- `tests/test_entitlements_service.py`
+- `tests/test_security_controls.py`
+- Focused run: `python -m pytest -q tests/test_security_controls.py tests/test_entitlements_service.py tests/test_payments_service.py tests/test_payment_handlers.py --capture=no` — passed.
+
+## Milestone 9 — Payments
+
+### Поточний статус
+
+`2026-05-15`: completed for local Telegram Stars service/handler flow.
+
+### Що виконано
+
+- Approved packages:
+  - Plus: `100` Stars, `30` days.
+  - Pro: `250` Stars, `90` days.
+- Telegram Stars payload format locked: `dtbpay:{payment_id}:{idempotency_key}`.
+- Provider fields locked: currency `XTR`, empty provider token for Stars, charge references validated when present.
+- Local payment flow covers invoice creation, pre-checkout validation, successful payment confirmation, credit and active subscription.
+- QA mismatch coverage includes wrong user, wrong amount, unsupported/wrong plan, duplicate provider event, duplicate payload with different reference and reused provider reference.
+- Paid access remains locked until `payment.status=credited` and an active subscription exists.
+- Cancel/refund automation is explicitly unsupported in Release 1 bot runtime; manual provider/operator handling remains outside code scope.
+
+### Evidence
+
+- `app/services/payments.py`
+- `app/bot/handlers/payments.py`
+- `tests/test_payments_service.py`
+- `tests/test_payment_handlers.py`
+- Focused run: `python -m pytest -q tests/test_security_controls.py tests/test_entitlements_service.py tests/test_payments_service.py tests/test_payment_handlers.py --capture=no` — passed.
+
+### Недоведено до production release
+
+- Real Telegram Stars test-mode execution with live Telegram credentials was not run in this local repository pass.
+
+## Milestone 11 — Security and Abuse Protection
+
+### Поточний статус
+
+`2026-05-15`: completed for code-level security controls; production deployment evidence remains M12.
+
+### Що виконано
+
+- Redis-backed global sliding-window rate limiter added for multi-process staging/production.
+- Redis-backed duplicate Telegram update guard added for webhook/runtime state.
+- Development keeps in-memory backend by default; staging/production `auto` resolves to Redis.
+- `SECURITY_STATE_BACKEND=in_memory` is rejected outside development.
+- Production startup requires webhook mode, webhook secret, DB URL, Redis URL and `TELEGRAM_STARS_MODE=prod`.
+- Admin metrics are owner-only through `ADMIN_TELEGRAM_USER_IDS`.
+- Logs and analytics reject/redact tokens, secrets, DB URLs, provider payloads and raw sensitive metadata.
+- Backup encryption/restricted access is locked as a security control in `docs/16_architecture_lock.md` and `docs/13_operations.md`.
+
+### Evidence
+
+- `app/security/rate_limits.py`
+- `app/bot/middlewares/security.py`
+- `app/bot/dispatcher.py`
+- `app/logging_config.py`
+- `app/repositories/analytics_events.py`
+- `tests/test_security_controls.py`
+- `tests/test_admin_handlers.py`
+- `tests/test_analytics_service.py`
+- Focused run: `python -m pytest -q tests/test_security_controls.py tests/test_entitlements_service.py tests/test_payments_service.py tests/test_payment_handlers.py --capture=no` — passed.
 
 ## Milestone 1 — Repository and Foundation
 
@@ -144,20 +247,16 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 
 ## Активні ризики (витяг з roadmap, секції 19)
 
-- exact Plus price / exact Pro price (Decision Required Before Payment Implementation)
-- Plus / Pro duration (Decision Required Before Payment Implementation)
-- final Telegram Stars package values
-- final public tariff copy
-- API payload/verification details потрібно підтвердити до фінальної payment реалізації.
-- Дублювання payment events має бути закрите в Milestone 9.
+- Real Telegram Stars test/prod run requires safe credentials and cannot be proven by local tests alone.
+- Production domain value and webhook registration evidence live in deploy inventory, not committed docs.
 - Нестабільне покриття та regressions у German copy залишаються QA-ризиками.
 - Готовність backup/restore/rollback валідатиметься на Milestone 12.
 
 ## Вимоги до виконання (далі)
 
-1. Підтвердити фінальні tariff values (`exact Plus/Pro price`, `exact Plus/Pro duration`, final Stars package values, `public tariff copy`) до початку фінальної payment імплементації.
-2. Зафіксувати remaining operational config для rollout (`limits`, `cooldown`, retry/circuit settings for Quiz Bank API) в підготовчому документі/конфігурації.
-3. Почати Milestone 1–13 по черзі в порядку з `docs/14_implementation_roadmap.md`.
+1. Run full local CI before final close-out.
+2. Run PostgreSQL runtime verification when `DATABASE_URL` or `TEST_DATABASE_URL` is available.
+3. Keep production release blocked until M12 backup/restore/monitoring/deploy evidence exists.
 
 ## Milestone 4 — Quiz Bank API Integration
 
@@ -345,7 +444,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - `. .venv/bin/activate && bash scripts/local_ci.sh` — passed
 - `git diff --check` — no whitespace/trailing issues
 - Міграції не додавались: потрібні таблиці `daily_limits`, `subscriptions` і `payments` уже існують.
-- Monthly limits і paywall cooldown не реалізовувались, бо в roadmap вони лишаються Decision Required/config-dependent.
+- Monthly limits не реалізовувались, бо рішення закрите як `not in Release 1`.
+- Paywall cooldown не реалізовувався, бо Release 1 policy is `PAYWALL_COOLDOWN_POLICY=none`.
 
 ## Milestone 9 — Payments
 
@@ -385,7 +485,9 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
   - `app/bot/handlers/__init__.py`;
   - German success/failure/config-unavailable payment copy.
 - оновлено `app/config.py`:
-  - optional Stars prices and subscription durations validate as positive values when configured.
+  - approved Stars prices and subscription durations мають validated defaults;
+  - production requires `TELEGRAM_STARS_MODE=prod`;
+  - invalid/missing explicit overrides fail closed.
 - додано/оновлено тести:
   - `tests/test_payments_service.py`;
   - `tests/test_payment_handlers.py`;
@@ -398,8 +500,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - `. .venv/bin/activate && bash scripts/local_ci.sh` — passed
 - `git diff --check` — no whitespace/trailing issues
 - Міграції не додавались: `payments`, `subscriptions` і `analytics_events` уже містять потрібні поля для цього milestone.
-- Plus/Pro ціни й duration не hardcoded: invoice creation блокується без runtime config.
-- Refund/cancel provider behavior не реалізовувався як Telegram runtime callback, бо фінальна provider-specific поведінка лишається Decision Required/production-integration dependent.
+- Plus/Pro ціни й duration locked as typed launch config defaults and can be overridden only through validated env.
+- Refund/cancel provider behavior не реалізовувався як Telegram runtime callback, бо Release 1 decision is unsupported/manual provider/operator handling.
 
 ## Milestone 10 — Analytics and Admin Metrics
 
@@ -455,10 +557,11 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 
 ### Що виконано в цьому вікні
 
-- додано process-local security controls:
+- додано security controls:
   - `app/security/rate_limits.py`;
   - sliding-window rate limits для `/start`, training start, answer callbacks, retry/next, paywall click, payment start і admin;
-  - bounded duplicate Telegram update guard.
+  - in-memory limiter/duplicate guard for development and tests;
+  - Redis-backed limiter/duplicate guard for staging/production multi-process runtime.
 - додано Telegram security middleware:
   - `app/bot/middlewares/security.py`;
   - middleware підключено в `app/bot/dispatcher.py`;
@@ -466,7 +569,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
   - rate-limit hits return safe German copy without raw payload logging.
 - оновлено webhook/config security:
   - webhook mode outside development requires HTTPS URL and webhook secret;
-  - duplicate update TTL and rate-limit switch are environment-driven settings.
+- duplicate update TTL, rate-limit switch and security state backend are environment-driven settings.
+- `SECURITY_STATE_BACKEND=in_memory` is rejected outside development.
 - посилено secret/privacy controls:
   - log redaction covers authorization, bearer values, credentials, database URLs, Telegram token shape and private-key blocks;
   - analytics metadata rejects unsafe secret-like keys and values through `analytics_event_rejected`.
@@ -480,6 +584,6 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - `. .venv/bin/activate && python -m pytest -q tests/test_security_controls.py tests/test_bot_routers.py tests/test_foundation.py tests/test_analytics_service.py tests/test_payments_service.py --capture=no` — passed
 - `. .venv/bin/activate && python scripts/secret_scan.py` — passed
 - `. .venv/bin/activate && bash scripts/local_ci.sh` — passed
-- `git diff --check` — no whitespace/trailing issues
+- `git diff --check` — passed in final closure gate
 - Міграції не додавались: Milestone 11 реалізовано через middleware/config/service-level controls і tests без зміни schema.
-- Обмеження: rate limiter є process-local; cross-process/global rate limiting через Redis не додавався в цьому milestone.
+- Redis-backed global rate limiting and duplicate update guard are implemented for non-development runtime.

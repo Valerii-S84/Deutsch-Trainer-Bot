@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config import Settings
 from app.db.base import Base
-from app.db.models import AnalyticsEvent, DailyLimit, Payment, Subscription, User
+from app.db.models import AnalyticsEvent, DailyLimit, Mistake, Payment, Progress, Subscription, User
 from app.services.entitlements import (
     DailyLimitExceededError,
     EntitlementService,
@@ -35,6 +35,8 @@ async def db_session() -> AsyncSession:
                 Payment.__table__,
                 Subscription.__table__,
                 DailyLimit.__table__,
+                Progress.__table__,
+                Mistake.__table__,
                 AnalyticsEvent.__table__,
             ],
         )
@@ -292,6 +294,79 @@ async def test_expired_subscription_returns_to_free_without_deleting_data(db_ses
     assert decision.user_plan == PLAN_FREE
     rows = await db_session.execute(select(Subscription).where(Subscription.user_id == user.id))
     assert subscription in list(rows.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_expired_subscription_preserves_learning_and_payment_rows(db_session: AsyncSession) -> None:
+    user = await _user(db_session, user_id=40, telegram_user_id=401)
+    subscription = await _credited_subscription(
+        db_session,
+        user=user,
+        plan=PLAN_PRO,
+        expires_at=datetime(2026, 5, 14, 10, 0, tzinfo=UTC),
+    )
+    progress = Progress(
+        id=1,
+        user_id=user.id,
+        level="A1",
+        theme="Artikel",
+        total_answered=3,
+        total_correct=2,
+    )
+    mistake = Mistake(
+        id=1,
+        user_id=user.id,
+        external_quiz_id="quiz-1",
+        level="A1",
+        theme="Artikel",
+        wrong_answer="der",
+        correct_answer="die",
+    )
+    db_session.add_all([progress, mistake])
+    await db_session.flush()
+    service = EntitlementService(settings=_settings())
+
+    decision = await service.check_entitlement(
+        db_session,
+        user.telegram_user_id,
+        feature=FEATURE_FULL_PROGRESS_MAP,
+        now=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+    )
+
+    assert decision.allowed is False
+    assert decision.user_plan == PLAN_FREE
+    assert await db_session.get(Subscription, subscription.id) is not None
+    assert await db_session.get(Payment, user.id) is not None
+    assert await db_session.get(Progress, progress.id) is not None
+    assert await db_session.get(Mistake, mistake.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_daily_limits_use_configured_free_plus_pro_values(db_session: AsyncSession) -> None:
+    plus_user = await _user(db_session, user_id=41, telegram_user_id=411)
+    pro_user = await _user(db_session, user_id=42, telegram_user_id=421)
+    await _credited_subscription(
+        db_session,
+        user=plus_user,
+        plan=PLAN_PLUS,
+        expires_at=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
+    )
+    await _credited_subscription(
+        db_session,
+        user=pro_user,
+        plan=PLAN_PRO,
+        expires_at=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
+    )
+    service = EntitlementService(settings=_settings())
+    current_time = datetime(2026, 5, 15, 10, 0, tzinfo=UTC)
+
+    free_state = await service.get_daily_limit_state(db_session, 410, now=current_time)
+    plus_state = await service.get_daily_limit_state(db_session, plus_user.telegram_user_id, now=current_time)
+    pro_state = await service.get_daily_limit_state(db_session, pro_user.telegram_user_id, now=current_time)
+
+    assert (free_state.plan, free_state.question_limit) == (PLAN_FREE, 1)
+    assert (plus_state.plan, plus_state.question_limit) == (PLAN_PLUS, 3)
+    assert (pro_state.plan, pro_state.question_limit) == (PLAN_PRO, 5)
 
 
 @pytest.mark.asyncio

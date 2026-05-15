@@ -110,6 +110,7 @@ class PaymentService:
             config_reference=config.config_reference,
             audit_metadata={
                 "provider": PAYMENT_PROVIDER,
+                "telegram_stars_mode": self._settings.telegram_stars_mode,
                 "plan": config.plan,
                 "amount_stars": config.amount_stars,
                 "duration_days": config.duration_days,

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     bot_polling_enabled: bool = True
     bot_max_request_timeout: int = 30
     security_rate_limit_enabled: bool = True
+    security_state_backend: str = Field(default="auto", alias="SECURITY_STATE_BACKEND")
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/deutsch_trainer"
     redis_url: str = "redis://localhost:6379/0"
@@ -47,11 +48,20 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    plus_price_stars: Optional[str] = Field(default=None, alias="PLUS_PRICE_STARS")
-    pro_price_stars: Optional[str] = Field(default=None, alias="PRO_PRICE_STARS")
-    plus_duration_days: Optional[int] = Field(default=None, alias="PLUS_DURATION_DAYS")
-    pro_duration_days: Optional[int] = Field(default=None, alias="PRO_DURATION_DAYS")
-    tariff_public_copy: Optional[str] = Field(default=None, alias="TARIFF_PUBLIC_COPY")
+    telegram_stars_mode: str = Field(default="test", alias="TELEGRAM_STARS_MODE")
+    plus_price_stars: Optional[str] = Field(default="100", alias="PLUS_PRICE_STARS")
+    pro_price_stars: Optional[str] = Field(default="250", alias="PRO_PRICE_STARS")
+    plus_duration_days: Optional[int] = Field(default=30, alias="PLUS_DURATION_DAYS")
+    pro_duration_days: Optional[int] = Field(default=90, alias="PRO_DURATION_DAYS")
+    tariff_public_copy: str = Field(
+        default=(
+            "Plus: mehr Uebungen pro Tag, vollstaendiger Fortschritt und "
+            "gezielte Fehlerwiederholung. Pro: erweiterte Statistik, mehr "
+            "Training und tieferer Fehlerueberblick."
+        ),
+        alias="TARIFF_PUBLIC_COPY",
+    )
+    paywall_cooldown_policy: str = Field(default="none", alias="PAYWALL_COOLDOWN_POLICY")
     admin_telegram_user_ids: tuple[int, ...] = Field(default_factory=tuple, alias="ADMIN_TELEGRAM_USER_IDS")
     free_daily_question_limit: int = Field(default=5, alias="FREE_DAILY_QUESTION_LIMIT")
     plus_daily_question_limit: int = Field(default=25, alias="PLUS_DAILY_QUESTION_LIMIT")
@@ -91,6 +101,30 @@ class Settings(BaseSettings):
         if value < 0:
             raise ValueError("QUIZ_BANK_MAX_RETRIES must be >= 0")
         return value
+
+    @field_validator("security_state_backend")
+    @classmethod
+    def validate_security_state_backend(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"auto", "in_memory", "redis"}:
+            raise ValueError("SECURITY_STATE_BACKEND must be auto, in_memory, or redis")
+        return normalized
+
+    @field_validator("telegram_stars_mode")
+    @classmethod
+    def validate_telegram_stars_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"test", "prod"}:
+            raise ValueError("TELEGRAM_STARS_MODE must be test or prod")
+        return normalized
+
+    @field_validator("paywall_cooldown_policy")
+    @classmethod
+    def validate_paywall_cooldown_policy(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != "none":
+            raise ValueError("PAYWALL_COOLDOWN_POLICY must be none for Release 1")
+        return normalized
 
     @field_validator("free_daily_question_limit", "plus_daily_question_limit", "pro_daily_question_limit")
     @classmethod
@@ -157,6 +191,16 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_PATH must start with /")
         return self
 
+    @model_validator(mode="after")
+    def validate_production_security_state(self) -> "Settings":
+        if self.app_env == AppEnvironment.development:
+            return self
+        if self.security_rate_limit_enabled and self.security_state_backend == "in_memory":
+            raise ValueError("SECURITY_STATE_BACKEND=in_memory is not allowed outside development")
+        if self.security_rate_limit_enabled and not self.redis_url:
+            raise ValueError("REDIS_URL is required when production security rate limits are enabled")
+        return self
+
     @property
     def webhook_mode_enabled(self) -> bool:
         return bool(self.telegram_webhook_url and self.telegram_webhook_secret and self.bot_webhook_enabled)
@@ -172,18 +216,28 @@ class Settings(BaseSettings):
         if self.app_env != AppEnvironment.production:
             return
 
+        if not self.bot_webhook_enabled:
+            raise ValueError("BOT_WEBHOOK_ENABLED must be true in production")
         if not self.bot_token or not self.bot_token.get_secret_value():
             raise ValueError("BOT_TOKEN is required in production")
         if not self.telegram_webhook_secret or not self.telegram_webhook_secret.get_secret_value():
             raise ValueError("TELEGRAM_WEBHOOK_SECRET is required in production")
         if not self.telegram_webhook_url:
             raise ValueError("TELEGRAM_WEBHOOK_URL is required in production")
+        if not self.webhook_mode_enabled:
+            raise ValueError("Webhook mode must be fully configured in production")
         if not self.quiz_bank_edge_api_key_or_legacy:
             raise ValueError("QUIZ_BANK_EDGE_API_KEY (or QUIZ_BANK_API_KEY legacy) is required in production")
         if not self.quiz_bank_consumer_api_key or not self.quiz_bank_consumer_api_key.get_secret_value():
             raise ValueError("QUIZ_BANK_CONSUMER_API_KEY is required in production")
         if not self.quiz_bank_consumer_id:
             raise ValueError("QUIZ_BANK_CONSUMER_ID is required in production")
+        if not self.database_url:
+            raise ValueError("DATABASE_URL is required in production")
+        if self.security_rate_limit_enabled and not self.redis_url:
+            raise ValueError("REDIS_URL is required in production")
+        if self.telegram_stars_mode != "prod":
+            raise ValueError("TELEGRAM_STARS_MODE=prod is required in production")
 
 
 def get_settings() -> Settings:
