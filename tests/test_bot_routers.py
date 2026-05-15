@@ -9,6 +9,7 @@ def test_root_router_contains_all_feature_routers() -> None:
     router = build_root_router()
     names = {sub.name for sub in router.sub_routers}
     assert names == {
+        "admin",
         "start",
         "menu",
         "level",

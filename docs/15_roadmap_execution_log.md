@@ -400,3 +400,49 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - Міграції не додавались: `payments`, `subscriptions` і `analytics_events` уже містять потрібні поля для цього milestone.
 - Plus/Pro ціни й duration не hardcoded: invoice creation блокується без runtime config.
 - Refund/cancel provider behavior не реалізовувався як Telegram runtime callback, бо фінальна provider-specific поведінка лишається Decision Required/production-integration dependent.
+
+## Milestone 10 — Analytics and Admin Metrics
+
+### Поточний статус
+
+`2026-05-15`: completed.
+
+### Що виконано в цьому вікні
+
+- додано `app/services/analytics.py`:
+  - best-effort `AnalyticsTracker`, який не ламає user flow при падінні analytics write;
+  - daily admin metrics для users, active users, sessions, answers, subscriptions, payments, API errors і learning health;
+  - retention D1/D7/D30;
+  - paywall CTR, payment success, Free→Plus, Plus→Pro і expiration recovery metrics;
+  - German admin report formatter.
+- оновлено `app/repositories/analytics_events.py`:
+  - append-only event writes лишилися append-only;
+  - unsafe metadata keys відхиляються через `analytics_event_rejected` без збереження raw payload/secrets;
+  - додано read helper для недубльованого `subscription_expired`.
+- підключено Milestone 10 events:
+  - onboarding: `bot_started`, `user_created`, `level_selected`, `theme_selected`;
+  - learning: `training_started`, `question_answered`, `training_completed`, `result_shown`, `progress_opened`, `mistakes_opened`, `mistakes_repeated`, `recommendation_shown`;
+  - monetization: `paywall_shown`, `paywall_clicked`, `subscription_opened`, `payment_started`, `payment_succeeded`, `payment_failed`, `subscription_started`, `subscription_expired`;
+  - operations: `quiz_api_request_failed`, `quiz_api_invalid_response`.
+- додано owner-only admin command:
+  - `app/bot/handlers/admin.py`;
+  - `ADMIN_TELEGRAM_USER_IDS` у `app/config.py`;
+  - router підключено в `app/bot/routers.py`;
+  - unauthorized users receive generic German denial copy.
+- оновлено payment analytics:
+  - `paywall_clicked` пишеться перед `payment_started`;
+  - `subscription_started` лишається прив'язаним до credited subscription state, не до raw provider callback.
+- додано/оновлено тести:
+  - `tests/test_analytics_service.py`;
+  - `tests/test_admin_handlers.py`;
+  - `tests/test_bot_routers.py`;
+  - `tests/test_payments_service.py`.
+
+### Підтвердження завершення milestone
+
+- `. .venv/bin/activate && python -m pytest -q tests/test_analytics_service.py tests/test_admin_handlers.py tests/test_bot_routers.py tests/test_payments_service.py tests/test_payment_handlers.py tests/test_entitlements_service.py tests/test_subscription_handlers.py tests/test_training_handlers.py tests/test_profile_handlers.py tests/test_review_handlers.py --capture=no` — passed
+- `. .venv/bin/activate && python -m compileall app tests` — passed
+- `. .venv/bin/activate && bash scripts/local_ci.sh` — passed
+- `. .venv/bin/activate && python scripts/secret_scan.py` — passed
+- `git diff --check` — no whitespace/trailing issues
+- Міграції не додавались: потрібні таблиці `analytics_events`, `api_error_logs`, `users`, `quiz_sessions`, `user_answers`, `subscriptions` і `payments` уже існують.

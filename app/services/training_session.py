@@ -14,6 +14,7 @@ from app.quiz_bank.errors import (
     QuizBankValidationError,
 )
 from app.services.entitlements import EntitlementService, FEATURE_MISTAKE_REPEAT
+from app.services.analytics import AnalyticsTracker
 from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
 from app.services.training_session_lifecycle import TrainingSessionLifecycleMixin
@@ -83,6 +84,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         self._progress_service = progress_service
         self._mistakes_service = mistakes_service
         self._entitlement_service = entitlement_service
+        self._analytics_tracker = AnalyticsTracker(self._analytics_repo)
 
     @property
     def _quiz_bank_service(self) -> QuizBankService:
@@ -112,7 +114,7 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         session_id: int | None,
         event_metadata: dict[str, Any] | None = None,
     ) -> None:
-        await self._analytics_repo.record(
+        await self._analytics_tracker.record(
             db,
             event_name=event_name,
             user_id=user_id,
@@ -142,6 +144,20 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
             level=level,
             theme=theme,
             error_metadata={"message": error.message},
+        )
+        event_name = "quiz_api_invalid_response" if isinstance(error, QuizBankValidationError) else "quiz_api_request_failed"
+        await self._record_analytics(
+            db,
+            event_name=event_name,
+            user_id=user_id,
+            session_id=session_id,
+            event_metadata={
+                "endpoint": error.endpoint or "unknown",
+                "error_category": _quiz_bank_error_category(error),
+                "status_code": error.status_code,
+                "level": level,
+                "theme": theme,
+            },
         )
 
     async def _available_items_count_for_question(

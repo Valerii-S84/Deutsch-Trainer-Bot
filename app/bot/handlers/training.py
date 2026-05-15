@@ -54,6 +54,7 @@ from app.quiz_bank.errors import (
 )
 from app.repositories.api_error_logs import ApiErrorLogRepository
 from app.repositories.users import UserRepository
+from app.services.analytics import AnalyticsTracker
 from app.services.training_session import (
     AnswerResult,
     ActiveSessionConflictError,
@@ -76,6 +77,7 @@ training_service = TrainingSessionService(
 )
 _api_error_log_repo = ApiErrorLogRepository()
 _user_repo = UserRepository()
+_analytics_tracker = AnalyticsTracker()
 
 
 def _session_factory():
@@ -238,6 +240,20 @@ async def _persist_quiz_bank_error(
                 theme=theme,
                 error_metadata={"message": error.message},
             )
+            event_name = "quiz_api_invalid_response" if isinstance(error, QuizBankValidationError) else "quiz_api_request_failed"
+            await _analytics_tracker.record(
+                db,
+                event_name=event_name,
+                user_id=getattr(user, "id", None),
+                event_metadata={
+                    "endpoint": error.endpoint or "unknown",
+                    "error_category": _quiz_bank_error_category(error),
+                    "status_code": error.status_code,
+                    "level": level,
+                    "theme": theme,
+                },
+                source="training",
+            )
             await db.commit()
         except Exception:
             await db.rollback()
@@ -314,15 +330,28 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
         return
 
     async with _session_factory() as db:
-        active = await training_service.get_active_session(db, user_id)
-        if active is not None:
-            await callback_query.message.answer(
-                TRAINING_SESSION_RESUME_TEXT,
-                reply_markup=build_resume_keyboard(active.id),
-            )
-            return
-
         try:
+            internal_user_id = None
+            if hasattr(db, "get_bind"):
+                user = await _user_repo.set_training_preferences(db, user_id, level=level, theme=theme)
+                if getattr(user, "id", None) is None and hasattr(db, "flush"):
+                    await db.flush()
+                internal_user_id = getattr(user, "id", None)
+            await _analytics_tracker.record(
+                db,
+                event_name="theme_selected",
+                user_id=internal_user_id,
+                event_metadata={"level": level, "theme": theme},
+                source="onboarding",
+            )
+            active = await training_service.get_active_session(db, user_id)
+            if active is not None:
+                await db.commit()
+                await callback_query.message.answer(
+                    TRAINING_SESSION_RESUME_TEXT,
+                    reply_markup=build_resume_keyboard(active.id),
+                )
+                return
             _, question = await training_service.resume_or_start_session(
                 db,
                 user_id,

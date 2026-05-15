@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     plus_duration_days: Optional[int] = Field(default=None, alias="PLUS_DURATION_DAYS")
     pro_duration_days: Optional[int] = Field(default=None, alias="PRO_DURATION_DAYS")
     tariff_public_copy: Optional[str] = Field(default=None, alias="TARIFF_PUBLIC_COPY")
+    admin_telegram_user_ids: tuple[int, ...] = Field(default_factory=tuple, alias="ADMIN_TELEGRAM_USER_IDS")
     free_daily_question_limit: int = Field(default=5, alias="FREE_DAILY_QUESTION_LIMIT")
     plus_daily_question_limit: int = Field(default=25, alias="PLUS_DAILY_QUESTION_LIMIT")
     pro_daily_question_limit: int = Field(default=100, alias="PRO_DAILY_QUESTION_LIMIT")
@@ -103,6 +104,23 @@ class Settings(BaseSettings):
         if value is not None and value <= 0:
             raise ValueError("Subscription durations must be > 0")
         return value
+
+    @field_validator("admin_telegram_user_ids", mode="before")
+    @classmethod
+    def parse_admin_telegram_user_ids(cls, value: object) -> tuple[int, ...]:
+        if value in (None, ""):
+            return ()
+        if isinstance(value, str):
+            raw_values = [item.strip() for item in value.split(",") if item.strip()]
+        elif isinstance(value, int):
+            raw_values = [value]
+        else:
+            raw_values = list(value)  # type: ignore[arg-type]
+
+        admin_ids = tuple(int(item) for item in raw_values)
+        if any(admin_id <= 0 for admin_id in admin_ids):
+            raise ValueError("Admin Telegram user IDs must be positive integers")
+        return admin_ids
 
     @model_validator(mode="after")
     def validate_limit_hierarchy(self) -> "Settings":

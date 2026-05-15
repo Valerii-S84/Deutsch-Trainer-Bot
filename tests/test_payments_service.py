@@ -80,7 +80,9 @@ async def test_create_invoice_creates_payment_before_invoice(db_session: AsyncSe
     payment = await _payment_by_id(db_session, invoice.payment_id)
     event_names = [
         event_name
-        for event_name, in (await db_session.execute(select(AnalyticsEvent.event_name))).all()
+        for event_name, in (
+            await db_session.execute(select(AnalyticsEvent.event_name).order_by(AnalyticsEvent.id.asc()))
+        ).all()
     ]
     assert invoice.currency == PAYMENT_CURRENCY
     assert invoice.provider_token == ""
@@ -90,7 +92,7 @@ async def test_create_invoice_creates_payment_before_invoice(db_session: AsyncSe
     assert payment.plan == PLAN_PLUS
     assert payment.amount_stars == 100
     assert payment.audit_metadata["invoice_payload"] == invoice.payload
-    assert event_names == ["payment_started"]
+    assert event_names == ["paywall_clicked", "payment_started"]
 
 
 @pytest.mark.asyncio
@@ -198,7 +200,7 @@ async def test_duplicate_provider_event_does_not_create_second_subscription(db_s
     assert second.duplicate is True
     assert second.subscription.id == first.subscription.id
     assert subscription_count == 1
-    assert event_names == ["payment_started", "payment_succeeded", "subscription_started"]
+    assert event_names == ["paywall_clicked", "payment_started", "payment_succeeded", "subscription_started"]
 
 
 @pytest.mark.asyncio

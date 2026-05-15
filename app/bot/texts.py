@@ -121,6 +121,9 @@ UNKNOWN_CALLBACK_TEXT = (
     "Starte bitte mit /start neu."
 )
 
+ADMIN_METRICS_UNAUTHORIZED_TEXT = "Diese Admin-Funktion ist nicht verfügbar."
+ADMIN_METRICS_UNAVAILABLE_TEXT = "Admin-Metriken sind aktuell nicht verfügbar."
+
 HOME_TEXT = "🏠 Hauptmenü"
 
 MENU_BUTTON_TRAIN = "▶️ Üben"

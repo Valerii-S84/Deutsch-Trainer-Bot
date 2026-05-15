@@ -22,6 +22,7 @@ from app.bot.texts import (
 from app.bot.keyboards.main_menu import build_back_to_main_menu_button, build_progress_navigation_keyboard
 from app.bot.keyboards.subscription import build_paywall_keyboard
 from app.db.session import get_session as _get_session
+from app.services.analytics import AnalyticsTracker
 from app.services.entitlements import EntitlementService, FEATURE_FULL_PROGRESS_MAP
 from app.services.progress import ProgressService
 
@@ -30,6 +31,7 @@ router = Router(name="profile")
 
 _progress_service = ProgressService()
 _entitlement_service = EntitlementService()
+_analytics_tracker = AnalyticsTracker()
 
 
 def _session_factory():
@@ -77,8 +79,73 @@ async def _build_profile_text(db, telegram_user_id: int) -> str:
         recommendation_text = None
         entitlement = None
     if entitlement is not None and not entitlement.allowed:
-        return _format_limited_progress_text(progress_records)
-    return _format_progress_text(progress_records, recommendation_text=recommendation_text)
+        text = _format_limited_progress_text(progress_records)
+    else:
+        text = _format_progress_text(progress_records, recommendation_text=recommendation_text)
+    await _record_profile_analytics(
+        db,
+        progress_records=progress_records,
+        entitlement=entitlement,
+        recommendation_text=recommendation_text,
+        text=text,
+    )
+    return text
+
+
+async def _record_profile_analytics(
+    db,
+    *,
+    progress_records: list[object],
+    entitlement: object | None,
+    recommendation_text: str | None,
+    text: str,
+) -> None:
+    user_id = getattr(entitlement, "user_id", None)
+    user_plan = getattr(entitlement, "user_plan", None)
+    progress_view_type = "short" if PAYWALL_PROGRESS_TEXT in text else "full"
+    await _analytics_tracker.record(
+        db,
+        event_name="progress_opened",
+        user_id=user_id,
+        event_metadata={
+            "progress_view_type": progress_view_type,
+            "user_plan": user_plan,
+            "topic_status_summary": _topic_status_summary(progress_records),
+        },
+        source="profile",
+    )
+    if recommendation_text:
+        await _analytics_tracker.record(
+            db,
+            event_name="recommendation_shown",
+            user_id=user_id,
+            event_metadata={"source_screen": "profile"},
+            source="profile",
+        )
+    if PAYWALL_PROGRESS_TEXT not in text:
+        return
+    await _analytics_tracker.record(
+        db,
+        event_name="paywall_shown",
+        user_id=user_id,
+        event_metadata={
+            "paywall_context": "full_progress_access",
+            "trigger": "progress_opened",
+            "plan_offered": "plus",
+            "user_plan": user_plan,
+            "progress_view_type": "short",
+        },
+        source="profile",
+    )
+
+
+def _topic_status_summary(progress_records: list[object]) -> dict[str, int]:
+    summary = {"weak": 0, "learning": 0, "stable": 0, "strong": 0, "unknown": 0}
+    for record in progress_records:
+        status = getattr(record, "topic_status", None)
+        key = status if status in summary else "unknown"
+        summary[key] += 1
+    return summary
 
 
 def _summary_lines(records: list[object], *, empty_text: str) -> list[str]:
@@ -176,6 +243,8 @@ async def handle_profile_message(message: Message) -> None:
     try:
         async with _session_factory() as db:
             text = await _build_profile_text(db, telegram_user_id)
+            if hasattr(db, "commit"):
+                await db.commit()
     except Exception:
         text = f"{PROFILE_TEXT}\n\n{PROFILE_EMPTY_STATE_TEXT}"
     await message.answer(text, reply_markup=_profile_keyboard(text))
@@ -203,6 +272,8 @@ async def handle_profile_callback(callback_query: CallbackQuery) -> None:
         try:
             async with _session_factory() as db:
                 text = await _build_profile_text(db, telegram_user_id)
+                if hasattr(db, "commit"):
+                    await db.commit()
         except Exception:
             text = f"{PROFILE_TEXT}\n\n{PROFILE_EMPTY_STATE_TEXT}"
         await callback_query.message.answer(text, reply_markup=_profile_keyboard(text))

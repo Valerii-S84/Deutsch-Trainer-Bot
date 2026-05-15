@@ -19,11 +19,13 @@ from app.bot.texts import (
     SUBSCRIPTION_TEXT,
 )
 from app.db.session import get_session as _get_session
+from app.services.analytics import AnalyticsTracker
 from app.services.entitlements import EntitlementService
 
 router = Router(name="subscription")
 
 _entitlement_service = EntitlementService()
+_analytics_tracker = AnalyticsTracker()
 
 
 def _session_factory():
@@ -41,6 +43,16 @@ async def _subscription_text(db, telegram_user_id: int | None) -> str:
             status=SUBSCRIPTION_STATUS_INACTIVE_TEXT,
         )
     status_state = await _entitlement_service.get_subscription_status_state(db, telegram_user_id)
+    await _analytics_tracker.record(
+        db,
+        event_name="subscription_opened",
+        user_id=getattr(status_state, "user_id", None),
+        event_metadata={
+            "user_plan": status_state.access_plan,
+            "subscription_status": status_state.status,
+        },
+        source="subscription",
+    )
     return _format_subscription_text(
         access_plan=_format_plan(status_state.access_plan),
         status=_format_status(status_state),
@@ -86,6 +98,8 @@ async def handle_subscription_message(message: Message) -> None:
     try:
         async with _session_factory() as db:
             text = await _subscription_text(db, _extract_user_id(message))
+            if hasattr(db, "commit"):
+                await db.commit()
     except Exception:
         text = _format_subscription_text(
             access_plan=SUBSCRIPTION_STATUS_FREE_TEXT,
@@ -101,6 +115,8 @@ async def handle_subscription_callback(callback_query: CallbackQuery) -> None:
         try:
             async with _session_factory() as db:
                 text = await _subscription_text(db, _extract_user_id(callback_query))
+                if hasattr(db, "commit"):
+                    await db.commit()
         except Exception:
             text = _format_subscription_text(
                 access_plan=SUBSCRIPTION_STATUS_FREE_TEXT,

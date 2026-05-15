@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Handler package exports."""
 
+from app.bot.handlers.admin import router as admin_router
 from app.bot.handlers.fallback import router as fallback_router
 from app.bot.handlers.level import router as level_router
 from app.bot.handlers.menu import router as menu_router
@@ -14,6 +15,7 @@ from app.bot.handlers.subscription import router as subscription_router
 from app.bot.handlers.theme import router as theme_router
 
 __all__ = [
+    "admin_router",
     "fallback_router",
     "level_router",
     "menu_router",

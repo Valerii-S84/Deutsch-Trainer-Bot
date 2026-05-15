@@ -6,10 +6,11 @@ from typing import Final
 
 from app.config import Settings, get_settings
 from app.db.models import DailyLimit, Subscription
-from app.repositories.analytics_events import AnalyticsEventRepository
+from app.repositories.analytics_events import AnalyticsEventRepository, has_user_event_since
 from app.repositories.daily_limits import DailyLimitRepository
 from app.repositories.subscriptions import SubscriptionRepository
 from app.repositories.users import UserRepository
+from app.services.analytics import AnalyticsTracker
 
 PLAN_FREE: Final = "free"
 PLAN_PLUS: Final = "plus"
@@ -50,6 +51,7 @@ FEATURE_MIN_PLAN: Final[dict[str, str]] = {
 
 @dataclass(frozen=True)
 class EntitlementDecision:
+    user_id: int
     allowed: bool
     feature: str
     user_plan: str
@@ -116,6 +118,7 @@ class EntitlementService:
         self._subscription_repo = subscription_repo or SubscriptionRepository()
         self._daily_limit_repo = daily_limit_repo or DailyLimitRepository()
         self._analytics_repo = analytics_repo or AnalyticsEventRepository()
+        self._analytics_tracker = AnalyticsTracker(self._analytics_repo)
         self._settings = settings or get_settings()
 
     async def get_access_state(self, db, telegram_user_id: int, *, now: datetime | None = None) -> AccessState:
@@ -168,11 +171,15 @@ class EntitlementService:
                 subscription=None,
             )
 
+        status = _subscription_status(latest_subscription, current_time)
+        if status == "expired":
+            await self._record_subscription_expired(db, latest_subscription)
+
         return SubscriptionStatusState(
             user_id=user.id,
             access_plan=PLAN_FREE,
             status_plan=latest_subscription.plan,
-            status=_subscription_status(latest_subscription, current_time),
+            status=status,
             expires_at=_as_aware_utc(latest_subscription.expires_at),
             subscription=latest_subscription,
         )
@@ -190,6 +197,7 @@ class EntitlementService:
         allowed = plan_includes(access_state.plan, required_plan)
         reason_code = "allowed" if allowed else "entitlement_required"
         return EntitlementDecision(
+            user_id=access_state.user_id,
             allowed=allowed,
             feature=feature,
             user_plan=access_state.plan,
@@ -287,20 +295,47 @@ class EntitlementService:
             "theme": theme,
         }
         for event_name in ("daily_limit_hit", "training_blocked_by_limit", "paywall_shown"):
-            await self._analytics_repo.record(
+            await self._analytics_tracker.record(
                 db,
                 event_name=event_name,
                 user_id=state.daily_limit.user_id,
                 session_id=session_id,
                 event_metadata={
                     **metadata,
-                    "paywall_context": "daily_limit" if event_name == "paywall_shown" else None,
+                    "paywall_context": "daily_limit_hit" if event_name == "paywall_shown" else None,
                     "trigger": "daily_limit_hit",
                     "plan_offered": PLAN_PLUS,
                     "user_plan": state.plan,
                 },
                 source="entitlements",
             )
+
+    async def _record_subscription_expired(self, db, subscription: Subscription) -> None:
+        expires_at = _as_aware_utc(subscription.expires_at)
+        if expires_at is None:
+            return
+        try:
+            already_recorded = await has_user_event_since(
+                db,
+                user_id=subscription.user_id,
+                event_name="subscription_expired",
+                since=expires_at,
+            )
+        except Exception:
+            return
+        if already_recorded:
+            return
+        await self._analytics_tracker.record(
+            db,
+            event_name="subscription_expired",
+            user_id=subscription.user_id,
+            event_metadata={
+                "subscription_id": subscription.id,
+                "plan": subscription.plan,
+                "expires_at": expires_at.isoformat(),
+            },
+            source="entitlements",
+        )
 
 
 def plan_includes(user_plan: str, required_plan: str) -> bool:

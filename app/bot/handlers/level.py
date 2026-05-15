@@ -30,10 +30,12 @@ from app.quiz_bank.errors import (
 )
 from app.quiz_bank.service import QuizBankService
 from app.repositories.users import UserRepository
+from app.services.analytics import AnalyticsTracker
 
 router = Router(name="level")
 _quiz_service = QuizBankService
 _user_repo = UserRepository()
+_analytics_tracker = AnalyticsTracker()
 
 
 def _session_factory():
@@ -78,7 +80,16 @@ async def level_selected(callback_query: CallbackQuery) -> None:
     if user_id is not None:
         async with _session_factory() as db:
             try:
-                await _user_repo.set_training_preferences(db, user_id, level=level)
+                user = await _user_repo.set_training_preferences(db, user_id, level=level)
+                if getattr(user, "id", None) is None and hasattr(db, "flush"):
+                    await db.flush()
+                await _analytics_tracker.record(
+                    db,
+                    event_name="level_selected",
+                    user_id=user.id,
+                    event_metadata={"level": level},
+                    source="onboarding",
+                )
                 await db.commit()
             except Exception:
                 await db.rollback()

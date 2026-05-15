@@ -10,6 +10,7 @@ from app.repositories.analytics_events import AnalyticsEventRepository
 from app.repositories.payments import PaymentRepository
 from app.repositories.subscriptions import SubscriptionRepository
 from app.repositories.users import UserRepository
+from app.services.analytics import AnalyticsTracker
 from app.services.entitlements import PLAN_PLUS, PLAN_PRO
 
 PAYMENT_CURRENCY = "XTR"
@@ -90,6 +91,7 @@ class PaymentService:
         self._payment_repo = payment_repo or PaymentRepository()
         self._subscription_repo = subscription_repo or SubscriptionRepository()
         self._analytics_repo = analytics_repo or AnalyticsEventRepository()
+        self._analytics_tracker = AnalyticsTracker(self._analytics_repo)
         self._settings = settings or get_settings()
 
     async def create_invoice(self, db, telegram_user_id: int, *, plan: str) -> PaymentInvoice:
@@ -121,6 +123,18 @@ class PaymentService:
             **(payment.audit_metadata or {}),
             "invoice_payload": payload,
         }
+        current_subscription = await self._subscription_repo.get_effective_paid_subscription(db, user_id=user.id)
+        current_plan = current_subscription.plan if current_subscription is not None else "free"
+        await self._record_event(
+            db,
+            event_name="paywall_clicked",
+            user_id=user.id,
+            metadata={
+                "cta_id": f"payment_plan_{config.plan}",
+                "plan_offered": config.plan,
+                "user_plan": current_plan,
+            },
+        )
         await self._record_event(
             db,
             event_name="payment_started",
@@ -130,6 +144,7 @@ class PaymentService:
                 "plan": config.plan,
                 "amount_stars": config.amount_stars,
                 "config_reference": config.config_reference,
+                "provider": PAYMENT_PROVIDER,
             },
         )
         return PaymentInvoice(
@@ -213,6 +228,7 @@ class PaymentService:
                     "payment_id": paid.id,
                     "plan": paid.plan,
                     "amount_stars": paid.amount_stars,
+                    "provider": PAYMENT_PROVIDER,
                 },
             )
         return paid
@@ -253,6 +269,9 @@ class PaymentService:
                 metadata={
                     "payment_id": payment.id,
                     "plan": payment.plan,
+                    "previous_plan": "free",
+                    "provider": PAYMENT_PROVIDER,
+                    "started_at": started_at.isoformat(),
                     "expires_at": expires_at.isoformat(),
                 },
             )
@@ -293,6 +312,7 @@ class PaymentService:
                 "payment_id": failed.id,
                 "plan": failed.plan,
                 "reason_code": reason_code,
+                "provider": PAYMENT_PROVIDER,
             },
         )
         return failed
@@ -353,7 +373,7 @@ class PaymentService:
         user_id: int,
         metadata: dict[str, object],
     ) -> None:
-        await self._analytics_repo.record(
+        await self._analytics_tracker.record(
             db,
             event_name=event_name,
             user_id=user_id,

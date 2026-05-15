@@ -11,10 +11,12 @@ from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
 from app.bot.texts import MENU_PROMPT, TRAINING_PROMPT, WELCOME_TEXT
 from app.db.session import get_session as _get_session
+from app.services.analytics import AnalyticsTracker
 from app.repositories.users import UserRepository
 
 router = Router(name="start")
 _user_repo = UserRepository()
+_analytics_tracker = AnalyticsTracker()
 
 
 def _session_factory():
@@ -27,7 +29,30 @@ async def _remember_user(message: Message):
 
     async with _session_factory() as db:
         try:
+            existing = None
+            if hasattr(_user_repo, "get_by_telegram_id"):
+                existing = await _user_repo.get_by_telegram_id(db, int(message.from_user.id))
             user = await _user_repo.create_or_update_from_telegram(db, message.from_user)
+            if user is not None and getattr(user, "id", None) is None and hasattr(db, "flush"):
+                await db.flush()
+            if user is not None:
+                is_first_time_user = existing is None
+                internal_user_id = getattr(user, "id", None)
+                await _analytics_tracker.record(
+                    db,
+                    event_name="bot_started",
+                    user_id=internal_user_id,
+                    event_metadata={"is_first_time_user": is_first_time_user},
+                    source="onboarding",
+                )
+                if is_first_time_user:
+                    await _analytics_tracker.record(
+                        db,
+                        event_name="user_created",
+                        user_id=internal_user_id,
+                        event_metadata={"is_first_time_user": True},
+                        source="onboarding",
+                    )
             await db.commit()
             return user
         except Exception:

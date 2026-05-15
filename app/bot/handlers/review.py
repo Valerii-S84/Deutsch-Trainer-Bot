@@ -37,6 +37,7 @@ from app.quiz_bank.errors import (
 )
 from app.repositories.api_error_logs import ApiErrorLogRepository
 from app.repositories.users import UserRepository
+from app.services.analytics import AnalyticsTracker
 from app.services.mistakes import MistakeService
 from app.services.entitlements import (
     FEATURE_MISTAKE_REPEAT,
@@ -62,6 +63,7 @@ mistake_service = MistakeService()
 entitlement_service = EntitlementService()
 _api_error_log_repo = ApiErrorLogRepository()
 _user_repo = UserRepository()
+_analytics_tracker = AnalyticsTracker()
 
 
 def _extract_user_id(event: CallbackQuery) -> int | None:
@@ -132,9 +134,53 @@ async def _persist_quiz_bank_error(telegram_user_id: int | None, error: QuizBank
                 status_code=error.status_code,
                 error_metadata={"message": error.message},
             )
+            event_name = "quiz_api_invalid_response" if isinstance(error, QuizBankValidationError) else "quiz_api_request_failed"
+            await _analytics_tracker.record(
+                db,
+                event_name=event_name,
+                user_id=getattr(user, "id", None),
+                event_metadata={
+                    "endpoint": error.endpoint or "unknown",
+                    "error_category": _quiz_bank_error_category(error),
+                    "status_code": error.status_code,
+                },
+                source="review",
+            )
             await db.commit()
         except Exception:
             await db.rollback()
+
+
+async def _record_review_opened(db, review_items: list[object]) -> None:
+    await _analytics_tracker.record(
+        db,
+        event_name="mistakes_opened",
+        user_id=_review_user_id(review_items),
+        event_metadata={"active_mistake_count": len(review_items)},
+        source="review",
+    )
+
+
+async def _record_review_paywall(db, review_items: list[object]) -> None:
+    await _analytics_tracker.record(
+        db,
+        event_name="paywall_shown",
+        user_id=_review_user_id(review_items),
+        event_metadata={
+            "paywall_context": "mistake_repeat_access",
+            "trigger": "mistakes_opened",
+            "plan_offered": "plus",
+            "active_mistake_count": len(review_items),
+        },
+        source="review",
+    )
+
+
+def _review_user_id(review_items: list[object]) -> int | None:
+    if not review_items:
+        return None
+    user_id = getattr(review_items[0], "user_id", None)
+    return user_id if isinstance(user_id, int) else None
 
 
 @router.callback_query(F.data == CALLBACK_REVIEW)
@@ -149,17 +195,26 @@ async def handle_review_entry(callback_query: CallbackQuery) -> None:
         return
 
     async with _session_context() as db:
+        review_items: list[object] = []
         try:
             review_items = await mistake_service.get_review_items(db, user_id)
+            await _record_review_opened(db, review_items)
             if not review_items:
+                if hasattr(db, "commit"):
+                    await db.commit()
                 await callback_query.message.answer(
                     REVIEW_EMPTY_STATE_TEXT,
                     reply_markup=build_review_empty_keyboard(),
                 )
                 return
             await entitlement_service.ensure_entitlement(db, user_id, feature=FEATURE_MISTAKE_REPEAT)
+            if hasattr(db, "commit"):
+                await db.commit()
         except EntitlementDeniedError:
             await db.rollback()
+            await _record_review_paywall(db, review_items)
+            if hasattr(db, "commit"):
+                await db.commit()
             await callback_query.message.answer(
                 PAYWALL_MISTAKE_REPEAT_TEXT,
                 reply_markup=build_paywall_keyboard(),
