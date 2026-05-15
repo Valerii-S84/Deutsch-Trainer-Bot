@@ -76,6 +76,26 @@ SUBSCRIPTION_STATUS_EXPIRED_TEXT = "{plan} ist am {expires_at} abgelaufen"
 SUBSCRIPTION_STATUS_CANCELLED_TEXT = "{plan} wurde beendet"
 SUBSCRIPTION_STATUS_FAILED_TEXT = "{plan} konnte nicht aktiviert werden"
 SUBSCRIPTION_STATUS_INACTIVE_TEXT = "Kein aktives Abo"
+PAYMENT_PLUS_BUTTON_TEXT = "⭐ Plus mit Stars bezahlen"
+PAYMENT_PRO_BUTTON_TEXT = "🚀 Pro mit Stars bezahlen"
+PAYMENT_RETRY_BUTTON_TEXT = "⭐ Noch einmal versuchen"
+PAYMENT_CONFIG_REQUIRED_TEXT = (
+    "Die Zahlung ist aktuell nicht verfügbar.\n\n"
+    "Bitte versuche es später erneut."
+)
+PAYMENT_PRECHECKOUT_ERROR_TEXT = "Diese Zahlung konnte nicht bestätigt werden."
+PAYMENT_SUCCESS_PLUS_TEXT = (
+    "Plus ist aktiv ✅\n\n"
+    "Du kannst jetzt mehr üben, deinen vollständigen Fortschritt sehen und deine Fehler gezielt wiederholen."
+)
+PAYMENT_SUCCESS_PRO_TEXT = (
+    "Pro ist aktiv ✅\n\n"
+    "Du hast jetzt Zugriff auf erweiterte Statistik und mehr Training."
+)
+PAYMENT_FAILURE_TEXT = (
+    "Die Zahlung wurde nicht abgeschlossen.\n\n"
+    "Du kannst es noch einmal versuchen."
+)
 PAYWALL_DAILY_LIMIT_TEXT = (
     "Dein Tageslimit ist erreicht.\n\n"
     "Mit Plus kannst du heute weiter üben und deinen vollständigen Fortschritt sehen."
@@ -118,6 +138,7 @@ CALLBACK_PROFILE = "menu:profile"
 CALLBACK_REVIEW = "menu:review"
 CALLBACK_REVIEW_START = "review:start"
 CALLBACK_SUBSCRIPTION = "menu:subscription"
+CALLBACK_PAYMENT_PLAN_PREFIX = "payment:plan:"
 CALLBACK_LEVEL_PREFIX = "level:"
 CALLBACK_THEME_PREFIX = "theme:"
 

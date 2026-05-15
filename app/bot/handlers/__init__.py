@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.bot.handlers.fallback import router as fallback_router
 from app.bot.handlers.level import router as level_router
 from app.bot.handlers.menu import router as menu_router
+from app.bot.handlers.payments import router as payments_router
 from app.bot.handlers.profile import router as profile_router
 from app.bot.handlers.review import router as review_router
 from app.bot.handlers.training import router as training_router
@@ -16,6 +17,7 @@ __all__ = [
     "fallback_router",
     "level_router",
     "menu_router",
+    "payments_router",
     "review_router",
     "training_router",
     "profile_router",

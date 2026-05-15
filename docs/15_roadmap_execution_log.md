@@ -346,3 +346,57 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - `git diff --check` — no whitespace/trailing issues
 - Міграції не додавались: потрібні таблиці `daily_limits`, `subscriptions` і `payments` уже існують.
 - Monthly limits і paywall cooldown не реалізовувались, бо в roadmap вони лишаються Decision Required/config-dependent.
+
+## Milestone 9 — Payments
+
+### Поточний статус
+
+`2026-05-15`: completed.
+
+### Що виконано в цьому вікні
+
+- додано `app/repositories/payments.py`:
+  - створення Payment record перед invoice;
+  - пошук за idempotency key;
+  - пошук за Telegram/provider charge id;
+  - lifecycle transitions `created`, `pending`, `paid`, `credited`, `failed`, `cancelled`.
+- оновлено `app/repositories/subscriptions.py`:
+  - створення active subscription з credited payment;
+  - пошук subscription за `payment_id` для idempotency.
+- додано `app/services/payments.py`:
+  - config-gated Plus/Pro payment plan resolution;
+  - Telegram Stars invoice payload;
+  - pre-checkout validation;
+  - expected user/currency/amount verification;
+  - provider reference mismatch rejection;
+  - split `confirm_payment(...)` and `credit_payment(...)` so paid status alone does not unlock access;
+  - idempotent duplicate provider event handling;
+  - payment analytics: `payment_started`, `payment_succeeded`, `payment_failed`, `subscription_started`;
+  - audit metadata without provider debug payload dumps or secrets.
+- додано Telegram payment handlers:
+  - `app/bot/handlers/payments.py`;
+  - plan callback starts Stars invoice;
+  - pre-checkout answers fail-closed;
+  - successful payment confirms and credits subscription.
+- оновлено UI/copy/router:
+  - `app/bot/keyboards/subscription.py`;
+  - `app/bot/texts.py`;
+  - `app/bot/routers.py`;
+  - `app/bot/handlers/__init__.py`;
+  - German success/failure/config-unavailable payment copy.
+- оновлено `app/config.py`:
+  - optional Stars prices and subscription durations validate as positive values when configured.
+- додано/оновлено тести:
+  - `tests/test_payments_service.py`;
+  - `tests/test_payment_handlers.py`;
+  - `tests/test_bot_routers.py`.
+
+### Підтвердження завершення milestone
+
+- `. .venv/bin/activate && python -m pytest -q tests/test_payments_service.py tests/test_payment_handlers.py tests/test_bot_routers.py tests/test_subscription_handlers.py tests/test_bot_handlers.py --capture=no` — passed
+- `. .venv/bin/activate && python -m pytest -q tests/test_payments_service.py tests/test_payment_handlers.py tests/test_entitlements_service.py tests/test_subscription_handlers.py tests/test_training_handlers.py tests/test_training_session_service.py tests/test_review_handlers.py tests/test_profile_handlers.py tests/test_bot_routers.py --capture=no` — passed
+- `. .venv/bin/activate && bash scripts/local_ci.sh` — passed
+- `git diff --check` — no whitespace/trailing issues
+- Міграції не додавались: `payments`, `subscriptions` і `analytics_events` уже містять потрібні поля для цього milestone.
+- Plus/Pro ціни й duration не hardcoded: invoice creation блокується без runtime config.
+- Refund/cancel provider behavior не реалізовувався як Telegram runtime callback, бо фінальна provider-specific поведінка лишається Decision Required/production-integration dependent.

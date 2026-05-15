@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, desc, select
+from datetime import datetime
+
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Payment, Subscription
@@ -53,6 +55,39 @@ class SubscriptionRepository:
         )
         return await db.scalar(query)
 
+    async def get_by_payment_id(
+        self,
+        db: AsyncSession,
+        *,
+        payment_id: int,
+    ) -> Subscription | None:
+        return await db.scalar(select(Subscription).where(Subscription.payment_id == payment_id))
+
+    async def create_active_from_payment(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        plan: str,
+        payment_id: int,
+        started_at: datetime,
+        expires_at: datetime,
+        provider_reference: str | None,
+    ) -> Subscription:
+        subscription = Subscription(
+            id=await self._next_id_if_needed(db),
+            user_id=user_id,
+            plan=plan,
+            status="active",
+            started_at=started_at,
+            expires_at=expires_at,
+            source="telegram_stars",
+            provider_reference=provider_reference,
+            payment_id=payment_id,
+        )
+        db.add(subscription)
+        return subscription
+
     async def list_user_subscriptions(
         self,
         db: AsyncSession,
@@ -66,3 +101,9 @@ class SubscriptionRepository:
         )
         result = await db.execute(query)
         return list(result.scalars().all())
+
+    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
+        if db.get_bind().dialect.name != "sqlite":
+            return None
+        max_id = await db.scalar(select(func.max(Subscription.id)))
+        return (max_id or 0) + 1

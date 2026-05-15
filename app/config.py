@@ -88,6 +88,22 @@ class Settings(BaseSettings):
             raise ValueError("Daily question limits must be > 0")
         return value
 
+    @field_validator("plus_price_stars", "pro_price_stars")
+    @classmethod
+    def validate_optional_stars_price(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not str(value).isdigit() or int(value) <= 0:
+            raise ValueError("Telegram Stars prices must be positive integer strings")
+        return str(value)
+
+    @field_validator("plus_duration_days", "pro_duration_days")
+    @classmethod
+    def validate_optional_duration(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("Subscription durations must be > 0")
+        return value
+
     @model_validator(mode="after")
     def validate_limit_hierarchy(self) -> "Settings":
         if not (
