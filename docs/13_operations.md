@@ -97,6 +97,23 @@ Production deploy не виконується без прямого запиту
 
 Якщо staging відсутній, production deploy має бути blocked або явно approved as risk.
 
+## 4.2.1. Repo-Side Deployment Artifacts
+
+Milestone 12 repo-side deployment artifacts:
+
+| Artifact | Purpose |
+|---|---|
+| `docker-compose.production.yml` | Standalone production Compose definition for bot, PostgreSQL, Redis and Caddy. |
+| `deploy/Caddyfile.production.template` | Caddy HTTPS reverse proxy template without committed real domain. |
+| `deploy/env.production.template` | Production environment variable template without committed secrets. |
+| `deploy/env.staging.template` | Staging environment variable template without committed secrets. |
+| `scripts/ops_preflight.sh` | Non-deploy preflight validation for config, Compose, DB and Redis. |
+| `scripts/ops_smoke.sh` | Non-mutating HTTP, Telegram and Quiz Bank smoke checks. |
+| `docs/20_operations_deployment_runbook.md` | Concrete pre-deploy, deploy, smoke, rollback and incident response runbook. |
+
+These artifacts do not prove production readiness without target-environment
+evidence from staging or production.
+
 ## 4.3. Deployment Preflight
 
 Перед deploy потрібно перевірити:
@@ -390,6 +407,25 @@ If backup fails:
 * do not silently ignore failure;
 * do not perform risky migrations until recovery posture is known.
 
+## 7.6. Repo-Side Backup and Restore Artifacts
+
+Milestone 12 backup artifacts:
+
+| Artifact | Purpose |
+|---|---|
+| `scripts/postgres_backup.sh` | Creates PostgreSQL custom-format dumps; production mode refuses unencrypted backups. |
+| `scripts/postgres_restore_verify.sh` | Restores into a disposable non-production DB and verifies schema and integrity checks. |
+| `docs/20_operations_deployment_runbook.md` | Documents retention, encryption, access control and restore verification rules. |
+
+Minimum production rules:
+
+* backup files are sensitive production data;
+* production backups must be encrypted;
+* backup credentials and encryption private keys stay outside the repository;
+* backup logs must not include DB URLs, tokens or encryption secrets;
+* retention target is 7 daily backups and 4 weekly backups;
+* restore verification is required before launch and monthly after launch.
+
 ---
 
 ## 8. Rollback
@@ -664,6 +700,23 @@ Production is blocked if:
 * API failure charges daily limit;
 * user-facing copy is not German;
 * critical tests fail without accepted risk.
+
+## 12.5. Milestone 12 Evidence Gate
+
+Repo-side M12 artifacts close documentation and script gaps only.
+
+Production remains blocked until evidence exists for:
+
+* production domain and HTTPS endpoint;
+* Telegram webhook registration in the approved environment;
+* protected credential injection without committed secrets;
+* staging smoke test with safe credentials;
+* monitoring for bot, Caddy, DB, Redis, Quiz Bank, payments, subscriptions,
+  admin auth failures, logs and backups;
+* encrypted backup creation;
+* restore verification on a disposable non-production database;
+* rollback target and rollback smoke evidence;
+* post-deploy smoke checks.
 
 ---
 

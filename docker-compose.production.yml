@@ -1,0 +1,124 @@
+services:
+  bot:
+    image: ${BOT_IMAGE:?set immutable BOT_IMAGE}
+    environment:
+      APP_ENV: production
+      APP_NAME: ${APP_NAME:-deutsch-trainer-bot}
+      BOT_TOKEN: ${BOT_TOKEN:?set in protected secret storage}
+      BOT_WEBHOOK_ENABLED: "True"
+      BOT_POLLING_ENABLED: "False"
+      BOT_MAX_REQUEST_TIMEOUT: ${BOT_MAX_REQUEST_TIMEOUT:-30}
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:?set HTTPS public origin outside repo}
+      TELEGRAM_WEBHOOK_PATH: ${TELEGRAM_WEBHOOK_PATH:-/telegram/webhook}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set in protected secret storage}
+      TELEGRAM_DUPLICATE_UPDATE_TTL_SECONDS: ${TELEGRAM_DUPLICATE_UPDATE_TTL_SECONDS:-300}
+      DATABASE_URL: ${DATABASE_URL:?set in protected secret storage}
+      REDIS_URL: ${REDIS_URL:?set in protected secret storage}
+      QUIZ_BANK_API_BASE_URL: ${QUIZ_BANK_API_BASE_URL:?set Quiz Bank origin outside repo}
+      QUIZ_BANK_EDGE_API_KEY: ${QUIZ_BANK_EDGE_API_KEY:?set in protected secret storage}
+      QUIZ_BANK_CONSUMER_ID: ${QUIZ_BANK_CONSUMER_ID:?set approved consumer id}
+      QUIZ_BANK_CONSUMER_API_KEY: ${QUIZ_BANK_CONSUMER_API_KEY:?set in protected secret storage}
+      QUIZ_BANK_TIMEOUT_SECONDS: ${QUIZ_BANK_TIMEOUT_SECONDS:-3}
+      QUIZ_BANK_MAX_RETRIES: ${QUIZ_BANK_MAX_RETRIES:-2}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SECURITY_RATE_LIMIT_ENABLED: "True"
+      SECURITY_STATE_BACKEND: redis
+      TELEGRAM_STARS_MODE: prod
+      PLUS_PRICE_STARS: ${PLUS_PRICE_STARS:-100}
+      PRO_PRICE_STARS: ${PRO_PRICE_STARS:-250}
+      PLUS_DURATION_DAYS: ${PLUS_DURATION_DAYS:-30}
+      PRO_DURATION_DAYS: ${PRO_DURATION_DAYS:-90}
+      PAYWALL_COOLDOWN_POLICY: none
+      FREE_DAILY_QUESTION_LIMIT: ${FREE_DAILY_QUESTION_LIMIT:-5}
+      PLUS_DAILY_QUESTION_LIMIT: ${PLUS_DAILY_QUESTION_LIMIT:-25}
+      PRO_DAILY_QUESTION_LIMIT: ${PRO_DAILY_QUESTION_LIMIT:-100}
+      ADMIN_TELEGRAM_USER_IDS: ${ADMIN_TELEGRAM_USER_IDS:?set owner admin allowlist}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set database user outside repo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in protected secret storage}
+      POSTGRES_DB: ${POSTGRES_DB:-deutsch_trainer}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?set deployment domain outside repo}
+      ACME_EMAIL: ${ACME_EMAIL:?set operator email outside repo}
+      TELEGRAM_WEBHOOK_PATH: ${TELEGRAM_WEBHOOK_PATH:-/telegram/webhook}
+    volumes:
+      - ./deploy/Caddyfile.production.template:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      bot:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

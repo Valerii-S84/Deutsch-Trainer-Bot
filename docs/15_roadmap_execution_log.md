@@ -258,6 +258,65 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 2. Run PostgreSQL runtime verification when `DATABASE_URL` or `TEST_DATABASE_URL` is available.
 3. Keep production release blocked until M12 backup/restore/monitoring/deploy evidence exists.
 
+## Milestone 12 — Operations and Deployment
+
+### Поточний статус
+
+`2026-05-17`: repo-side operations/deployment artifacts completed.
+
+Production release remains blocked without target-environment evidence.
+
+### Що виконано
+
+- Added standalone production Compose artifact:
+  - `docker-compose.production.yml`.
+- Added deployment templates without committed real domain or secrets:
+  - `deploy/Caddyfile.production.template`;
+  - `deploy/env.production.template`;
+  - `deploy/env.staging.template`.
+- Added non-mutating operations scripts:
+  - `scripts/ops_preflight.sh`;
+  - `scripts/ops_smoke.sh`.
+- Added PostgreSQL backup/restore artifacts:
+  - `scripts/postgres_backup.sh`;
+  - `scripts/postgres_restore_verify.sh`.
+- Added concrete runbook:
+  - `docs/20_operations_deployment_runbook.md`.
+- Updated `docs/13_operations.md` with M12 artifact index, backup/restore artifacts
+  and explicit evidence gate.
+
+### Підтвердження в репозиторії
+
+- `. .venv/bin/activate && bash scripts/local_ci.sh` — passed.
+- `bash -n scripts/ops_preflight.sh scripts/ops_smoke.sh scripts/postgres_backup.sh scripts/postgres_restore_verify.sh` — passed.
+- Shell safety invariant verified: all added shell scripts contain `set -euo pipefail`.
+- Secret-output invariant checked with `rg`: no `set -x` or direct printing of secret env values in added shell scripts.
+- `docker compose -f docker-compose.production.yml config --quiet` with local dummy placeholder values — passed.
+- `bash scripts/* --help` for added M12 scripts — passed.
+- `git diff --check` — passed.
+- Added-file trailing whitespace scan with `rg` — no findings.
+- `DATABASE_URL` / `TEST_DATABASE_URL` availability check — unavailable in this
+  session; `bash scripts/db_runtime_check.sh` was not run.
+
+### Недоведено без staging/production доступу
+
+- Real production domain and HTTPS endpoint.
+- Telegram webhook registration evidence.
+- Protected runtime credential injection.
+- Monitoring evidence for bot, Caddy, DB, Redis, Quiz Bank, payments,
+  subscriptions, admin auth failures, logs and backups.
+- Encrypted backup created in target environment.
+- Restore verification against a disposable target-environment database.
+- Staging smoke test with safe credentials.
+- Production post-deploy smoke test.
+- Rollback execution evidence.
+
+### Release gate
+
+Production deploy remains blocked until the external evidence above exists and
+Milestone 13 QA gates are closed or explicitly accepted by the responsible
+owner.
+
 ## Milestone 4 — Quiz Bank API Integration
 
 ### Поточний статус
