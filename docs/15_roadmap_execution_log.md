@@ -262,7 +262,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 
 ### Поточний статус
 
-`2026-05-17`: repo-side operations/deployment artifacts completed.
+`2026-05-17`: repo-side operations/deployment artifacts completed, with
+local disposable PostgreSQL backup/restore verification.
 
 Production release remains blocked without target-environment evidence.
 
@@ -295,6 +296,16 @@ Production release remains blocked without target-environment evidence.
 - `bash scripts/* --help` for added M12 scripts — passed.
 - `git diff --check` — passed.
 - Added-file trailing whitespace scan with `rg` — no findings.
+- Disposable local PostgreSQL backup/restore verification — passed:
+  - started two temporary Docker PostgreSQL containers on a private Docker network;
+  - ran `alembic upgrade head` against the source DB;
+  - ran `scripts/postgres_backup.sh` inside a temporary official PostgreSQL
+    client container with `BACKUP_ENCRYPTION=none` and `APP_ENV=development`;
+  - ran `scripts/postgres_restore_verify.sh` against the restore DB;
+  - restore script verified checksum, schema presence, payment idempotency
+    constraints, duplicate subscription/payment guards, active mistake
+    uniqueness and progress counter integrity;
+  - temporary containers, network and backup files were removed.
 - `DATABASE_URL` / `TEST_DATABASE_URL` availability check — unavailable in this
   session; `bash scripts/db_runtime_check.sh` was not run.
 
