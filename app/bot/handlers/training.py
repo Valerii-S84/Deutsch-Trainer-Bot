@@ -2,34 +2,36 @@
 
 from __future__ import annotations
 
-from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message, Update
+from typing import Any
 
-from app.bot.formatting import escape_markdown_text
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, Update
+
 from app.bot.keyboards.levels import build_levels_keyboard
-from app.bot.keyboards.quiz import (
-    build_finish_keyboard,
-    build_next_question_keyboard,
-    build_question_options_keyboard,
-    build_resume_keyboard,
+from app.bot.keyboards.quiz import build_resume_keyboard
+from app.bot.handlers.training_flow import (
+    extract_update_id as _extract_update_id,
+    extract_user_id as _extract_user_id,
+    map_quizbank_error as _map_quizbank_error,
+    map_session_error as _map_session_error,
+    parse_answer_payload as _parse_answer_payload,
+    parse_next_payload as _parse_next_payload,
+    parse_session_payload as _parse_session_payload,
+    parse_theme_payload as _parse_theme_payload,
+    pending_question_token as _pending_question_token,
+    persist_quiz_bank_error,
+    send_answer_result as _send_answer_result,
+    send_daily_limit_paywall as _send_daily_limit_paywall,
+    send_question as _send_question,
 )
-from app.bot.keyboards.subscription import build_paywall_keyboard
 from app.bot.texts import (
-    CALLBACK_THEME_PREFIX,
     CALLBACK_TRAIN_ANSWER_PREFIX,
     CALLBACK_TRAIN_CANCEL_PREFIX,
     CALLBACK_TRAIN_NEXT_PREFIX,
     CALLBACK_TRAIN_NEW_PREFIX,
     CALLBACK_TRAIN_RESUME_PREFIX,
+    CALLBACK_THEME_PREFIX,
     LEVELS,
-    TRAINING_CORRECT_ANSWER_TEXT,
-    TRAINING_EXPLANATION_TEXT,
-    TRAINING_FINISH_TEXT,
-    TRAINING_FINISH_NEW_MISTAKES_TEXT,
-    TRAINING_FINISH_RECOMMENDATION_TEXT,
-    TRAINING_FINISH_WEAK_THEME_TEXT,
-    TRAINING_INCORRECT_ANSWER_TEXT,
-    TRAINING_QUESTION_TEMPLATE,
     TRAINING_NO_LEVEL_SELECTED_TEXT,
     TRAINING_RESUME_NO_ACTIVE_TEXT,
     TRAINING_SESSION_CANCELLED_TEXT,
@@ -37,12 +39,6 @@ from app.bot.texts import (
     TRAINING_SESSION_ERROR_TEXT,
     TRAINING_SESSION_RESUME_TEXT,
     TRAINING_THEME_NOT_AVAILABLE_TEXT,
-    TRAINING_QUIZBANK_AUTH_ERROR_TEXT,
-    TRAINING_QUIZBANK_RATE_LIMIT_TEXT,
-    TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
-    TRAINING_QUIZBANK_VALIDATION_TEXT,
-    TRAINING_ANSWER_DUPLICATE_TEXT,
-    PAYWALL_DAILY_LIMIT_TEXT,
 )
 from app.db.session import get_session as _get_session
 from app.quiz_bank.errors import (
@@ -56,7 +52,6 @@ from app.repositories.api_error_logs import ApiErrorLogRepository
 from app.repositories.users import UserRepository
 from app.services.analytics import AnalyticsTracker
 from app.services.training_session import (
-    AnswerResult,
     ActiveSessionConflictError,
     ActiveSessionNotFoundError,
     NoMoreQuestionsError,
@@ -84,141 +79,6 @@ def _session_factory():
     return _get_session()
 
 
-def _extract_user_id(event: Message | CallbackQuery) -> int | None:
-    return getattr(getattr(event, "from_user", None), "id", None)
-
-
-def _extract_update_id(event_update: Update | None) -> int | None:
-    update_id = getattr(event_update, "update_id", None)
-    return update_id if isinstance(update_id, int) else None
-
-
-def _normalize_theme(theme: str) -> str:
-    normalized = theme.strip()
-    if not normalized:
-        raise ValueError("invalid theme")
-    return normalized
-
-
-def _parse_theme_payload(data: str | None) -> tuple[str, str]:
-    if not data or not data.startswith(CALLBACK_THEME_PREFIX):
-        raise ValueError("invalid payload")
-
-    payload = data.removeprefix(CALLBACK_THEME_PREFIX)
-    if ":" not in payload:
-        raise ValueError("invalid payload")
-
-    level, _, theme = payload.partition(":")
-    if not level:
-        raise ValueError("no level")
-    if not theme:
-        raise ValueError("invalid payload")
-    return level, _normalize_theme(theme)
-
-
-def _parse_answer_payload(data: str | None) -> tuple[int, str, str]:
-    if not data:
-        raise ValueError("empty payload")
-    payload = data.removeprefix(CALLBACK_TRAIN_ANSWER_PREFIX + ":")
-    parts = payload.split(":", 2)
-    if len(parts) != 3:
-        raise ValueError("invalid answer payload")
-    return int(parts[0]), parts[1], parts[2]
-
-
-def _parse_session_payload(data: str | None, prefix: str) -> int:
-    if not data or not data.startswith(prefix + ":"):
-        raise ValueError("invalid payload")
-    body = data.removeprefix(prefix + ":")
-    session_id_str, _, _ = body.partition(":")
-    if not session_id_str:
-        raise ValueError("invalid payload")
-    return int(session_id_str)
-
-
-def _parse_next_payload(data: str | None) -> tuple[int, str]:
-    if not data:
-        raise ValueError("empty payload")
-    payload = data.removeprefix(CALLBACK_TRAIN_NEXT_PREFIX + ":")
-    session_text, _, token = payload.partition(":")
-    if not session_text or not token:
-        raise ValueError("invalid payload")
-    return int(session_text), token
-
-
-def _question_message(position: int, total_questions: int, question_text: str) -> str:
-    return TRAINING_QUESTION_TEMPLATE.format(
-        position=position,
-        total=total_questions,
-        question_text=escape_markdown_text(question_text),
-    )
-
-
-def _result_message(result: AnswerResult) -> str:
-    if result.is_correct:
-        text = TRAINING_CORRECT_ANSWER_TEXT
-    else:
-        correct_answer = escape_markdown_text(result.correct_answer_text or result.correct_answer)
-        text = TRAINING_INCORRECT_ANSWER_TEXT.format(correct_answer=correct_answer)
-    if result.is_duplicate:
-        text = f"{TRAINING_ANSWER_DUPLICATE_TEXT}\n\n{text}"
-    if result.explanation:
-        explanation = escape_markdown_text(result.explanation)
-        text = f"{text}\n\n{TRAINING_EXPLANATION_TEXT.format(explanation=explanation)}"
-    return text
-
-
-def _pending_question_token(session: object) -> str | None:
-    metadata = getattr(session, "api_metadata", None) or {}
-    pending = metadata.get("pending_question") if isinstance(metadata, dict) else None
-    if not isinstance(pending, dict):
-        return None
-    token = pending.get("question_token")
-    return token if isinstance(token, str) else None
-
-
-def _percent_correct(correct_answers: int, total_questions: int) -> int:
-    if total_questions <= 0:
-        return 0
-    return round((correct_answers / total_questions) * 100)
-
-
-def _map_quizbank_error(error: Exception) -> str:
-    if isinstance(error, QuizBankAuthError):
-        return TRAINING_QUIZBANK_AUTH_ERROR_TEXT
-    if isinstance(error, QuizBankRateLimitError):
-        return TRAINING_QUIZBANK_RATE_LIMIT_TEXT
-    if isinstance(error, QuizBankUnavailableError):
-        return TRAINING_QUIZBANK_UNAVAILABLE_TEXT
-    if isinstance(error, QuizBankValidationError):
-        return TRAINING_QUIZBANK_VALIDATION_TEXT
-    return TRAINING_SESSION_ERROR_TEXT
-
-
-def _map_session_error(error: Exception) -> str:
-    if isinstance(error, DailyLimitExceededError):
-        return PAYWALL_DAILY_LIMIT_TEXT
-    if isinstance(error, ActiveSessionNotFoundError):
-        return TRAINING_SESSION_COMPLETED_TEXT
-    if isinstance(error, NoMoreQuestionsError):
-        return TRAINING_SESSION_COMPLETED_TEXT
-    if isinstance(error, QuestionStateError):
-        return TRAINING_SESSION_ERROR_TEXT
-    return TRAINING_SESSION_ERROR_TEXT
-
-
-def _quiz_bank_error_category(error: QuizBankError) -> str:
-    if isinstance(error, QuizBankAuthError):
-        return "auth"
-    if isinstance(error, QuizBankRateLimitError):
-        return "rate_limit"
-    if isinstance(error, QuizBankValidationError):
-        return "validation"
-    if isinstance(error, QuizBankUnavailableError):
-        return "unavailable"
-    return "unknown"
-
-
 async def _persist_quiz_bank_error(
     telegram_user_id: int | None,
     error: QuizBankError,
@@ -226,83 +86,79 @@ async def _persist_quiz_bank_error(
     level: str | None,
     theme: str | None,
 ) -> None:
-    async with _session_factory() as db:
-        try:
-            user = await _user_repo.get_by_telegram_id(db, telegram_user_id) if telegram_user_id else None
-            await _api_error_log_repo.record(
-                db,
-                endpoint=error.endpoint or "unknown",
-                error_category=_quiz_bank_error_category(error),
-                user_id=getattr(user, "id", None),
-                request_id=error.request_id,
-                status_code=error.status_code,
-                level=level,
-                theme=theme,
-                error_metadata={"message": error.message},
-            )
-            event_name = "quiz_api_invalid_response" if isinstance(error, QuizBankValidationError) else "quiz_api_request_failed"
-            await _analytics_tracker.record(
-                db,
-                event_name=event_name,
-                user_id=getattr(user, "id", None),
-                event_metadata={
-                    "endpoint": error.endpoint or "unknown",
-                    "error_category": _quiz_bank_error_category(error),
-                    "status_code": error.status_code,
-                    "level": level,
-                    "theme": theme,
-                },
-                source="training",
-            )
-            await db.commit()
-        except Exception:
-            await db.rollback()
-
-
-async def _send_daily_limit_paywall(message: Message) -> None:
-    await message.answer(
-        PAYWALL_DAILY_LIMIT_TEXT,
-        reply_markup=build_paywall_keyboard(include_progress=True),
+    await persist_quiz_bank_error(
+        _session_factory,
+        _user_repo,
+        _api_error_log_repo,
+        _analytics_tracker,
+        telegram_user_id,
+        error,
+        level=level,
+        theme=theme,
     )
 
 
-async def _send_question(message: Message, question) -> None:
-    await message.answer(
-        _question_message(
-            position=question.position,
-            total_questions=question.total_questions,
-            question_text=question.question_text,
-        ),
-        reply_markup=build_question_options_keyboard(question),
-        parse_mode="Markdown",
+async def _answer_invalid_theme_payload(callback_query: CallbackQuery) -> None:
+    callback_data = callback_query.data or ""
+    if _theme_payload_needs_level(callback_data):
+        await callback_query.message.answer(TRAINING_NO_LEVEL_SELECTED_TEXT, reply_markup=build_levels_keyboard())
+        return
+    await callback_query.message.answer(TRAINING_THEME_NOT_AVAILABLE_TEXT)
+
+
+def _theme_payload_needs_level(callback_data: str) -> bool:
+    return (
+        callback_data.startswith(CALLBACK_THEME_PREFIX)
+        and (callback_data.count(":") == 1 or callback_data.startswith(f"{CALLBACK_THEME_PREFIX}:"))
     )
 
 
-def _build_finish_message(correct_answers: int, total_questions: int) -> str:
-    return TRAINING_FINISH_TEXT.format(
-        correct=correct_answers,
-        total=total_questions,
-        percent=_percent_correct(correct_answers, total_questions),
+async def _record_theme_selected(db: Any, user_id: int, *, level: str, theme: str) -> None:
+    internal_user_id = None
+    if hasattr(db, "get_bind"):
+        user = await _user_repo.set_training_preferences(db, user_id, level=level, theme=theme)
+        if getattr(user, "id", None) is None and hasattr(db, "flush"):
+            await db.flush()
+        internal_user_id = getattr(user, "id", None)
+    await _analytics_tracker.record(
+        db,
+        event_name="theme_selected",
+        user_id=internal_user_id,
+        event_metadata={"level": level, "theme": theme},
+        source="onboarding",
     )
 
 
-def _build_completed_feedback(result: AnswerResult) -> str:
-    message = _result_message(result)
-    finish = _build_finish_message(result.correct_answers, result.total_questions)
-    details: list[str] = []
-    if result.new_mistakes_count:
-        details.append(TRAINING_FINISH_NEW_MISTAKES_TEXT.format(count=result.new_mistakes_count))
-    if result.weak_theme:
-        details.append(TRAINING_FINISH_WEAK_THEME_TEXT.format(theme=escape_markdown_text(result.weak_theme)))
-    if result.recommendation_text:
-        details.append(
-            TRAINING_FINISH_RECOMMENDATION_TEXT.format(
-                recommendation=escape_markdown_text(result.recommendation_text),
-            ),
+async def _open_theme_training(db: Any, message: Any, user_id: int, *, level: str, theme: str):
+    await _record_theme_selected(db, user_id, level=level, theme=theme)
+    active = await training_service.get_active_session(db, user_id)
+    if active is not None:
+        await db.commit()
+        await message.answer(
+            TRAINING_SESSION_RESUME_TEXT,
+            reply_markup=build_resume_keyboard(active.id),
         )
-    if details:
-        finish = f"{finish}\n" + "\n".join(details)
-    return f"{message}\n\n{finish}"
+        return None
+
+    _, question = await training_service.resume_or_start_session(
+        db,
+        user_id,
+        level=level,
+        theme=theme,
+        force_new=False,
+        total_questions=TrainingSessionService.DEFAULT_SESSION_QUESTIONS,
+    )
+    await db.commit()
+    return question
+
+
+async def _handle_theme_open_error(message: Any, user_id: int, error: Exception, *, level: str, theme: str) -> None:
+    if isinstance(error, DailyLimitExceededError):
+        await _send_daily_limit_paywall(message)
+        return
+    if isinstance(error, QuizBankError):
+        await _persist_quiz_bank_error(user_id, error, level=level, theme=theme)
+    await message.answer(_map_quizbank_error(error))
 
 
 @router.callback_query(F.data.startswith(CALLBACK_THEME_PREFIX))
@@ -318,11 +174,7 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
     try:
         level, theme = _parse_theme_payload(callback_query.data)
     except ValueError:
-        callback_data = callback_query.data or ""
-        if callback_data.startswith(CALLBACK_THEME_PREFIX) and (callback_data.count(":") == 1 or callback_data.startswith(f"{CALLBACK_THEME_PREFIX}:")):
-            await callback_query.message.answer(TRAINING_NO_LEVEL_SELECTED_TEXT, reply_markup=build_levels_keyboard())
-        else:
-            await callback_query.message.answer(TRAINING_THEME_NOT_AVAILABLE_TEXT)
+        await _answer_invalid_theme_payload(callback_query)
         return
 
     if level not in LEVELS:
@@ -331,36 +183,9 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
 
     async with _session_factory() as db:
         try:
-            internal_user_id = None
-            if hasattr(db, "get_bind"):
-                user = await _user_repo.set_training_preferences(db, user_id, level=level, theme=theme)
-                if getattr(user, "id", None) is None and hasattr(db, "flush"):
-                    await db.flush()
-                internal_user_id = getattr(user, "id", None)
-            await _analytics_tracker.record(
-                db,
-                event_name="theme_selected",
-                user_id=internal_user_id,
-                event_metadata={"level": level, "theme": theme},
-                source="onboarding",
-            )
-            active = await training_service.get_active_session(db, user_id)
-            if active is not None:
-                await db.commit()
-                await callback_query.message.answer(
-                    TRAINING_SESSION_RESUME_TEXT,
-                    reply_markup=build_resume_keyboard(active.id),
-                )
+            question = await _open_theme_training(db, callback_query.message, user_id, level=level, theme=theme)
+            if question is None:
                 return
-            _, question = await training_service.resume_or_start_session(
-                db,
-                user_id,
-                level=level,
-                theme=theme,
-                force_new=False,
-                total_questions=TrainingSessionService.DEFAULT_SESSION_QUESTIONS,
-            )
-            await db.commit()
         except ActiveSessionConflictError:
             await callback_query.message.answer(TRAINING_SESSION_RESUME_TEXT)
             return
@@ -373,12 +198,7 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
             DailyLimitExceededError,
         ) as exc:
             await db.rollback()
-            if isinstance(exc, DailyLimitExceededError):
-                await _send_daily_limit_paywall(callback_query.message)
-            else:
-                if isinstance(exc, QuizBankError):
-                    await _persist_quiz_bank_error(user_id, exc, level=level, theme=theme)
-                await callback_query.message.answer(_map_quizbank_error(exc))
+            await _handle_theme_open_error(callback_query.message, user_id, exc, level=level, theme=theme)
             return
         except Exception:
             await db.rollback()
@@ -582,23 +402,7 @@ async def handle_submit_answer(callback_query: CallbackQuery, event_update: Upda
             await callback_query.message.answer(_map_session_error(exc))
             return
 
-    response = _result_message(result)
-    if result.is_completed:
-        await callback_query.message.answer(
-            _build_completed_feedback(result),
-            reply_markup=build_finish_keyboard(),
-            parse_mode="Markdown",
-        )
-        return
-
-    await callback_query.message.answer(
-        response,
-        reply_markup=build_next_question_keyboard(
-            result.session_id,
-            result.question_token,
-        ),
-        parse_mode="Markdown",
-    )
+    await _send_answer_result(callback_query.message, result)
 
 
 @router.callback_query(F.data.startswith(CALLBACK_TRAIN_NEXT_PREFIX + ":"))
