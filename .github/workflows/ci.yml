@@ -22,14 +22,13 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -e ".[dev]"
 
-      - name: Compile
-        run: python -m compileall app tests
+      - name: Milestone 13 QA release gates
+        run: python scripts/qa_release_gates.py --environment ci --evidence-file qa_evidence/ci_release_gates.json
 
-      - name: Static analysis policy
-        run: python scripts/static_policy_check.py
-
-      - name: Secret scan
-        run: python scripts/secret_scan.py
-
-      - name: Test
-        run: python -m pytest -q --capture=no
+      - name: Upload QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-release-evidence
+          path: qa_evidence/ci_release_gates.json
+          if-no-files-found: ignore

@@ -328,6 +328,74 @@ Production deploy remains blocked until the external evidence above exists and
 Milestone 13 QA gates are closed or explicitly accepted by the responsible
 owner.
 
+## Milestone 13 — QA and Test Strategy
+
+### Поточний статус
+
+`2026-05-26`: completed for repository-side QA gates and local evidence.
+
+Production release remains blocked until target-environment QA evidence exists
+or external failures are explicitly accepted by the responsible owner.
+
+### Що виконано
+
+- Added modular release QA gate runner:
+  - `scripts/qa_release_gates.py`;
+  - stable critical gates for Python integrity, static policy, secret scan,
+    progress logic, answer→analytics flow, Telegram flows, Quiz Bank
+    contract/failure tests, payment/subscription tests, security/abuse tests,
+    German copy, gate-runner contract and full regression.
+  - partial gate runs produce `result=blocked` and `release_blocked=true`
+    until all critical gates are executed.
+  - failed critical gates remain blocking unless explicit owner acceptance
+    records `accepted_by`, `reason` and `accepted_at`.
+  - stdout/stderr tails stored in evidence are redacted for secret-like values.
+- Wired GitHub CI to run the full Milestone 13 QA release runner and upload
+  `qa_evidence/ci_release_gates.json` as a workflow artifact.
+- Added QA runner contract tests:
+  - `tests/test_qa_release_gates.py`.
+- Added German-only user-facing copy checks:
+  - `tests/test_german_copy.py`.
+- Split the old training session service test monolith into behavior-focused
+  modules:
+  - `tests/fakes/training_session.py`;
+  - `tests/test_training_session_lifecycle.py`;
+  - `tests/test_training_session_answer_flow.py`;
+  - `tests/test_training_session_api_limits.py`;
+  - `tests/test_training_session_service.py` remains as a small compatibility
+    placeholder for the previously tracked path.
+- Wired local CI to validate the QA gate plan before regular checks:
+  - `scripts/local_ci.sh`.
+- Updated QA documentation with concrete gate IDs, command usage and evidence
+  standard:
+  - `docs/12_quality_assurance.md`.
+- Added `qa_evidence/` to `.gitignore` so local evidence can be generated
+  without committing runtime reports.
+
+### Підтвердження в репозиторії
+
+- `. .venv/bin/activate && python -m pytest -q --capture=no tests/test_training_session_lifecycle.py tests/test_training_session_answer_flow.py tests/test_training_session_api_limits.py tests/test_german_copy.py tests/test_qa_release_gates.py` — passed.
+- `. .venv/bin/activate && python scripts/qa_release_gates.py --environment local --evidence-file qa_evidence/milestone13_local.json` — passed, 12/12 gates.
+- Local QA evidence summary:
+  - `result`: `passed`;
+  - `release_blocked`: `false`;
+  - `gate_coverage`: `full`;
+  - `environment`: `local`;
+  - `gate_results`: `12`;
+  - `failed_cases`: `[]`;
+  - `missing_gate_ids`: `[]`;
+  - `tested_at`: `2026-05-26T18:55:55.289013+00:00`;
+  - `build_or_commit`: `7079af5+dirty`.
+- `. .venv/bin/activate && python scripts/qa_release_gates.py --gate german-copy --environment local --evidence-file qa_evidence/partial_debug.json; test $? -eq 1` — passed; partial gate evidence is blocked as expected.
+- `. .venv/bin/activate && bash scripts/local_ci.sh` — passed.
+
+### Недоведено без staging/production доступу
+
+- Live Telegram Stars test/prod payment execution.
+- Staging webhook registration and Telegram update delivery.
+- Production Quiz Bank availability under real protected credentials.
+- Production deployment smoke test and monitoring evidence.
+
 ## Milestone 4 — Quiz Bank API Integration
 
 ### Поточний статус
