@@ -503,32 +503,45 @@ Acceptance criteria:
 
 ## 18. Full Production Completion Checklist
 
-- [ ] Bot works end-to-end from `/start` to onboarding, level, theme, training, result, progress and mistake review.
-- [ ] Telegram UI copy is German across onboarding, menus, questions, feedback, progress, mistakes, paywall, payments and errors.
-- [ ] Quiz Bank API integration is stable, validated and monitored.
-- [ ] Bot does not duplicate Quiz Bank as a local question bank.
-- [ ] API failure does not create answers, mistakes, progress or daily limit charge.
-- [ ] Database schema supports users, sessions, session items, answers, progress, history, mistakes, subscriptions, payments, limits, analytics and API errors.
-- [ ] Answer processing is idempotent.
-- [ ] Payment credit is idempotent.
-- [ ] Payments tested with Telegram Stars test/prod configuration as approved.
-- [ ] Subscriptions tested for Free, Plus, Pro, pending, active, expired and renewal.
-- [ ] Progress tested for accuracy, coverage, stability, weakness, recency and topic status.
-- [ ] Mistakes tested for creation, repeat, improved, resolved and reopened states.
-- [ ] Limits tested for Free, Plus, Pro and Europe/Berlin reset.
-- [ ] Entitlements enforce paid features in service layer and UI.
-- [ ] Analytics available for activation, retention, sessions, progress, mistakes, paywall, payments, subscriptions and API diagnostics.
-- [ ] Admin metrics available and protected.
-- [ ] Monitoring active for bot, DB, Quiz Bank API, payments, subscriptions, logs and backups.
-- [ ] Backup configured, encrypted and access-controlled.
-- [ ] Backup/restore tested.
-- [ ] Security checks passed.
-- [ ] Logs and analytics contain no secrets.
-- [ ] Rate limits active for abuse-sensitive actions.
-- [ ] Rollback plan ready and tested where feasible.
-- [ ] Production smoke tests defined and passing.
-- [ ] Documentation complete for config, deploy, operations, QA, incident response and open decisions.
-- [ ] All blocking decisions are closed.
+Status rule:
+
+- `[x]` means closed by repository-side implementation and local QA evidence.
+- `[ ]` means still open for Full Production because external staging/production
+  evidence is missing.
+
+Current external evidence status at `2026-05-26T19:34:37Z`: no staging or
+production target inventory, protected credentials, deploy approval, Telegram
+Stars live-test approval, backup storage access, or monitoring access was
+available in this repository pass. Open production gates below remain `[ ]`;
+the concrete staging-first evidence plan and blocked records are tracked in
+`docs/15_roadmap_execution_log.md`.
+
+- [ ] Bot works end-to-end from `/start` to onboarding, level, theme, training, result, progress and mistake review. Local handler/service QA passed; staging Telegram smoke is still required.
+- [x] Telegram UI copy is German across onboarding, menus, questions, feedback, progress, mistakes, paywall, payments and errors. Covered by German copy checks in Milestone 13 QA gates.
+- [ ] Quiz Bank API integration is stable, validated and monitored. Runtime contract/failure tests passed; production Quiz Bank monitoring evidence is still required.
+- [x] Bot does not duplicate Quiz Bank as a local question bank. Runtime stores references/snapshots only and local QA checks passed.
+- [x] API failure does not create answers, mistakes, progress or daily limit charge. Covered by training session API/limit tests and QA gates.
+- [x] Database schema supports users, sessions, session items, answers, progress, history, mistakes, subscriptions, payments, limits, analytics and API errors. Runtime PostgreSQL verification passed for current schema.
+- [x] Answer processing is idempotent. Covered by duplicate answer, duplicate Telegram update and unique answer tests.
+- [x] Payment credit is idempotent. Covered by duplicate provider event and provider reference reuse tests.
+- [ ] Payments tested with Telegram Stars test/prod configuration as approved. Local Stars payload/provider validation passed; live Telegram Stars test/prod evidence is still required.
+- [x] Subscriptions tested for Free, Plus, Pro, pending, active, expired and renewal. Covered by entitlement, subscription and payment QA gates.
+- [x] Progress tested for accuracy, coverage, stability, weakness, recency and topic status. Covered by progress model/service/repository and integration tests.
+- [x] Mistakes tested for creation, repeat, improved, resolved and reopened states. Covered by mistakes service/repository and training mistakes integration tests.
+- [x] Limits tested for Free, Plus, Pro and Europe/Berlin reset. Covered by entitlements and progress/date-boundary tests.
+- [x] Entitlements enforce paid features in service layer and UI. Covered by entitlement service and handler/paywall tests.
+- [x] Analytics available for activation, retention, sessions, progress, mistakes, paywall, payments, subscriptions and API diagnostics. Covered by analytics service/admin metrics tests and event wiring.
+- [x] Admin metrics available and protected. Covered by owner-only admin handler and analytics metrics tests.
+- [ ] Monitoring active for bot, DB, Quiz Bank API, payments, subscriptions, logs and backups. Monitoring artifacts exist; target-environment active monitoring evidence is still required.
+- [ ] Backup configured, encrypted and access-controlled. Backup scripts/templates exist; production backup configuration evidence is still required.
+- [ ] Backup/restore tested. Disposable local PostgreSQL backup/restore passed; target-environment restore evidence is still required.
+- [x] Security checks passed. Covered by Milestone 13 security-abuse gate and local CI.
+- [x] Logs and analytics contain no secrets. Covered by log redaction, analytics rejection, secret scan and QA evidence redaction checks.
+- [x] Rate limits active for abuse-sensitive actions. Covered by Redis/in-memory limiter tests and security middleware tests.
+- [ ] Rollback plan ready and tested where feasible. Runbook exists; staging/production rollback smoke evidence is still required.
+- [ ] Production smoke tests defined and passing. Smoke script/runbook exists; production smoke execution evidence is still required.
+- [x] Documentation complete for config, deploy, operations, QA, incident response and open decisions. Repository documentation is complete for current scope; environment inventory stays external.
+- [x] All blocking decisions are closed. Architecture, stack, pricing, limits, payments, QA and release-owner decisions are closed; remaining open items are evidence gates, not decision gates.
 
 ## 19. Risks and Mitigations
 
@@ -547,8 +560,8 @@ Acceptance criteria:
 | Secrets leak in logs or docs | Security incident | Redaction, analytics rejection, secret scanning, review gates and runtime secret injection | Ops owner | Controlled |
 | Backup not restorable | Production data loss after incident | Backup policy locked; actual restore evidence is required before production release | Ops owner | Open before production |
 | Rollback unsafe after migrations | Data or payment inconsistency | Migration review, rollback notes, forward-fix policy and smoke tests | Tech owner / Ops owner | Open |
-| German copy regression | Product violates German-only rule | Copy registry and German copy QA checks | Product owner / QA owner | Open |
-| Analytics gaps | Activation, retention or conversion cannot be trusted | Tracking plan, event tests and data quality checks | Data owner | Open |
+| German copy regression | Product violates German-only rule | Copy registry and German copy QA checks | Product owner / QA owner | Controlled locally |
+| Analytics gaps | Activation, retention or conversion cannot be trusted | Tracking plan, event tests and data quality checks | Data owner | Controlled locally |
 
 ## 20. Execution Order
 

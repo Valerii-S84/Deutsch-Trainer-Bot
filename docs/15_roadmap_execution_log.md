@@ -396,6 +396,63 @@ or external failures are explicitly accepted by the responsible owner.
 - Production Quiz Bank availability under real protected credentials.
 - Production deployment smoke test and monitoring evidence.
 
+## Production Readiness Evidence Plan — After Milestone 13
+
+### 2026-05-26 full repo/local evidence pass
+
+- Scope: repository-side and local disposable environment evidence before any
+  external production-readiness work.
+- Environment: local virtual environment, local Docker, disposable PostgreSQL
+  and Redis containers, dummy placeholder environment values only.
+- Command/action:
+  - `. .venv/bin/activate && python scripts/qa_release_gates.py --environment local --evidence-file qa_evidence/production_readiness_local.json`;
+  - disposable PostgreSQL `alembic upgrade head` and `bash scripts/db_runtime_check.sh`;
+  - staging-like `bash scripts/ops_preflight.sh` with disposable PostgreSQL,
+    disposable Redis and dummy placeholder values; `RUN_EXTERNAL_PREFLIGHT`
+    was not enabled;
+  - `bash -n scripts/ops_preflight.sh scripts/ops_smoke.sh scripts/postgres_backup.sh scripts/postgres_restore_verify.sh`;
+  - `bash scripts/ops_preflight.sh --help && bash scripts/ops_smoke.sh --help && bash scripts/postgres_backup.sh --help && bash scripts/postgres_restore_verify.sh --help`;
+  - `docker compose -f docker-compose.production.yml config --quiet` with
+    dummy placeholder environment values;
+  - disposable local PostgreSQL backup/restore using `scripts/postgres_backup.sh`
+    with `APP_ENV=development` and `BACKUP_ENCRYPTION=none`, then
+    `scripts/postgres_restore_verify.sh` against a separate disposable restore
+    DB;
+  - `. .venv/bin/activate && bash scripts/local_ci.sh`;
+  - `git diff --check`.
+- Result: passed for repo/local scope. QA runner passed 12/12 gates with
+  `result=passed`, `release_blocked=false`, `gate_coverage=full`,
+  `environment=local`, `failed_cases=[]`, `missing_gate_ids=[]`,
+  `tested_at=2026-05-26T19:32:45.073911+00:00`, `build_or_commit=550af16+dirty`.
+  Runtime DB verification reached Alembic `202605140002 (head)`. Backup/restore
+  verified checksum, restored schema and integrity checks.
+- Timestamp: `2026-05-26T19:34:37Z`.
+- Failures: an initial pre-consolidation `local_ci` run failed on the synthetic
+  redaction fixture in `tests/test_qa_release_gates.py`; the fixture was split
+  into non-secret-shaped fragments, then secret scan and final local CI passed.
+- Known risks: this proves repo/local readiness only. It does not prove staging
+  or production target inventory, protected secret injection, Telegram webhook
+  delivery, live Telegram Stars payments, live Quiz Bank monitoring, active
+  target monitoring, encrypted target backup, target restore, rollback behavior
+  or production smoke.
+- Owner acceptance: none recorded.
+
+### 2026-05-26 external gate records
+
+These records are not production closure evidence. They define the required
+staging-first actions and record why each gate remains open in this local pass.
+
+| Gate | Scope | Environment | Command/action | Result | Timestamp | Failures | Known risks | Owner acceptance |
+|---|---|---|---|---|---|---|---|---|
+| Telegram E2E smoke | `/start` through onboarding, level, theme, training, result, progress and mistake review. | Staging first; production only after explicit approval. | Manual Telegram smoke with safe staging bot credentials, staging DB, staging Redis and approved Quiz Bank smoke data; capture non-secret transcript/result. | Blocked, not run: no staging target inventory, bot token, webhook/domain evidence or protected credentials were available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local handler tests cannot prove Telegram delivery, webhook routing, real callback payloads or target DB writes. | None recorded. |
+| Quiz Bank monitoring evidence | Runtime Quiz Bank health, latency/error monitoring and protected credential path. | Staging first; production evidence before release. | `SMOKE_BASE_URL=https://<staging-domain-managed-outside-repo> RUN_QUIZ_BANK_SMOKE=1 bash scripts/ops_smoke.sh`, plus monitoring dashboard/alert evidence for Quiz Bank API. | Blocked, not run: no target Quiz Bank credentials, endpoint inventory or monitoring access was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Contract tests do not prove live availability, alert routing or production credential wiring. | None recorded. |
+| Telegram Stars payment evidence | Live test/prod payment path, invoice, pre-checkout, successful payment, idempotent credit and subscription activation. | Telegram Stars test mode first; production mode only with explicit approval. | Execute approved Stars test payment in staging with `TELEGRAM_STARS_MODE=test`; production payment evidence requires separate approval and owner sign-off. | Blocked, not run: no live Telegram payment credentials/test approval or production approval was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local payment tests cannot prove Telegram provider behavior, live pre-checkout delivery or production Stars configuration. | None recorded. |
+| Active monitoring | Bot, DB, Redis, Quiz Bank API, payments, subscriptions, logs and backups. | Staging first; production before release. | Verify target dashboards/alerts and run non-mutating health checks from `docs/20_operations_deployment_runbook.md`. | Blocked, not run: no monitoring system access or target environment inventory was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Monitoring artifacts in repo do not prove active alerting, retention, routing or operator visibility. | None recorded. |
+| Production backup configured | Encrypted, access-controlled PostgreSQL backup in target storage. | Production, after explicit approval. | `APP_ENV=production BACKUP_ENCRYPTION=age bash scripts/postgres_backup.sh` from protected target environment; verify restricted backup path/access without printing secrets. | Blocked, not run: production DB, backup storage, encryption recipient/key and production approval were not available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local backup script evidence does not prove target encryption, retention, operator access control or storage durability. | None recorded. |
+| Target-environment backup/restore verification | Restore latest target backup into disposable non-production DB and verify schema/idempotency checks. | Staging or disposable target restore DB; never production restore target. | `RESTORE_CONFIRM_NON_PRODUCTION=I_UNDERSTAND_THIS_IS_NOT_PRODUCTION bash scripts/postgres_restore_verify.sh` using target backup and disposable restore DB. | Blocked, not run: no target backup artifact, restore DB or backup access credentials were available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local disposable restore evidence does not prove target backup decryptability, restore access or target-data integrity. | None recorded. |
+| Rollback readiness | Previous known-good image/Compose target, migration impact review and post-rollback smoke. | Staging first; production only where feasible and approved. | Execute staging rollback rehearsal from `docs/20_operations_deployment_runbook.md`, then run post-rollback smoke and integrity checks. | Blocked, not run: no staging deploy target, immutable image inventory or rollback target was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Runbook alone does not prove rollback timing, migration safety, payment idempotency or recovery monitoring. | None recorded. |
+| Production smoke tests | HTTPS health, Telegram getMe/webhook delivery, Quiz Bank smoke, Telegram user journey, payments/admin/log/monitoring checks. | Production only after explicit deploy and smoke approval. | `SMOKE_BASE_URL=https://<production-domain-managed-outside-repo> RUN_TELEGRAM_SMOKE=1 RUN_QUIZ_BANK_SMOKE=1 bash scripts/ops_smoke.sh`, plus approved manual Telegram and monitoring checks. | Blocked, not run: no production deploy approval, domain, webhook registration evidence, protected credentials or monitoring access was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Production release remains blocked until smoke passes in the real target environment without exposing secrets. | None recorded. |
+
 ## Milestone 4 — Quiz Bank API Integration
 
 ### Поточний статус

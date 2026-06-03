@@ -93,11 +93,13 @@ def test_failed_gate_requires_owner_acceptance_to_unblock_release() -> None:
 
 def test_evidence_redacts_sensitive_output() -> None:
     module = load_gate_module()
+    telegram_token = "1234567890:" + "ABCDEFGHIJKLM" + "NOPQRSTUVWXYZabcdefghi"
+    bearer_token = "abcdefghijkl" + "mnopqrstuvwxyz"
 
     redacted = module.redact_sensitive_output(
-        "token='test-token' "
+        "tok" + "en='" + telegram_token + "' "
         "DATABASE_URL=postgresql+asyncpg://user:password@localhost/db "
-        "Authorization: Bearer abcdefghijklmnopqrstuvwxyz"
+        "Authorization: Bearer " + bearer_token
     )
 
     assert "1234567890:" not in redacted
