@@ -17,6 +17,7 @@ restore, rollback target, and staging smoke results.
 | `deploy/env.staging.template` | Staging env variable template without secrets. |
 | `scripts/ops_preflight.sh` | Non-deploy preflight validation. |
 | `scripts/ops_smoke.sh` | Non-mutating health, Telegram and Quiz Bank smoke checks. |
+| `scripts/isolated_runtime_smoke.sh` | Non-mutating Docker smoke checks for isolated polling runtime. |
 | `scripts/postgres_backup.sh` | PostgreSQL dump with required production encryption. |
 | `scripts/postgres_restore_verify.sh` | Disposable restore verification with schema and integrity checks. |
 
@@ -84,6 +85,13 @@ SMOKE_BASE_URL=https://<deployment-domain-managed-outside-repo> \
 RUN_TELEGRAM_SMOKE=1 \
 RUN_QUIZ_BANK_SMOKE=1 \
 bash scripts/ops_smoke.sh
+```
+
+Isolated polling runtime smoke template:
+
+```bash
+RUN_TELEGRAM_SMOKE=1 \
+bash scripts/isolated_runtime_smoke.sh
 ```
 
 ## Backup Procedure
