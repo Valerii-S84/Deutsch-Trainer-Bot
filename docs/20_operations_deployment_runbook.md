@@ -21,6 +21,7 @@ restore, rollback target, and staging smoke results.
 | `scripts/git_release_preflight.sh` | Non-mutating git provenance checks before push/release. |
 | `scripts/postgres_backup.sh` | PostgreSQL dump with required production encryption. |
 | `scripts/postgres_restore_verify.sh` | Disposable restore verification with schema and integrity checks. |
+| `docs/21_isolated_server_deploy_inventory.md` | Active isolated server inventory and scoped deploy procedure. |
 
 ## Pre-Deploy Checklist
 
