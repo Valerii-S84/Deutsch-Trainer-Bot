@@ -468,6 +468,27 @@ runtime, not a full production-release closure.
 | Manual Telegram journey | `/start`, main menu, quiz start, question delivery, answer and result. | Live Telegram bot `@Trainer1512_bot` against isolated server runtime. | Operator manually used Telegram and confirmed the full journey. Agent verified earlier server-side update handling, DB user evidence and clean logs where observable. | Passed: user confirmed `/start -> menu -> quiz -> question -> answer -> result`. | `2026-06-04` | Callback payloads were not visible in the original runtime logs. | Safe callback-route logging was added locally after this proof; it still needs a future deploy before it improves server logs. | User explicitly confirmed the manual Telegram flow. |
 | Payment and token rotation hold | Keep Telegram Stars and token rotation out of this runtime proof. | Isolated server runtime and local repo. | Do not run payment flows; do not rotate tokens while the bot is stabilizing. | Passed: no payment or Telegram Stars flow was run; token rotation was not performed. | `2026-06-04` | None recorded. | Telegram Stars production proof and token rotation remain separate controlled tasks. | User instructed not to run payment and to defer token rotation. |
 
+### 2026-06-04 local readiness continuation
+
+- Added safe callback-route logging locally so future runtime logs can show
+  callback families without raw callback payloads, answer tokens or secrets.
+- Added `scripts/isolated_runtime_smoke.sh` for non-mutating isolated polling
+  runtime checks.
+- Added `scripts/git_release_preflight.sh` to block release provenance work when
+  the feature branch, clean worktree or correct remote are not verified.
+- Added shell artifact validation to `scripts/static_policy_check.py`.
+- Added a regression test proving progress uses the Quiz Bank returned question
+  theme when the requested theme and returned theme differ.
+- Updated operations docs with a polling runtime exception gate, secret rotation
+  procedure and git release provenance gate.
+- Verification:
+  - `. .venv/bin/activate && bash scripts/local_ci.sh` — passed.
+  - `. .venv/bin/activate && python scripts/qa_release_gates.py --environment local --known-risk "Local QA gates do not prove live Telegram Stars, target monitoring, target backup/restore, GitHub release provenance, or production deployment evidence."` — passed 12/12 gates with `release_blocked=false` for local evidence.
+- Known risks: this remains local/repo evidence. It does not prove target
+  monitoring, target backup/restore, production rollback, Telegram Stars live
+  behavior, GitHub remote publication or a final webhook-vs-approved-polling
+  production runtime decision.
+
 ## Milestone 4 — Quiz Bank API Integration
 
 ### Поточний статус
