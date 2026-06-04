@@ -12,7 +12,7 @@ Telegram messages, create payments, or print secret values.
 Optional flags through environment:
   RUN_TELEGRAM_SMOKE=1    Check Telegram getMe with BOT_TOKEN.
   RUN_QUIZ_BANK_SMOKE=1   Check Quiz Bank health path with protected headers.
-  SMOKE_QUIZ_BANK_PATH    Quiz Bank health path, default /health.
+  SMOKE_QUIZ_BANK_PATH    Quiz Bank health path, default /v1/health.
 USAGE
   exit 0
 fi
@@ -69,7 +69,7 @@ def smoke_quiz_bank(client: httpx.Client) -> None:
     if not edge_key:
         raise SystemExit("QUIZ_BANK_EDGE_API_KEY or QUIZ_BANK_API_KEY is required")
 
-    path = os.environ.get("SMOKE_QUIZ_BANK_PATH", "/health")
+    path = os.environ.get("SMOKE_QUIZ_BANK_PATH", "/v1/health")
     response = client.get(
         f"{base_url}{path}",
         headers={

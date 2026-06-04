@@ -363,7 +363,7 @@ class QuizBankAsyncClient:
         return self._normalize_next_quiz_response(response, requested_count=limit)
 
     async def fetch_health(self) -> dict[str, Any]:
-        payload = await self.request_json("GET", "/health")
+        payload = await self.request_json("GET", "/v1/health")
         if "checked_at" not in payload:
             payload = {**payload, "checked_at": datetime.now(UTC).isoformat()}
         return payload

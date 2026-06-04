@@ -179,7 +179,7 @@ async def test_client_catalog_endpoint_methods_use_expected_paths() -> None:
 
     paths = [request[1] for request in fake_http.requests]
     assert paths == [
-        "/health",
+        "/v1/health",
         "/v1/levels",
         "/v1/topics",
         "/availability",

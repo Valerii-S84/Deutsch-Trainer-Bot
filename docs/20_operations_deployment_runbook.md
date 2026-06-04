@@ -67,7 +67,7 @@ docker compose -f docker-compose.production.yml config --quiet
 - `/health` returns `{"status": "ok"}` through HTTPS.
 - Telegram `getMe` succeeds with the environment bot token.
 - Telegram webhook delivery is confirmed by external deployment evidence.
-- Quiz Bank health or approved smoke endpoint succeeds.
+- Quiz Bank `/v1/health` or approved smoke endpoint succeeds.
 - `/start` works in Telegram.
 - Level, theme and training start work with safe smoke data.
 - Answer save, progress update and mistake creation work.
