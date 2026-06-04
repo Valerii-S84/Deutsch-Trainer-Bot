@@ -11,7 +11,7 @@ WELCOME_TEXT = (
 MENU_PROMPT = "Was möchtest du heute üben?"
 
 TRAINING_PROMPT = (
-    "📘 Wähle ein Level, um eine neue Übungsrunde zu starten."
+    "📘 Wähle ein Niveau, um eine neue Übungsrunde zu starten."
 )
 
 LEVEL_SELECTED_TEXT = "✅ {level} wurde ausgewählt. Jetzt wähle bitte ein Thema."
@@ -32,7 +32,7 @@ TRAINING_NEW_SESSION_BUTTON_TEXT = "🆕 Neues Training"
 
 LEVEL_CALLBACK_FALLBACK_TEXT = (
     "⚠️ Dieses Niveau ist aktuell nicht verfügbar. "
-    "Bitte wähle eines der angebotenen Level."
+    "Bitte wähle eines der angebotenen Niveaus."
 )
 
 THEME_CALLBACK_FALLBACK_TEXT = (
@@ -69,7 +69,7 @@ SUBSCRIPTION_TEXT = (
     "Pro enthält zusätzlich erweiterte Statistik und einen tieferen Fehlerüberblick."
 )
 
-SUBSCRIPTION_STATUS_FREE_TEXT = "Free"
+SUBSCRIPTION_STATUS_FREE_TEXT = "Kostenlos"
 SUBSCRIPTION_STATUS_ACTIVE_TEXT = "{plan} aktiv bis {expires_at}"
 SUBSCRIPTION_STATUS_PENDING_TEXT = "{plan} wartet auf Zahlungsbestätigung"
 SUBSCRIPTION_STATUS_EXPIRED_TEXT = "{plan} ist am {expires_at} abgelaufen"
@@ -78,6 +78,7 @@ SUBSCRIPTION_STATUS_FAILED_TEXT = "{plan} konnte nicht aktiviert werden"
 SUBSCRIPTION_STATUS_INACTIVE_TEXT = "Kein aktives Abo"
 PAYMENT_PLUS_BUTTON_TEXT = "⭐ Plus mit Stars bezahlen"
 PAYMENT_PRO_BUTTON_TEXT = "🚀 Pro mit Stars bezahlen"
+PAYMENT_INVOICE_PAY_BUTTON_TEXT = "Bezahlen ⭐ {amount_stars}"
 PAYMENT_RETRY_BUTTON_TEXT = "⭐ Noch einmal versuchen"
 PAYMENT_CONFIG_REQUIRED_TEXT = (
     "Die Zahlung ist aktuell nicht verfügbar.\n\n"

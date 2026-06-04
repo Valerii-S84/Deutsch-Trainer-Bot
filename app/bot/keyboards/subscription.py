@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot.texts import (
@@ -13,6 +14,7 @@ from app.bot.texts import (
     MENU_BUTTON_PROGRESS,
     MENU_BUTTON_REVIEW,
     MENU_BUTTON_TRAIN,
+    PAYMENT_INVOICE_PAY_BUTTON_TEXT,
     PAYMENT_PLUS_BUTTON_TEXT,
     PAYMENT_PRO_BUTTON_TEXT,
     PAYMENT_RETRY_BUTTON_TEXT,
@@ -27,6 +29,19 @@ def build_subscription_keyboard():
     builder.button(text=MENU_BUTTON_HOME, callback_data=CALLBACK_HOME)
     builder.adjust(1)
     return builder.as_markup()
+
+
+def build_invoice_payment_keyboard(*, amount_stars: int):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=PAYMENT_INVOICE_PAY_BUTTON_TEXT.format(amount_stars=amount_stars),
+                    pay=True,
+                ),
+            ],
+        ],
+    )
 
 
 def build_paywall_keyboard(*, include_progress: bool = False):

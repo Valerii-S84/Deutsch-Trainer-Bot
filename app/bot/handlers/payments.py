@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 
 from app.bot.keyboards.subscription import (
+    build_invoice_payment_keyboard,
     build_payment_failure_keyboard,
     build_payment_success_keyboard,
     build_subscription_keyboard,
@@ -86,6 +87,7 @@ async def handle_payment_plan_callback(callback_query: CallbackQuery) -> None:
         currency=invoice.currency,
         prices=[LabeledPrice(label=invoice.price_label, amount=invoice.amount_stars)],
         provider_token=invoice.provider_token,
+        reply_markup=build_invoice_payment_keyboard(amount_stars=invoice.amount_stars),
     )
 
 

@@ -87,6 +87,9 @@ async def test_create_invoice_creates_payment_before_invoice(db_session: AsyncSe
     assert invoice.currency == PAYMENT_CURRENCY
     assert invoice.provider_token == ""
     assert invoice.amount_stars == 100
+    assert invoice.title == "Plus aktivieren"
+    assert invoice.description == "Mehr Übungen pro Tag, vollständiger Fortschritt und gezielte Fehlerwiederholung."
+    assert invoice.price_label == "Plus-Abo"
     assert invoice.payload.startswith(f"dtbpay:{payment.id}:")
     assert payment.status == "created"
     assert payment.plan == PLAN_PLUS

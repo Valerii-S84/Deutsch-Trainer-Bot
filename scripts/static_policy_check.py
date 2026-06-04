@@ -10,6 +10,7 @@ from pathlib import Path
 CODE_STYLE = Path(".agent/project/CODE_STYLE.md")
 PYPROJECT = Path("pyproject.toml")
 SCRIPTS_DIR = Path("scripts")
+CI_WORKFLOW = Path(".github/workflows/ci.yml")
 
 
 def main() -> int:
@@ -30,6 +31,7 @@ def main() -> int:
         raise SystemExit(f"Static tools configured but not wired into CI: {', '.join(configured)}")
 
     validate_shell_scripts()
+    validate_ci_german_copy_guard()
 
     print("Static analysis policy check passed: lint/type tools are explicitly not configured.")
     return 0
@@ -47,6 +49,17 @@ def validate_shell_scripts() -> None:
         run_command(("bash", "-n", str(script)), f"{script} has invalid shell syntax")
         if '== "--help"' in content:
             run_command(("bash", str(script), "--help"), f"{script} --help failed")
+
+
+def validate_ci_german_copy_guard() -> None:
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+    required_markers = (
+        "German-only Telegram UI guard",
+        "python -m pytest -q --capture=no tests/test_german_copy.py",
+    )
+    for marker in required_markers:
+        if marker not in workflow:
+            raise SystemExit(f"CI German-only UI guard is missing: {marker}")
 
 
 def run_command(command: tuple[str, ...], error_message: str) -> None:

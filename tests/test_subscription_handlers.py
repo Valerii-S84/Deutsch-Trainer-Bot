@@ -103,7 +103,7 @@ async def test_subscription_callback_keeps_pending_paid_status_on_free_access(mo
     await subscription.handle_subscription_callback(callback)
 
     text = _sent_text(callback.message.answer.await_args)
-    assert "Aktueller Zugang: Free" in text
+    assert "Aktueller Zugang: Kostenlos" in text
     assert "Pro wartet auf Zahlungsbestätigung" in text
 
 
@@ -122,5 +122,5 @@ async def test_subscription_callback_shows_expired_paid_status_as_free_access(mo
     await subscription.handle_subscription_callback(callback)
 
     text = _sent_text(callback.message.answer.await_args)
-    assert "Aktueller Zugang: Free" in text
+    assert "Aktueller Zugang: Kostenlos" in text
     assert "Plus ist am 14.05.2026 abgelaufen" in text

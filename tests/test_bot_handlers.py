@@ -153,6 +153,7 @@ async def test_subscription_entry_point_is_static_message() -> None:
     assert SUBSCRIPTION_STATUS_FREE_TEXT in args[0]
     assert "Subscription" not in args[0]
     assert "Payment" not in args[0]
+    assert "Free" not in args[0]
     assert "Milestone" not in args[0]
 
 
