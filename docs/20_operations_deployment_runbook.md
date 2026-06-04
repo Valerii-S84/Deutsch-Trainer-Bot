@@ -45,6 +45,30 @@ Preflight command:
 bash scripts/ops_preflight.sh
 ```
 
+## Runtime Mode Gate
+
+The default production runtime remains HTTPS webhook with Caddy. Polling is
+acceptable only as an explicitly approved isolated runtime exception.
+
+Webhook closure requires:
+
+- `BOT_WEBHOOK_ENABLED=true` and `BOT_POLLING_ENABLED=false`;
+- HTTPS `TELEGRAM_WEBHOOK_URL` and `TELEGRAM_WEBHOOK_SECRET` in protected env;
+- Telegram webhook registration evidence;
+- `scripts/ops_preflight.sh` and `scripts/ops_smoke.sh` passing in the target
+  environment.
+
+Polling exception closure requires:
+
+- explicit operator approval naming polling as the active runtime mode;
+- exactly one active bot process for the Telegram token;
+- webhook disabled for that bot token before polling starts;
+- isolated PostgreSQL and Redis confirmed running;
+- `scripts/isolated_runtime_smoke.sh` passing in the target environment;
+- manual Telegram `/start -> menu -> quiz -> question -> answer -> result`
+  evidence without running payments;
+- a separate token-rotation task after runtime stabilization.
+
 ## Deploy Checklist
 
 - Confirm this is staging or production with the intended protected env store.
