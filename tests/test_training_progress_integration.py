@@ -424,13 +424,19 @@ class FakeMistakeService:
         return []
 
 
-def _question_payload(item_id: str = "q1", correct_answer: str = "a2") -> QuizQuestionsResponse:
+def _question_payload(
+    item_id: str = "q1",
+    correct_answer: str = "a2",
+    *,
+    theme: str = "Alltag",
+    progress_theme_key: str = "alltag",
+) -> QuizQuestionsResponse:
     return QuizQuestionsResponse(
         items=[
             QuizItem(
                 item_id=item_id,
                 level="A1",
-                theme="Alltag",
+                theme=theme,
                 question_text="Was ist korrekt?",
                 answer_options=[
                     QuizAnswerOption(option_id="a1", text="Antwort A", order=1),
@@ -438,7 +444,7 @@ def _question_payload(item_id: str = "q1", correct_answer: str = "a2") -> QuizQu
                 ],
                 correct_answer=QuizCorrectAnswerReference(option_id=correct_answer),
                 explanation="Richtig erklärt.",
-                metadata={"progress_theme_key": "alltag"},
+                metadata={"progress_theme_key": progress_theme_key},
             )
         ],
         requested_count=1,
@@ -491,6 +497,58 @@ async def test_submit_answer_records_progress_only_for_new_answers() -> None:
             "telegram_user_id": telegram_user_id,
             "level": "A1",
             "theme": "Alltag",
+            "is_correct": True,
+            "is_duplicate": False,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_submit_answer_records_progress_for_returned_question_theme() -> None:
+    progress_service = FakeProgressService()
+    service = TrainingSessionService(
+        user_repo=FakeUserRepository(),
+        session_repo=FakeSessionRepository(),
+        answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
+        quiz_service=FakeQuizBankService(
+            [
+                _question_payload(
+                    theme="Person / Identitaet / Familie",
+                    progress_theme_key="person-identitaet-familie",
+                ),
+            ],
+        ),
+        progress_service=progress_service,
+    )
+    db = FakeDatabaseSession()
+    telegram_user_id = 115
+
+    await service.start_session(
+        db,
+        telegram_user_id=telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        total_questions=1,
+        force_new=False,
+    )
+    question = await service.get_or_create_current_question(db, telegram_user_id=telegram_user_id, force_refresh=True)
+    await service.submit_answer(
+        db,
+        telegram_user_id=telegram_user_id,
+        session_id=question.session_id,
+        question_token=question.question_token,
+        selected_option_id="a2",
+    )
+
+    assert question.theme == "Person / Identitaet / Familie"
+    assert progress_service.recorded_calls == [
+        {
+            "telegram_user_id": telegram_user_id,
+            "level": "A1",
+            "theme": "Person / Identitaet / Familie",
             "is_correct": True,
             "is_duplicate": False,
         },
