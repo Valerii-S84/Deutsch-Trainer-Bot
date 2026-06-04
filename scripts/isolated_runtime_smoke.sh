@@ -74,7 +74,7 @@ require_running_container "$DB_CONTAINER"
 require_running_container "$REDIS_CONTAINER"
 
 log "checking required bot environment presence"
-docker exec "$BOT_CONTAINER" python - <<'PY'
+docker exec -i "$BOT_CONTAINER" python - <<'PY'
 from __future__ import annotations
 
 import os
@@ -100,7 +100,7 @@ if missing:
 PY
 
 log "checking isolated database schema"
-docker exec "$BOT_CONTAINER" python - <<'PY'
+docker exec -i "$BOT_CONTAINER" python - <<'PY'
 from __future__ import annotations
 
 import asyncio
@@ -144,7 +144,7 @@ print("db_schema=passed")
 PY
 
 log "checking Redis connectivity"
-docker exec "$BOT_CONTAINER" python - <<'PY'
+docker exec -i "$BOT_CONTAINER" python - <<'PY'
 from __future__ import annotations
 
 import asyncio
@@ -169,7 +169,7 @@ PY
 
 if enabled RUN_TELEGRAM_SMOKE; then
   log "checking Telegram getMe"
-  docker exec "$BOT_CONTAINER" python - <<'PY'
+  docker exec -i "$BOT_CONTAINER" python - <<'PY'
 from __future__ import annotations
 
 import json

@@ -22,3 +22,10 @@ def test_static_policy_check_validates_shell_scripts() -> None:
     module = load_static_policy_module()
 
     module.validate_shell_scripts()
+
+
+def test_isolated_runtime_smoke_passes_stdin_to_container_python() -> None:
+    script = Path("scripts/isolated_runtime_smoke.sh").read_text(encoding="utf-8")
+
+    assert 'docker exec "$BOT_CONTAINER" python - <<' not in script
+    assert script.count('docker exec -i "$BOT_CONTAINER" python - <<') == 4
