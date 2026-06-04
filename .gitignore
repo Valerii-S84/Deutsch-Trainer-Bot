@@ -12,6 +12,16 @@ env/
 db_data/
 .env
 .env.local
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+*_secret*
+*credentials*
+.npmrc
+.pypirc
+.netrc
 .coverage
 htmlcov/
 qa_evidence/
