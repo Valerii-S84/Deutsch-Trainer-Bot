@@ -17,6 +17,32 @@
 - Додатково 2026-05-15: M0 production decisions re-locked; M8 limits/entitlements,
   M9 payment idempotency and M11 Redis-backed security controls implemented with tests.
 
+## Server Isolated Runtime Evidence
+
+### 2026-06-04
+
+- Polling runtime exception approved by operator for the isolated deploy.
+- Deploy path: `/opt/deutsch-trainer-bot/current`.
+- Bot: `@Trainer1512_bot`.
+- Deployed commit marker:
+  `7847a8d478ffb081d682bafbf020adeb2d46a620`.
+- Rebuild/restart scope: only `deutsch-trainer-bot-bot-1`.
+- DB/Redis remained running and healthy; no DB/Redis restart was performed.
+- Migrations already applied; restored Alembic version evidence:
+  `202605140002`.
+- Quiz Bank protected env was present and runtime connectivity passed without
+  printing secrets.
+- Manual Telegram flow passed:
+  `/start -> menu -> quiz -> question -> answer -> result`.
+- `scripts/isolated_runtime_smoke.sh` passed after the stdin regression fix for
+  Docker heredoc checks.
+- Backup/restore was verified with a temporary dump and disposable restore DB;
+  required tables restored and temporary artifacts were removed.
+- Rollback target recorded:
+  `deutsch-trainer-bot:rollback-ec20844-before-daa7a73-20260604`.
+- Payments / Telegram Stars and token rotation were not run.
+- Old stacks and adjacent services were not touched.
+
 ## Final Closure Gate — M0/M8/M9/M11
 
 ### 2026-05-15

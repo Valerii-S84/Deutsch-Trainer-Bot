@@ -70,6 +70,66 @@ Polling exception closure requires:
   evidence without running payments;
 - a separate token-rotation task after runtime stabilization.
 
+### Isolated Polling Runtime Evidence — 2026-06-04
+
+Operator approved the polling exception for the isolated server runtime.
+
+Scope:
+
+- Deploy path: `/opt/deutsch-trainer-bot/current`.
+- Bot: `@Trainer1512_bot`.
+- Deployed commit marker: `7847a8d478ffb081d682bafbf020adeb2d46a620`.
+- Rebuilt/restarted service: `deutsch-trainer-bot-bot-1` only.
+- Not restarted: `deutsch-trainer-bot-db-1`, `deutsch-trainer-bot-redis-1`.
+- Old stacks and adjacent services were not touched.
+- Payments / Telegram Stars were not run.
+- Token rotation was not run.
+
+Runtime evidence:
+
+- Bot container running from image id
+  `sha256:1903527f234e843281bcc2af5a6f4c16a345a351da87b4d8169a15b234beca78`.
+- DB container running and healthy.
+- Redis container running and healthy.
+- `scripts/isolated_runtime_smoke.sh` passed with Telegram `getMe`,
+  isolated DB schema, Redis ping, required Quiz Bank env presence and recent
+  bot logs checks.
+- Manual Telegram flow passed:
+  `/start -> menu -> quiz -> question -> answer -> result`.
+- Quiz Bank connectivity passed through the bot runtime using the protected
+  consumer env; secret values were not printed.
+
+Monitoring evidence:
+
+- Bot status: running; restart count `0`.
+- DB status: running/healthy; restart count `0`.
+- Redis status: running/healthy; restart count `0`.
+- Recent sanitized bot logs showed polling startup for `@Trainer1512_bot`
+  without traceback or secret output.
+- DB counters confirmed existing user, quiz session, training items, answers,
+  progress and mistake rows after the manual Telegram flow.
+
+Backup/restore evidence:
+
+- A temporary PostgreSQL custom-format dump was created inside the isolated DB
+  container.
+- Restore was verified into a disposable temporary database.
+- Required restored tables were present:
+  `users`, `quiz_sessions`, `training_session_items`, `user_answers`,
+  `progress`, `mistakes`, `alembic_version`.
+- Restored Alembic version: `202605140002`.
+- Temporary restore database and temporary dump file were removed after the
+  check.
+
+Rollback target:
+
+- Previous known-good bot image was tagged before rollout as
+  `deutsch-trainer-bot:rollback-ec20844-before-daa7a73-20260604`.
+- Rollback image id:
+  `sha256:6e778b3d211066f123fb45ba578c9c9a8dc29b0b6472aa18a373e6813beed215`.
+- Current image id:
+  `sha256:1903527f234e843281bcc2af5a6f4c16a345a351da87b4d8169a15b234beca78`.
+
 ## Deploy Checklist
 
 - Confirm this is staging or production with the intended protected env store.
