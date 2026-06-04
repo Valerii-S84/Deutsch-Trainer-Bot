@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 
 CODE_STYLE = Path(".agent/project/CODE_STYLE.md")
 PYPROJECT = Path("pyproject.toml")
+SCRIPTS_DIR = Path("scripts")
 
 
 def main() -> int:
@@ -27,8 +29,32 @@ def main() -> int:
     if configured:
         raise SystemExit(f"Static tools configured but not wired into CI: {', '.join(configured)}")
 
+    validate_shell_scripts()
+
     print("Static analysis policy check passed: lint/type tools are explicitly not configured.")
     return 0
+
+
+def validate_shell_scripts() -> None:
+    scripts = sorted(SCRIPTS_DIR.glob("*.sh"))
+    if not scripts:
+        raise SystemExit("No shell scripts found for static policy check")
+
+    for script in scripts:
+        content = script.read_text(encoding="utf-8")
+        if "set -euo pipefail" not in content:
+            raise SystemExit(f"{script} must enable set -euo pipefail")
+        run_command(("bash", "-n", str(script)), f"{script} has invalid shell syntax")
+        if '== "--help"' in content:
+            run_command(("bash", str(script), "--help"), f"{script} --help failed")
+
+
+def run_command(command: tuple[str, ...], error_message: str) -> None:
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        detail = f": {stderr}" if stderr else ""
+        raise SystemExit(f"{error_message}{detail}")
 
 
 if __name__ == "__main__":
