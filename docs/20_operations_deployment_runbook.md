@@ -155,6 +155,40 @@ Post-rollback verification:
 - subscriptions remain accurate;
 - monitoring shows recovery.
 
+## Secret Rotation Procedure
+
+Secret rotation is a separate controlled task. Do not rotate stable runtime
+secrets during deploy proof unless an incident or explicit operator approval
+requires it.
+
+Rotation scope can include `BOT_TOKEN`, Quiz Bank keys, database and Redis URLs,
+backup credentials, admin allowlists and payment configuration. Secret values
+must never be printed, committed, pasted into logs or included in screenshots.
+
+Before rotation:
+
+- identify the exact secret, owner and dependent service;
+- confirm rollback path and previous known-good runtime version;
+- confirm the smoke checks to run after restart;
+- schedule a maintenance window if the secret affects live Telegram delivery.
+
+Rotation execution:
+
+- write the new value only into protected runtime secret storage;
+- restart only the services that read the changed secret;
+- do not restart DB or Redis unless their own credentials changed;
+- run health, Telegram and Quiz Bank smoke checks without printing env values;
+- revoke the old value only after the new runtime passes smoke checks.
+
+Post-rotation verification:
+
+- bot responds;
+- Telegram `getMe` succeeds;
+- `/start` and a safe training question work;
+- Quiz Bank smoke succeeds;
+- logs contain no old or new secret values;
+- monitoring shows no sustained error spike.
+
 ## Incident Response
 
 1. Confirm the incident and assign severity.
