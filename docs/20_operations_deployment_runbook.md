@@ -18,6 +18,7 @@ restore, rollback target, and staging smoke results.
 | `scripts/ops_preflight.sh` | Non-deploy preflight validation. |
 | `scripts/ops_smoke.sh` | Non-mutating health, Telegram and Quiz Bank smoke checks. |
 | `scripts/isolated_runtime_smoke.sh` | Non-mutating Docker smoke checks for isolated polling runtime. |
+| `scripts/git_release_preflight.sh` | Non-mutating git provenance checks before push/release. |
 | `scripts/postgres_backup.sh` | PostgreSQL dump with required production encryption. |
 | `scripts/postgres_restore_verify.sh` | Disposable restore verification with schema and integrity checks. |
 
@@ -86,6 +87,30 @@ Compose validation command:
 ```bash
 docker compose -f docker-compose.production.yml config --quiet
 ```
+
+## Git Release Provenance Gate
+
+GitHub repository creation and branch push are separate operator actions. Do not
+push into a lookalike or unrelated repository.
+
+Before first push:
+
+- create the correct project GitHub repository;
+- configure `origin` to that repository only;
+- keep work on a feature branch, not `main`;
+- keep the worktree clean;
+- run the local QA release gates;
+- run the git preflight.
+
+Git preflight command:
+
+```bash
+EXPECTED_BRANCH=chore/phase-0-1-foundation \
+bash scripts/git_release_preflight.sh
+```
+
+After the preflight passes, push only the current feature branch to the verified
+remote. Merge, squash or rebase still requires the project merge decision.
 
 ## Post-Deploy Smoke Checklist
 
