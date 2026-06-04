@@ -11,4 +11,7 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
 fi
 
 python -m compileall app tests
+python scripts/qa_release_gates.py --check-plan
+python scripts/static_policy_check.py
+python scripts/secret_scan.py
 python -m pytest -q --capture=no

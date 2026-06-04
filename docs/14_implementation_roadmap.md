@@ -23,9 +23,9 @@ Roadmap має виконуватися без послаблення проду
 
 - стабільний Telegram bot runtime, який обробляє `/start`, callback-и, training sessions, payment events і safe fallback states;
 - інтеграція з Quiz Bank API через validated HTTP client, auth headers, timeout, retry, cache policy, circuit breaker і contract tests;
-- фінальна persistent database після технічного рішення, очікувано relational storage для users, sessions, answers, progress, mistakes, subscriptions, payments, analytics, audit і API errors;
-- PostgreSQL або інша фінальна БД, затверджена до початку coding;
-- підтримка Free, Plus і Pro access rules через entitlements, daily/monthly limits і subscription status;
+- persistent relational storage для users, sessions, answers, progress, mistakes, subscriptions, payments, analytics, audit і API errors;
+- PostgreSQL як затверджена фінальна persistent database;
+- підтримка Free, Plus і Pro access rules через entitlements, Release 1 daily limits і subscription status;
 - Telegram Stars payment flow з invoice creation, payment verification, idempotent credit, failed/cancelled states і payment audit log;
 - user progress по level + theme: accuracy, coverage, stability, weakness, recency, topic status, level progress і learning history;
 - mistakes tracking з mistake lifecycle, mistake history, review mode і resolution тільки після повторних правильних відповідей у різні дні;
@@ -37,36 +37,40 @@ Roadmap має виконуватися без послаблення проду
 - QA strategy з unit, integration, contract, Telegram flow, payment, subscription, progress, security і regression gates;
 - repeatable Docker-based deployment, environment separation, webhook setup, smoke tests, rollback plan і incident response.
 
-## 3. Decisions Required Before Coding
+## 3. Architecture Decisions and Remaining Required Decisions
+
+Current Architecture Lock status is maintained in `docs/16_architecture_lock.md`.
+Rows marked as locked below are no longer open coding blockers; changing them
+requires a new explicit architecture decision.
 
 | Area | Decision Needed | Options | Recommended Direction | Owner | Blocking? |
 |---|---|---|---|---|---|
-| Implementation stack | Основна мова й runtime | Python, Node.js/TypeScript, інший backend stack | Decision Required; обрати стек з сильною підтримкою Telegram Bot API, typed config, migrations, tests і async HTTP | Tech owner | Yes |
-| Telegram bot framework | Framework для handlers, callbacks, payments і webhook/polling | aiogram, python-telegram-bot, Telegraf, grammY, інший | Decision Required після вибору stack; framework має підтримувати Telegram Stars і idempotent callback handling | Tech owner | Yes |
-| Database choice | Фінальна persistent database | PostgreSQL, managed relational DB, інша транзакційна БД | PostgreSQL as primary candidate через transactions, indexes, JSON metadata і backup maturity; final approval required | Tech owner | Yes |
-| ORM / migrations | Data access і schema migrations | SQLAlchemy/Alembic, Prisma, Drizzle, raw SQL migrations, інше | Decision Required; migrations мають підтримувати review, rollback notes і data integrity tests | Tech owner | Yes |
-| Hosting/deployment target | Де працює bot runtime і database | VPS, managed container platform, PaaS, cloud service | Decision Required; production має підтримувати secrets, backups, monitoring, rollback і HTTPS webhook | Tech owner / Ops owner | Yes |
-| Telegram update mode | Webhook або polling для production | Webhook, long polling | Webhook for production if domain/TLS is available; polling only if explicitly approved for deployment model | Tech owner / Ops owner | Yes |
-| Production domain / webhook setup | Domain, HTTPS, webhook path і webhook secret | Own domain, provider domain, reverse proxy | Decision Required; production webhook має мати HTTPS і secret verification if supported | Ops owner | Yes |
-| Repo structure | Layout source/test/config/docs | `src/`, `tests/`, `infra/`, `docs/`; stack-specific layout | Decision Required after stack; modules must map to bot, sessions, progress, mistakes, subscriptions, payments, API client, analytics, admin | Tech owner | Yes |
-| Config strategy | Runtime config model | Environment variables, typed config files with env injection, secret manager | Environment variables plus typed validation; no secrets in repo | Tech owner / Ops owner | Yes |
-| Secrets strategy | Secret storage and rotation | Provider secret store, encrypted env, VPS secret injection | Protected secret storage or runtime env injection with rotation procedure | Ops owner | Yes |
-| Quiz Bank API contract | Final OpenAPI/HTTP contract, auth, fields, errors | Existing API spec, generated OpenAPI, agreed manual contract | Decision Required; contract must include levels, themes, availability, questions, lookup, metadata and error taxonomy | Product owner / API owner / Tech owner | Yes |
-| Quiz Bank cache policy | TTL and allowed cache scope | Catalog cache, availability cache, session buffer | Use only allowed caches; never full local question bank; exact TTL Decision Required | Tech owner / Ops owner | Yes |
-| Payment details | Telegram Stars provider flow and verification details | Telegram Stars only for Release 1, additional provider only if approved | Telegram Stars per product docs; exact payload, invoice, provider references and verification must be locked | Product owner / Tech owner | Yes |
-| Plus/Pro durations | Subscription period per plan | 7 days, 30 days, monthly, custom | Decision Required; do not hardcode until launch configuration is approved | Product owner | Yes |
-| Prices | Plus and Pro prices in Telegram Stars | Product-defined Stars amounts | Decision Required; no default prices in code or docs | Product owner | Yes |
-| Telegram Stars config | Currency/unit, invoice payload, provider fields, test/prod mode | Telegram Stars settings | Decision Required; must separate test and production credentials/config | Product owner / Tech owner | Yes |
-| Plan limits | Free/Plus/Pro daily and monthly question limits | Numeric config per plan | Decision Required; must preserve Free < Plus < Pro | Product owner | Yes |
-| Free mistake repeat policy | Whether Free has limited mistake repeat | Limited access, no full repeat, configurable trial | Decision Required; must align with monetization access table | Product owner | Yes |
-| Paywall cooldown | Frequency and suppression rules | No cooldown, per-context cooldown, daily cap | Decision Required; must not show paywall before first value | Product owner | No |
-| Admin access model | Auth, roles and audit | Static admin allowlist, role-based auth, provider auth | Decision Required; admin endpoints must require auth and authorization | Tech owner / Ops owner | Yes |
-| Analytics backend | Where events and dashboards live | Internal DB, external analytics provider, hybrid | Decision Required; events must be append-only and privacy-safe | Product owner / Tech owner | Yes |
-| Analytics events | Final event registry and metadata | Docs event registry plus API operational events | Use docs/10 registry as baseline; add only approved operational events | Product owner / Data owner | Yes |
-| Monitoring stack | Metrics, logs and alerts | Provider monitoring, self-hosted stack, hosted observability | Decision Required; must cover bot, DB, API, payments, backups | Ops owner | Yes |
-| Backup policy | Frequency, retention, storage and restore cadence | Daily, more frequent payment-critical backup, provider snapshots | Decision Required; restore test is mandatory before production | Ops owner | Yes |
-| QA tooling | Test runner, fixtures, contract test approach | Stack-specific unit/integration/E2E tools | Decision Required after stack; must cover critical QA gates from docs/12 | Tech owner / QA owner | Yes |
-| Production release owner | Who approves production readiness | Product owner, tech owner, ops owner | Decision Required; production checklist needs accountable owner | Product owner | Yes |
+| Implementation stack | Locked: Python 3.12+ | Python, Node.js/TypeScript, інший backend stack | Closed in `docs/16_architecture_lock.md`; Python 3.12+ is active | Tech owner | No |
+| Telegram bot framework | Locked: aiogram 3.x | aiogram, python-telegram-bot, Telegraf, grammY, інший | Closed in `docs/16_architecture_lock.md`; aiogram 3.x is active | Tech owner | No |
+| Database choice | Locked: PostgreSQL | PostgreSQL, managed relational DB, інша транзакційна БД | Closed in `docs/16_architecture_lock.md`; PostgreSQL is primary | Tech owner | No |
+| ORM / migrations | Locked: SQLAlchemy 2.x async + Alembic | SQLAlchemy/Alembic, Prisma, Drizzle, raw SQL migrations, інше | Closed in `docs/16_architecture_lock.md`; models and migrations must stay aligned | Tech owner | No |
+| Hosting/deployment target | Locked direction: Hetzner VPS + Docker Compose + Caddy | VPS, managed container platform, PaaS, cloud service | Closed in `docs/16_architecture_lock.md`; exact production runbook remains operations work | Tech owner / Ops owner | No for coding; Yes before deploy |
+| Telegram update mode | Locked: local polling, production HTTPS webhook | Webhook, long polling | Closed in `docs/16_architecture_lock.md`; production polling requires explicit approval | Tech owner / Ops owner | No for coding; Yes before deploy |
+| Production domain / webhook setup | Locked: exact FQDN lives in deploy inventory, not committed; webhook path is `/telegram/webhook`; public URL is `<TELEGRAM_WEBHOOK_URL><TELEGRAM_WEBHOOK_PATH>` | Own domain behind Caddy HTTPS reverse proxy | Closed for code; production deploy still requires real domain value, certificate and webhook registration evidence | Ops owner | No for code; Yes before deploy |
+| Repo structure | Active layout: `app/`, `tests/`, `alembic/`, `docs/`, `scripts/` | `src/`, `tests/`, `infra/`, `docs/`; stack-specific layout | Closed for current implementation; future layout changes require explicit scope | Tech owner | No |
+| Config strategy | Locked: environment variables plus typed validation | Environment variables, typed config files with env injection, secret manager | Closed in current implementation; no secrets in repo | Tech owner / Ops owner | No |
+| Secrets strategy | Locked: runtime env/secrets only in restricted VPS secret/env storage; rotation is env update + process restart + smoke test | Provider secret store, encrypted env, VPS secret injection | Closed as policy for Telegram token, Quiz Bank keys, Stars mode/config, DB/Redis URLs, backup credentials and admin IDs | Ops owner | No for coding; Yes before deploy |
+| Quiz Bank API contract | Runtime consumer contract for levels, themes, availability, questions, lookup, metadata and error taxonomy is implemented in schemas/tests; final external OpenAPI freeze remains before production release | Existing API spec, generated OpenAPI, agreed manual contract | Use the implemented contract fixtures/tests for Milestone 4-7; final OpenAPI freeze is release work, not a Milestone 0-7 blocker | Product owner / API owner / Tech owner | No for M0-7; Yes before production release |
+| Quiz Bank cache policy | Locked for implementation: short-lived catalog/availability/metadata cache only; no durable local question bank | Catalog cache, availability cache, session buffer | Runtime TTL is `QuizBankService.CACHE_TTL_SECONDS`; question content may only live in active session state/snapshots required for learning history | Tech owner / Ops owner | No for M0-7 |
+| Payment details | Locked: Telegram Stars `XTR`, empty provider token, payload `dtbpay:{payment_id}:{idempotency_key}`, user/currency/amount/reference/status verification | Telegram Stars only for Release 1, additional provider only if approved | Closed in `docs/16_architecture_lock.md`; raw provider payloads are not logged or stored in analytics | Product owner / Tech owner | No |
+| Plus/Pro durations | Locked: Plus 30 days, Pro 90 days | 7 days, 30 days, monthly, custom | Closed as typed launch config defaults with env override validation | Product owner | No |
+| Prices | Locked: Plus 100 Stars, Pro 250 Stars | Product-defined Stars amounts | Closed as typed launch config defaults; production env can override only with positive integer validation | Product owner | No |
+| Telegram Stars config | Locked: `TELEGRAM_STARS_MODE=test|prod`, default `test`; production must explicitly set `prod` before launch | Telegram Stars settings | Test/prod mode separated by env; payload/provider verification locked | Product owner / Tech owner | No for code; Yes before production launch |
+| Plan limits | Locked: Free 5, Plus 25, Pro 100 daily questions; monthly limits are not in Release 1 | Numeric config per plan | Config validation enforces Free < Plus < Pro and daily-only enforcement for Release 1 | Product owner | No |
+| Free mistake repeat policy | Locked for current implementation: mistake journal/repeat requires Plus; Free sees paywall from review entrypoints | Limited access, no full repeat, configurable trial | Aligns with entitlement matrix; any Free trial requires explicit product change before launch | Product owner | No for M0-7 |
+| Paywall cooldown | Locked: no cooldown/suppression in Release 1 (`PAYWALL_COOLDOWN_POLICY=none`) | No cooldown, per-context cooldown, daily cap | Paywall moments remain limited by allowed value triggers and analytics; adding cooldown later requires explicit scope | Product owner | No |
+| Admin access model | Locked: owner-only Telegram admin commands | Static admin allowlist, role-based auth, provider auth | Closed in `docs/16_architecture_lock.md`; implementation still required in later milestone | Tech owner / Ops owner | No for coding; Yes before production |
+| Analytics backend | Locked: PostgreSQL `analytics_events` | Internal DB, external analytics provider, hybrid | Closed in `docs/16_architecture_lock.md`; event writes/reports remain later milestone work | Product owner / Tech owner | No |
+| Analytics events | Final event registry and metadata | Docs event registry plus API operational events | Use docs/10 registry as baseline; add only approved operational events | Product owner / Data owner | Yes before analytics milestone |
+| Monitoring stack | Locked: Docker health, Caddy logs, structured app logs, PostgreSQL admin metrics, DB/Redis checks and external HTTPS uptime check | Provider monitoring, self-hosted stack, hosted observability | Closed for Release 1 baseline; production launch requires configured endpoints/alerts evidence | Ops owner | No for code; Yes before production |
+| Backup policy | Locked: encrypted PostgreSQL backup before launch, before payment/data migrations and daily after launch; retention 7 daily + 4 weekly; restore before launch and monthly | Daily, more frequent payment-critical backup, provider snapshots | Closed as policy; production readiness requires backup/restore evidence | Ops owner | No for code; Yes before production |
+| QA tooling | Locked baseline: pytest + pytest-asyncio | Stack-specific unit/integration/E2E tools | Closed for current Python implementation; contract/E2E/security gates still need implementation | Tech owner / QA owner | No for coding; Yes before release |
+| Production release owner | Locked: Tech owner owns Release 1 closure gate; Product owner approves tariff/copy; Ops owner approves monitoring/backup/restore/deploy readiness | Product owner, tech owner, ops owner | Closed accountability model; release blocked without owner evidence | Product owner | No |
 
 ## 4. Milestone 0 — Architecture Lock
 
@@ -94,7 +98,7 @@ Scope:
 
 Acceptance criteria:
 
-- усі blocking decisions із секції `Decisions Required Before Coding` закриті;
+- усі locked blocking decisions із секції `Architecture Decisions and Remaining Required Decisions` закриті;
 - рішення не суперечать product logic, use cases, domain model, progress model, monetization, API integration, data standard, analytics, security, QA і operations;
 - визначено, де зберігаються secrets і як вони ротуються;
 - визначено, як production deployment буде repeatable, auditable і reversible;
@@ -325,7 +329,7 @@ Scope:
 - Plus access;
 - Pro access;
 - daily quiz limits;
-- monthly quiz limits only if product owner defines them before coding; otherwise Decision Required;
+- monthly quiz limits are explicitly not in Release 1;
 - Free < Plus < Pro limit hierarchy;
 - entitlement checks for full progress, topic detail, mistake journal, mistake repeat, recommendations, advanced statistics and personal plan if enabled;
 - backend/service-layer access checks independent of UI;
@@ -334,7 +338,7 @@ Scope:
 - subscription status screen;
 - pending subscription does not unlock paid access;
 - paywall only after allowed value moments;
-- paywall cooldown if configured.
+- paywall cooldown policy is `none` for Release 1.
 
 Acceptance criteria:
 
@@ -343,6 +347,7 @@ Acceptance criteria:
 - expired paid user returns to Free access without losing progress, mistakes, payments or subscription history;
 - Free limit hit shows German paywall and records analytics;
 - Pro includes Plus and Plus includes Free.
+- monthly limits are not enforced in Release 1 and are not presented as active behavior.
 
 ## 13. Milestone 9 — Payments
 
@@ -360,7 +365,7 @@ Scope:
 - idempotent credit;
 - failed payment behavior;
 - cancelled payment state if applicable to Telegram Stars flow;
-- refund/cancel state if applicable to final provider behavior; otherwise Decision Required;
+- refund/cancel automation is unsupported in Release 1 and remains a manual provider/operator procedure;
 - subscription activation after credited payment;
 - payment audit log;
 - payment analytics events;
@@ -498,57 +503,72 @@ Acceptance criteria:
 
 ## 18. Full Production Completion Checklist
 
-- [ ] Bot works end-to-end from `/start` to onboarding, level, theme, training, result, progress and mistake review.
-- [ ] Telegram UI copy is German across onboarding, menus, questions, feedback, progress, mistakes, paywall, payments and errors.
-- [ ] Quiz Bank API integration is stable, validated and monitored.
-- [ ] Bot does not duplicate Quiz Bank as a local question bank.
-- [ ] API failure does not create answers, mistakes, progress or daily limit charge.
-- [ ] Database schema supports users, sessions, session items, answers, progress, history, mistakes, subscriptions, payments, limits, analytics and API errors.
-- [ ] Answer processing is idempotent.
-- [ ] Payment credit is idempotent.
-- [ ] Payments tested with Telegram Stars test/prod configuration as approved.
-- [ ] Subscriptions tested for Free, Plus, Pro, pending, active, expired and renewal.
-- [ ] Progress tested for accuracy, coverage, stability, weakness, recency and topic status.
-- [ ] Mistakes tested for creation, repeat, improved, resolved and reopened states.
-- [ ] Limits tested for Free, Plus, Pro and Europe/Berlin reset.
-- [ ] Entitlements enforce paid features in service layer and UI.
-- [ ] Analytics available for activation, retention, sessions, progress, mistakes, paywall, payments, subscriptions and API diagnostics.
-- [ ] Admin metrics available and protected.
-- [ ] Monitoring active for bot, DB, Quiz Bank API, payments, subscriptions, logs and backups.
-- [ ] Backup configured, encrypted and access-controlled.
-- [ ] Backup/restore tested.
-- [ ] Security checks passed.
-- [ ] Logs and analytics contain no secrets.
-- [ ] Rate limits active for abuse-sensitive actions.
-- [ ] Rollback plan ready and tested where feasible.
-- [ ] Production smoke tests defined and passing.
-- [ ] Documentation complete for config, deploy, operations, QA, incident response and open decisions.
-- [ ] All blocking decisions are closed.
+Status rule:
+
+- `[x]` means closed by repository-side implementation and local QA evidence.
+- `[ ]` means still open for Full Production because external staging/production
+  evidence is missing.
+
+Current evidence status at `2026-06-04`: isolated server runtime evidence exists
+for `/opt/deutsch-trainer-bot`, including isolated DB migrations, protected
+Quiz Bank env presence, live Telegram `/start -> menu -> quiz -> question ->
+answer -> result` proof, and local QA. Full production gates below remain `[ ]`
+where webhook-or-approved-polling mode, GitHub/release provenance, Telegram
+Stars proof, backup/restore, rollback, monitoring or production smoke evidence
+is still missing. Detailed evidence records are tracked in
+`docs/15_roadmap_execution_log.md`.
+
+- [ ] Bot works end-to-end from `/start` to onboarding, level, theme, training, result, progress and mistake review. Isolated live Telegram quiz flow passed; staging/production closure still requires the approved target runtime.
+- [x] Telegram UI copy is German across onboarding, menus, questions, feedback, progress, mistakes, paywall, payments and errors. Covered by German copy checks in Milestone 13 QA gates.
+- [ ] Quiz Bank API integration is stable, validated and monitored. Runtime contract/failure tests and isolated service smoke passed; production Quiz Bank monitoring evidence is still required.
+- [x] Bot does not duplicate Quiz Bank as a local question bank. Runtime stores references/snapshots only and local QA checks passed.
+- [x] API failure does not create answers, mistakes, progress or daily limit charge. Covered by training session API/limit tests and QA gates.
+- [x] Database schema supports users, sessions, session items, answers, progress, history, mistakes, subscriptions, payments, limits, analytics and API errors. Runtime PostgreSQL verification passed for current schema.
+- [x] Answer processing is idempotent. Covered by duplicate answer, duplicate Telegram update and unique answer tests.
+- [x] Payment credit is idempotent. Covered by duplicate provider event and provider reference reuse tests.
+- [ ] Payments tested with Telegram Stars test/prod configuration as approved. Local Stars payload/provider validation passed; live Telegram Stars test/prod evidence is still required.
+- [x] Subscriptions tested for Free, Plus, Pro, pending, active, expired and renewal. Covered by entitlement, subscription and payment QA gates.
+- [x] Progress tested for accuracy, coverage, stability, weakness, recency and topic status. Covered by progress model/service/repository and integration tests.
+- [x] Mistakes tested for creation, repeat, improved, resolved and reopened states. Covered by mistakes service/repository and training mistakes integration tests.
+- [x] Limits tested for Free, Plus, Pro and Europe/Berlin reset. Covered by entitlements and progress/date-boundary tests.
+- [x] Entitlements enforce paid features in service layer and UI. Covered by entitlement service and handler/paywall tests.
+- [x] Analytics available for activation, retention, sessions, progress, mistakes, paywall, payments, subscriptions and API diagnostics. Covered by analytics service/admin metrics tests and event wiring.
+- [x] Admin metrics available and protected. Covered by owner-only admin handler and analytics metrics tests.
+- [ ] Monitoring active for bot, DB, Quiz Bank API, payments, subscriptions, logs and backups. Monitoring artifacts exist; target-environment active monitoring evidence is still required.
+- [ ] Backup configured, encrypted and access-controlled. Backup scripts/templates exist; production backup configuration evidence is still required.
+- [ ] Backup/restore tested. Disposable local PostgreSQL backup/restore passed; target-environment restore evidence is still required.
+- [x] Security checks passed. Covered by Milestone 13 security-abuse gate and local CI.
+- [x] Logs and analytics contain no secrets. Covered by log redaction, analytics rejection, secret scan and QA evidence redaction checks.
+- [x] Rate limits active for abuse-sensitive actions. Covered by Redis/in-memory limiter tests and security middleware tests.
+- [ ] Rollback plan ready and tested where feasible. Runbook exists; staging/production rollback smoke evidence is still required.
+- [ ] Production smoke tests defined and passing. HTTPS and isolated polling smoke scripts/runbook exist; production smoke execution evidence is still required.
+- [x] Documentation complete for config, deploy, operations, QA, incident response and open decisions. Repository documentation is complete for current scope; environment inventory stays external.
+- [x] All blocking decisions are closed. Architecture, stack, pricing, limits, payments, QA and release-owner decisions are closed; remaining open items are evidence gates, not decision gates.
 
 ## 19. Risks and Mitigations
 
 | Risk | Impact | Mitigation | Owner | Status |
 |---|---|---|---|---|
-| Implementation stack remains undecided | Coding cannot start without architecture drift | Close Architecture Lock before repository foundation | Tech owner | Open |
-| Quiz Bank API contract incomplete | Sessions, progress coverage and mistake review may be unstable | Finalize contract, mocks and contract tests before training engine | API owner / Tech owner | Open |
-| Prices or durations undefined | Payments and subscriptions cannot be configured safely | Product owner defines launch configuration before payment coding | Product owner | Open |
-| Telegram Stars details misunderstood | Payment credit or invoice flow may fail in production | Validate provider flow in test mode and document payload/idempotency | Tech owner | Open |
-| Daily limits undefined | Entitlement behavior cannot be tested fully | Define Free/Plus/Pro limits with hierarchy before coding access checks | Product owner | Open |
-| API failures corrupt learning state | Fake progress or wrong limit charge | Enforce transaction ordering and API failure tests | Tech owner / QA owner | Open |
-| Duplicate Telegram updates | Duplicate answers, progress or limits | Idempotency keys and unique constraints for updates and answers | Tech owner | Open |
-| Duplicate payment events | Duplicate paid access | Payment credit transaction and provider_payment_id uniqueness | Tech owner | Open |
-| Coverage unavailable from Quiz Bank | Topic status may be misleading | Support coverage unknown and block strong status without count | Tech owner / API owner | Open |
-| Admin surface exposed | Sensitive operational or user data leak | Auth, authorization, audit logs and aggregate-by-default dashboards | Ops owner / Tech owner | Open |
-| Secrets leak in logs or docs | Security incident | Redaction, secret scanning, review gates and runtime secret injection | Ops owner | Open |
-| Backup not restorable | Production data loss after incident | Restore test before launch and recurring restore checks | Ops owner | Open |
+| Architecture decisions drift from locked stack | Coding can reintroduce stack or boundary ambiguity | Keep `docs/16_architecture_lock.md`, `.agent/project/PROJECT_CONTEXT.md`, and `.agent/project/CODE_STYLE.md` aligned before execution work | Tech owner | Controlled |
+| Quiz Bank API contract incomplete | Sessions, progress coverage and mistake review may be unstable | Runtime schemas/service/tests cover Milestone 4-7; final OpenAPI freeze remains before production release | API owner / Tech owner | Controlled for M0-7 |
+| Prices or durations undefined | Payments and subscriptions cannot be configured safely | Launch config locked: Plus 100 Stars / 30 days; Pro 250 Stars / 90 days | Product owner | Closed for code |
+| Telegram Stars details misunderstood | Payment credit or invoice flow may fail in production | Payload/provider verification locked and covered by local payment tests; real Telegram test/prod evidence remains production readiness work | Tech owner | Controlled |
+| Daily limits undefined | Entitlement behavior cannot be tested fully | Launch config locked: Free 5, Plus 25, Pro 100; runtime validation enforces Free < Plus < Pro | Product owner | Closed for code |
+| API failures corrupt learning state | Fake progress or wrong limit charge | Enforce transaction ordering, rollback learning writes, and persist diagnostic API error logs separately | Tech owner / QA owner | Controlled for M0-7 |
+| Duplicate Telegram updates | Duplicate answers, progress or limits | `telegram_update_id` idempotency and unique answer constraints protect accepted answers | Tech owner | Controlled for answers |
+| Duplicate payment events | Duplicate paid access | Payment credit transaction, provider reference reuse checks and idempotency tests | Tech owner | Controlled |
+| Coverage unavailable from Quiz Bank | Topic status may be misleading | Support coverage unknown and populate available topic rows/counts from Quiz Bank catalog when available | Tech owner / API owner | Controlled for M0-7 |
+| Admin surface exposed | Sensitive operational or user data leak | Owner-only Telegram admin IDs and tests for unauthorized rejection | Ops owner / Tech owner | Controlled |
+| Secrets leak in logs or docs | Security incident | Redaction, analytics rejection, secret scanning, review gates and runtime secret injection | Ops owner | Controlled |
+| Backup not restorable | Production data loss after incident | Backup policy locked; actual restore evidence is required before production release | Ops owner | Open before production |
 | Rollback unsafe after migrations | Data or payment inconsistency | Migration review, rollback notes, forward-fix policy and smoke tests | Tech owner / Ops owner | Open |
-| German copy regression | Product violates German-only rule | Copy registry and German copy QA checks | Product owner / QA owner | Open |
-| Analytics gaps | Activation, retention or conversion cannot be trusted | Tracking plan, event tests and data quality checks | Data owner | Open |
+| German copy regression | Product violates German-only rule | Copy registry and German copy QA checks | Product owner / QA owner | Controlled locally |
+| Analytics gaps | Activation, retention or conversion cannot be trusted | Tracking plan, event tests and data quality checks | Data owner | Controlled locally |
 
 ## 20. Execution Order
 
-1. Close Milestone 0 Architecture Lock and all blocking decisions.
-2. Define launch configuration placeholders and owners for unresolved product config: prices, durations, limits, paywall cooldown, Free mistake repeat policy and Telegram Stars production settings.
+1. Maintain Milestone 0 Architecture Lock and keep project context/style aligned with locked decisions.
+2. Define launch configuration placeholders and owners for unresolved product config: prices, durations, paywall cooldown, Telegram Stars production settings and final limit values if launch config differs from runtime defaults.
 3. Build Milestone 1 Repository and Foundation.
 4. Build Milestone 2 Database and Data Layer, including migrations, constraints, indexes and transaction helpers.
 5. Build Milestone 4 Quiz Bank API Integration before relying on live quiz content in bot flows.

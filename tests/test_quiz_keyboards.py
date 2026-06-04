@@ -14,6 +14,7 @@ from app.bot.texts import (
     CALLBACK_TRAIN_NEXT_PREFIX,
     CALLBACK_TRAIN_RESUME_PREFIX,
     MENU_BUTTON_HOME,
+    MENU_BUTTON_REVIEW,
     MENU_BUTTON_TRAIN,
     TRAINING_NEW_SESSION_BUTTON_TEXT,
 )
@@ -71,8 +72,9 @@ def test_finish_keyboard_shows_menu_and_new_training_action() -> None:
     payloads = _payloads(keyboard)
 
     assert MENU_BUTTON_HOME in texts
+    assert MENU_BUTTON_REVIEW in texts
     assert TRAINING_NEW_SESSION_BUTTON_TEXT in texts
-    assert payloads == ["bot:home", "menu:levels"]
+    assert payloads == ["menu:review", "menu:levels", "bot:home"]
 
 
 def test_resume_keyboard_payloads_are_short() -> None:

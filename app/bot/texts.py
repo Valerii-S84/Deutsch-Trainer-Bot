@@ -1,4 +1,4 @@
-"""German user-facing text constants for Milestone 3 bot shell."""
+"""German user-facing text constants for the bot shell."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ WELCOME_TEXT = (
     "Wähle im Menü, was du als Nächstes tun möchtest."
 )
 
-MENU_PROMPT = "Was möchtest du als Nächstes tun?"
+MENU_PROMPT = "Was möchtest du heute üben?"
 
 TRAINING_PROMPT = (
     "📘 Wähle ein Level, um eine neue Übungsrunde zu starten."
@@ -17,6 +17,10 @@ TRAINING_PROMPT = (
 LEVEL_SELECTED_TEXT = "✅ {level} wurde ausgewählt. Jetzt wähle bitte ein Thema."
 
 THEME_PROMPT = "📚 Wähle ein Thema für die nächste Übung."
+THEME_EMPTY_STATE_TEXT = (
+    "📭 Für dieses Niveau sind aktuell keine aktiven Themen verfügbar. "
+    "Bitte wähle ein anderes Niveau."
+)
 
 THEME_SELECTED_TEXT = (
     "✅ Thema *{theme}* ist gewählt für Niveau *{level}*. "
@@ -46,13 +50,66 @@ PROFILE_EMPTY_STATE_TEXT = (
 )
 
 PROFILE_PROGRESS_TEMPLATE = (
-    "✅ {level} / {theme}: {correct}/{answered} korrekt ({accuracy}%)."
+    "{status_icon} {level} / {theme}: {correct}/{answered} korrekt ({accuracy}%). "
+    "Abdeckung: {coverage}. Stabilität: {stability}%. Schwäche: {weakness}%."
 )
 
+PROFILE_STRONG_THEMES_HEADER = "Starke Themen:"
+PROFILE_WEAK_THEMES_HEADER = "Schwache Themen:"
+PROFILE_DETAILS_HEADER = "Details:"
+PROFILE_RECOMMENDATION_HEADER = "Empfehlung für heute:"
+PROFILE_NO_STRONG_THEMES_TEXT = "Noch kein starkes Thema."
+PROFILE_NO_WEAK_THEMES_TEXT = "Keine klare Schwachstelle erkannt."
+
 SUBSCRIPTION_TEXT = (
-    "💳 Subscription-Bereich ist vorbereitet. "
-    "Die Payment-Integration wird in einem späteren Milestone implementiert."
+    "💳 Dein Abo\n\n"
+    "Aktueller Zugang: {access_plan}\n"
+    "Abo-Status: {status}\n\n"
+    "Plus bietet mehr Übungen pro Tag, vollständigen Fortschritt und gezielte Fehlerwiederholung.\n"
+    "Pro enthält zusätzlich erweiterte Statistik und einen tieferen Fehlerüberblick."
 )
+
+SUBSCRIPTION_STATUS_FREE_TEXT = "Free"
+SUBSCRIPTION_STATUS_ACTIVE_TEXT = "{plan} aktiv bis {expires_at}"
+SUBSCRIPTION_STATUS_PENDING_TEXT = "{plan} wartet auf Zahlungsbestätigung"
+SUBSCRIPTION_STATUS_EXPIRED_TEXT = "{plan} ist am {expires_at} abgelaufen"
+SUBSCRIPTION_STATUS_CANCELLED_TEXT = "{plan} wurde beendet"
+SUBSCRIPTION_STATUS_FAILED_TEXT = "{plan} konnte nicht aktiviert werden"
+SUBSCRIPTION_STATUS_INACTIVE_TEXT = "Kein aktives Abo"
+PAYMENT_PLUS_BUTTON_TEXT = "⭐ Plus mit Stars bezahlen"
+PAYMENT_PRO_BUTTON_TEXT = "🚀 Pro mit Stars bezahlen"
+PAYMENT_RETRY_BUTTON_TEXT = "⭐ Noch einmal versuchen"
+PAYMENT_CONFIG_REQUIRED_TEXT = (
+    "Die Zahlung ist aktuell nicht verfügbar.\n\n"
+    "Bitte versuche es später erneut."
+)
+PAYMENT_PRECHECKOUT_ERROR_TEXT = "Diese Zahlung konnte nicht bestätigt werden."
+PAYMENT_SUCCESS_PLUS_TEXT = (
+    "Plus ist aktiv ✅\n\n"
+    "Du kannst jetzt mehr üben, deinen vollständigen Fortschritt sehen und deine Fehler gezielt wiederholen."
+)
+PAYMENT_SUCCESS_PRO_TEXT = (
+    "Pro ist aktiv ✅\n\n"
+    "Du hast jetzt Zugriff auf erweiterte Statistik und mehr Training."
+)
+PAYMENT_FAILURE_TEXT = (
+    "Die Zahlung wurde nicht abgeschlossen.\n\n"
+    "Du kannst es noch einmal versuchen."
+)
+PAYWALL_DAILY_LIMIT_TEXT = (
+    "Dein Tageslimit ist erreicht.\n\n"
+    "Mit Plus kannst du heute weiter üben und deinen vollständigen Fortschritt sehen."
+)
+PAYWALL_PROGRESS_TEXT = (
+    "Ich habe deine Schwachstellen gefunden.\n\n"
+    "Mit Plus kannst du deinen vollständigen Fortschritt sehen und deine Fehler gezielt wiederholen."
+)
+PAYWALL_MISTAKE_REPEAT_TEXT = (
+    "Du hast offene Fehler.\n\n"
+    "Mit Plus kannst du sie gezielt wiederholen und schneller schließen."
+)
+PAYWALL_PLUS_BUTTON_TEXT = "⭐ Plus ansehen"
+PAYWALL_PRO_BUTTON_TEXT = "🚀 Pro ansehen"
 
 UNKNOWN_MESSAGE_TEXT = (
     "🔁 Diese Nachricht verstehe ich nicht. "
@@ -64,31 +121,29 @@ UNKNOWN_CALLBACK_TEXT = (
     "Starte bitte mit /start neu."
 )
 
+RATE_LIMIT_HIT_TEXT = "Bitte warte kurz und versuche es dann erneut."
+
+ADMIN_METRICS_UNAUTHORIZED_TEXT = "Diese Admin-Funktion ist nicht verfügbar."
+ADMIN_METRICS_UNAVAILABLE_TEXT = "Admin-Metriken sind aktuell nicht verfügbar."
+
 HOME_TEXT = "🏠 Hauptmenü"
 
 MENU_BUTTON_TRAIN = "▶️ Üben"
 MENU_BUTTON_LEVEL_THEME = "🎯 Niveau & Thema"
 MENU_BUTTON_PROGRESS = "📊 Mein Fortschritt"
-MENU_BUTTON_REVIEW = "🧠 Fehler wiederholen"
-MENU_BUTTON_SUBSCRIPTION = "💳 Subscription"
+MENU_BUTTON_REVIEW = "🔁 Fehler wiederholen"
+MENU_BUTTON_REVIEW_START = "▶️ Fehler üben"
 MENU_BUTTON_HOME = "🏠 Hauptmenü"
 
-LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
-THEMES = (
-    "Alltag",
-    "Beruf",
-    "Reisen",
-    "Bewerbung",
-    "Grammatik",
-    "Wortschatz",
-)
-
+LEVELS = ("A1", "A2", "B1", "B2", "C1")
 CALLBACK_HOME = "bot:home"
 CALLBACK_LEVELS = "menu:levels"
 CALLBACK_THEMES = "bot:theme"
 CALLBACK_PROFILE = "menu:profile"
 CALLBACK_REVIEW = "menu:review"
+CALLBACK_REVIEW_START = "review:start"
 CALLBACK_SUBSCRIPTION = "menu:subscription"
+CALLBACK_PAYMENT_PLAN_PREFIX = "payment:plan:"
 CALLBACK_LEVEL_PREFIX = "level:"
 CALLBACK_THEME_PREFIX = "theme:"
 
@@ -111,6 +166,9 @@ TRAINING_FINISH_TEXT = (
     "🎉 Training beendet!\n\n"
     "✅ Richtig: {correct}/{total} ({percent}%)"
 )
+TRAINING_FINISH_NEW_MISTAKES_TEXT = "🧠 Neue Fehler: {count}"
+TRAINING_FINISH_WEAK_THEME_TEXT = "🎯 Schwerpunkt: {theme}"
+TRAINING_FINISH_RECOMMENDATION_TEXT = "➡️ Empfehlung: {recommendation}"
 TRAINING_SESSION_RESUME_TEXT = (
     "⚠️ Du hast bereits eine aktive Trainingsrunde.\n"
     "Möchtest du sie fortsetzen oder eine neue Runde starten?"
@@ -126,6 +184,11 @@ TRAINING_THEME_NOT_AVAILABLE_TEXT = "⚠️ Dieses Thema ist aktuell nicht verf�
 REVIEW_EMPTY_STATE_TEXT = (
     "🧹 Keine aktiven Fehler für die Wiederholung.\n\n"
     "Lerne zuerst neue Fragen, dann werden falsche Antworten automatisch erfasst."
+)
+
+REVIEW_SCREEN_TEXT = (
+    "🔁 Deine Fehler sind bereit.\n\n"
+    "Starte eine kurze Wiederholung, um offene Fehler gezielt zu üben."
 )
 
 TRAINING_QUIZBANK_AUTH_ERROR_TEXT = (

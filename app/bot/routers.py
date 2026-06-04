@@ -6,7 +6,7 @@ from copy import deepcopy
 
 from aiogram import Router
 
-from app.bot.handlers import fallback, level, menu, profile, review, start, subscription, theme, training
+from app.bot.handlers import admin, fallback, level, menu, payments, profile, review, start, subscription, theme, training
 
 
 def _clone_router(router: Router) -> Router:
@@ -17,6 +17,7 @@ def _clone_router(router: Router) -> Router:
 def build_root_router() -> Router:
     """Build unified bot router with all entrypoints."""
     router = Router(name="bot")
+    router.include_router(_clone_router(admin.router))
     router.include_router(_clone_router(start.router))
     router.include_router(_clone_router(menu.router))
     router.include_router(_clone_router(level.router))
@@ -25,6 +26,7 @@ def build_root_router() -> Router:
     router.include_router(_clone_router(training.router))
     router.include_router(_clone_router(profile.router))
     router.include_router(_clone_router(subscription.router))
+    router.include_router(_clone_router(payments.router))
     router.include_router(_clone_router(fallback.router))
     return router
 

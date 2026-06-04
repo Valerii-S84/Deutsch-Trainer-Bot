@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,9 +25,13 @@ class Settings(BaseSettings):
     telegram_webhook_url: Optional[str] = None
     telegram_webhook_secret: Optional[SecretStr] = None
     telegram_webhook_path: str = "/telegram/webhook"
+    telegram_webhook_require_https: bool = True
+    telegram_duplicate_update_ttl_seconds: int = 300
     bot_webhook_enabled: bool = False
     bot_polling_enabled: bool = True
     bot_max_request_timeout: int = 30
+    security_rate_limit_enabled: bool = True
+    security_state_backend: str = Field(default="auto", alias="SECURITY_STATE_BACKEND")
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/deutsch_trainer"
     redis_url: str = "redis://localhost:6379/0"
@@ -44,11 +48,24 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    plus_price_stars: Optional[str] = Field(default=None, alias="PLUS_PRICE_STARS")
-    pro_price_stars: Optional[str] = Field(default=None, alias="PRO_PRICE_STARS")
-    plus_duration_days: Optional[int] = Field(default=None, alias="PLUS_DURATION_DAYS")
-    pro_duration_days: Optional[int] = Field(default=None, alias="PRO_DURATION_DAYS")
-    tariff_public_copy: Optional[str] = Field(default=None, alias="TARIFF_PUBLIC_COPY")
+    telegram_stars_mode: str = Field(default="test", alias="TELEGRAM_STARS_MODE")
+    plus_price_stars: Optional[str] = Field(default="100", alias="PLUS_PRICE_STARS")
+    pro_price_stars: Optional[str] = Field(default="250", alias="PRO_PRICE_STARS")
+    plus_duration_days: Optional[int] = Field(default=30, alias="PLUS_DURATION_DAYS")
+    pro_duration_days: Optional[int] = Field(default=90, alias="PRO_DURATION_DAYS")
+    tariff_public_copy: str = Field(
+        default=(
+            "Plus: mehr Uebungen pro Tag, vollstaendiger Fortschritt und "
+            "gezielte Fehlerwiederholung. Pro: erweiterte Statistik, mehr "
+            "Training und tieferer Fehlerueberblick."
+        ),
+        alias="TARIFF_PUBLIC_COPY",
+    )
+    paywall_cooldown_policy: str = Field(default="none", alias="PAYWALL_COOLDOWN_POLICY")
+    admin_telegram_user_ids: tuple[int, ...] = Field(default_factory=tuple, alias="ADMIN_TELEGRAM_USER_IDS")
+    free_daily_question_limit: int = Field(default=5, alias="FREE_DAILY_QUESTION_LIMIT")
+    plus_daily_question_limit: int = Field(default=25, alias="PLUS_DAILY_QUESTION_LIMIT")
+    pro_daily_question_limit: int = Field(default=100, alias="PRO_DAILY_QUESTION_LIMIT")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -62,6 +79,13 @@ class Settings(BaseSettings):
     def validate_timeout(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("BOT_MAX_REQUEST_TIMEOUT must be > 0")
+        return value
+
+    @field_validator("telegram_duplicate_update_ttl_seconds")
+    @classmethod
+    def validate_duplicate_update_ttl(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("TELEGRAM_DUPLICATE_UPDATE_TTL_SECONDS must be > 0")
         return value
 
     @field_validator("quiz_bank_timeout_seconds")
@@ -78,6 +102,105 @@ class Settings(BaseSettings):
             raise ValueError("QUIZ_BANK_MAX_RETRIES must be >= 0")
         return value
 
+    @field_validator("security_state_backend")
+    @classmethod
+    def validate_security_state_backend(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"auto", "in_memory", "redis"}:
+            raise ValueError("SECURITY_STATE_BACKEND must be auto, in_memory, or redis")
+        return normalized
+
+    @field_validator("telegram_stars_mode")
+    @classmethod
+    def validate_telegram_stars_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"test", "prod"}:
+            raise ValueError("TELEGRAM_STARS_MODE must be test or prod")
+        return normalized
+
+    @field_validator("paywall_cooldown_policy")
+    @classmethod
+    def validate_paywall_cooldown_policy(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != "none":
+            raise ValueError("PAYWALL_COOLDOWN_POLICY must be none for Release 1")
+        return normalized
+
+    @field_validator("free_daily_question_limit", "plus_daily_question_limit", "pro_daily_question_limit")
+    @classmethod
+    def validate_daily_limit(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Daily question limits must be > 0")
+        return value
+
+    @field_validator("plus_price_stars", "pro_price_stars")
+    @classmethod
+    def validate_optional_stars_price(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not str(value).isdigit() or int(value) <= 0:
+            raise ValueError("Telegram Stars prices must be positive integer strings")
+        return str(value)
+
+    @field_validator("plus_duration_days", "pro_duration_days")
+    @classmethod
+    def validate_optional_duration(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("Subscription durations must be > 0")
+        return value
+
+    @field_validator("admin_telegram_user_ids", mode="before")
+    @classmethod
+    def parse_admin_telegram_user_ids(cls, value: object) -> tuple[int, ...]:
+        if value in (None, ""):
+            return ()
+        if isinstance(value, str):
+            raw_values = [item.strip() for item in value.split(",") if item.strip()]
+        elif isinstance(value, int):
+            raw_values = [value]
+        else:
+            raw_values = list(value)  # type: ignore[arg-type]
+
+        admin_ids = tuple(int(item) for item in raw_values)
+        if any(admin_id <= 0 for admin_id in admin_ids):
+            raise ValueError("Admin Telegram user IDs must be positive integers")
+        return admin_ids
+
+    @model_validator(mode="after")
+    def validate_limit_hierarchy(self) -> "Settings":
+        if not (
+            self.free_daily_question_limit
+            < self.plus_daily_question_limit
+            < self.pro_daily_question_limit
+        ):
+            raise ValueError("Daily question limits must satisfy Free < Plus < Pro")
+        return self
+
+    @model_validator(mode="after")
+    def validate_webhook_security(self) -> "Settings":
+        if not self.bot_webhook_enabled or self.app_env == AppEnvironment.development:
+            return self
+
+        if not self.telegram_webhook_url:
+            raise ValueError("TELEGRAM_WEBHOOK_URL is required when webhook mode is enabled")
+        if not self.telegram_webhook_secret or not self.telegram_webhook_secret.get_secret_value():
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET is required when webhook mode is enabled")
+        if self.telegram_webhook_require_https and not self.telegram_webhook_url.startswith("https://"):
+            raise ValueError("TELEGRAM_WEBHOOK_URL must use HTTPS outside development")
+        if not self.telegram_webhook_path.startswith("/"):
+            raise ValueError("TELEGRAM_WEBHOOK_PATH must start with /")
+        return self
+
+    @model_validator(mode="after")
+    def validate_production_security_state(self) -> "Settings":
+        if self.app_env == AppEnvironment.development:
+            return self
+        if self.security_rate_limit_enabled and self.security_state_backend == "in_memory":
+            raise ValueError("SECURITY_STATE_BACKEND=in_memory is not allowed outside development")
+        if self.security_rate_limit_enabled and not self.redis_url:
+            raise ValueError("REDIS_URL is required when production security rate limits are enabled")
+        return self
+
     @property
     def webhook_mode_enabled(self) -> bool:
         return bool(self.telegram_webhook_url and self.telegram_webhook_secret and self.bot_webhook_enabled)
@@ -93,18 +216,28 @@ class Settings(BaseSettings):
         if self.app_env != AppEnvironment.production:
             return
 
+        if not self.bot_webhook_enabled:
+            raise ValueError("BOT_WEBHOOK_ENABLED must be true in production")
         if not self.bot_token or not self.bot_token.get_secret_value():
             raise ValueError("BOT_TOKEN is required in production")
         if not self.telegram_webhook_secret or not self.telegram_webhook_secret.get_secret_value():
             raise ValueError("TELEGRAM_WEBHOOK_SECRET is required in production")
         if not self.telegram_webhook_url:
             raise ValueError("TELEGRAM_WEBHOOK_URL is required in production")
+        if not self.webhook_mode_enabled:
+            raise ValueError("Webhook mode must be fully configured in production")
         if not self.quiz_bank_edge_api_key_or_legacy:
             raise ValueError("QUIZ_BANK_EDGE_API_KEY (or QUIZ_BANK_API_KEY legacy) is required in production")
         if not self.quiz_bank_consumer_api_key or not self.quiz_bank_consumer_api_key.get_secret_value():
             raise ValueError("QUIZ_BANK_CONSUMER_API_KEY is required in production")
         if not self.quiz_bank_consumer_id:
             raise ValueError("QUIZ_BANK_CONSUMER_ID is required in production")
+        if not self.database_url:
+            raise ValueError("DATABASE_URL is required in production")
+        if self.security_rate_limit_enabled and not self.redis_url:
+            raise ValueError("REDIS_URL is required in production")
+        if self.telegram_stars_mode != "prod":
+            raise ValueError("TELEGRAM_STARS_MODE=prod is required in production")
 
 
 def get_settings() -> Settings:

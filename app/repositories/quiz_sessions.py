@@ -54,8 +54,11 @@ class QuizSessionRepository:
             user_id=user_id,
             level=level,
             theme=theme,
+            session_type=str((source_metadata or {}).get("flow") or "regular"),
             status=QuizSessionStatus.active,
             total_questions=total_questions,
+            shown_questions_count=0,
+            answered_count=0,
             correct_answers=0,
             source=source,
             source_metadata=source_metadata,
@@ -76,6 +79,12 @@ class QuizSessionRepository:
         session.status = status
         if status in {QuizSessionStatus.completed, QuizSessionStatus.cancelled, QuizSessionStatus.failed}:
             session.finished_at = finished_at or datetime.now(UTC)
+        if status == QuizSessionStatus.completed:
+            session.completed_at = session.finished_at
+        elif status == QuizSessionStatus.cancelled:
+            session.abandoned_at = session.finished_at
+        elif status == QuizSessionStatus.failed:
+            session.failed_at = session.finished_at
         return session
 
     async def mark_completed(self, db: AsyncSession, session: QuizSession, *, finished_at: datetime | None = None) -> QuizSession:
@@ -111,3 +120,11 @@ class QuizSessionRepository:
     async def increment_correct_answers(self, db: AsyncSession, session: QuizSession, delta: int) -> int:
         session.correct_answers = (session.correct_answers or 0) + delta
         return session.correct_answers
+
+    async def increment_answered_count(self, db: AsyncSession, session: QuizSession, delta: int) -> int:
+        session.answered_count = int(getattr(session, "answered_count", 0) or 0) + delta
+        return session.answered_count
+
+    async def increment_shown_questions_count(self, db: AsyncSession, session: QuizSession, delta: int) -> int:
+        session.shown_questions_count = int(getattr(session, "shown_questions_count", 0) or 0) + delta
+        return session.shown_questions_count

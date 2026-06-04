@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from app.db.models import Mistake
+from app.db.models import Mistake, MistakeStatus
+from app.repositories.mistake_history import MistakeHistoryRepository
 from app.repositories.mistakes import MistakeRepository
 from app.repositories.users import UserRepository
 
@@ -15,9 +17,11 @@ class MistakeService:
         *,
         user_repo: UserRepository | None = None,
         mistake_repo: MistakeRepository | None = None,
+        mistake_history_repo: MistakeHistoryRepository | None = None,
     ) -> None:
         self._user_repo = user_repo or UserRepository()
         self._mistake_repo = mistake_repo or MistakeRepository()
+        self._mistake_history_repo = mistake_history_repo or MistakeHistoryRepository()
 
     async def _get_user(self, db, telegram_user_id: int):
         return await self._user_repo.create_if_missing(db, telegram_user_id)
@@ -34,6 +38,9 @@ class MistakeService:
         correct_answer: str,
         is_duplicate: bool = False,
         source_snapshot: dict[str, Any] | None = None,
+        session_id: int | None = None,
+        user_answer_id: int | None = None,
+        metadata_snapshot: dict[str, Any] | None = None,
     ) -> Mistake | None:
         if is_duplicate:
             user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
@@ -52,13 +59,26 @@ class MistakeService:
             external_quiz_id=external_quiz_id,
         )
         if existing is not None:
-            return await self._mistake_repo.increment_wrong(
+            previous_status = _status_value(existing.status)
+            mistake = await self._mistake_repo.increment_wrong(
                 db,
                 existing,
                 wrong_answer=wrong_answer,
                 correct_answer=correct_answer,
                 source_snapshot=source_snapshot,
             )
+            await self._record_history(
+                db,
+                mistake,
+                event_type="wrong_repeated",
+                previous_status=previous_status,
+                user_answer_id=user_answer_id,
+                session_id=session_id,
+                wrong_answer=wrong_answer,
+                correct_answer=correct_answer,
+                metadata_snapshot=metadata_snapshot,
+            )
+            return mistake
 
         resolved = await self._mistake_repo.get_by_user_and_external_quiz_id(
             db,
@@ -67,15 +87,28 @@ class MistakeService:
             active_only=False,
         )
         if resolved is not None and resolved.resolved_at is not None:
-            return await self._mistake_repo.reopen_as_active(
+            previous_status = _status_value(resolved.status)
+            mistake = await self._mistake_repo.reopen_as_active(
                 db,
                 resolved,
                 wrong_answer=wrong_answer,
                 correct_answer=correct_answer,
                 source_snapshot=source_snapshot,
             )
+            await self._record_history(
+                db,
+                mistake,
+                event_type="wrong_reopened",
+                previous_status=previous_status,
+                user_answer_id=user_answer_id,
+                session_id=session_id,
+                wrong_answer=wrong_answer,
+                correct_answer=correct_answer,
+                metadata_snapshot=metadata_snapshot,
+            )
+            return mistake
 
-        return await self._mistake_repo.create(
+        mistake = await self._mistake_repo.create(
             db,
             user_id=user.id,
             external_quiz_id=external_quiz_id,
@@ -85,6 +118,20 @@ class MistakeService:
             correct_answer=correct_answer,
             source_snapshot=source_snapshot,
         )
+        if hasattr(db, "flush"):
+            await db.flush()
+        await self._record_history(
+            db,
+            mistake,
+            event_type="wrong_created",
+            previous_status=None,
+            user_answer_id=user_answer_id,
+            session_id=session_id,
+            wrong_answer=wrong_answer,
+            correct_answer=correct_answer,
+            metadata_snapshot=metadata_snapshot,
+        )
+        return mistake
 
     async def record_review_success(
         self,
@@ -95,6 +142,10 @@ class MistakeService:
         question_level: str | None,
         question_theme: str | None,
         correct_answer: str,
+        session_id: int | None = None,
+        user_answer_id: int | None = None,
+        metadata_snapshot: dict[str, Any] | None = None,
+        answered_at: datetime | None = None,
     ) -> Mistake | None:
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
         if user is None:
@@ -108,7 +159,60 @@ class MistakeService:
         if mistake is None:
             return None
 
-        return await self._mistake_repo.resolve(db, mistake)
+        previous_status = _status_value(mistake.status)
+        updated = await self._mistake_repo.record_successful_repeat(
+            db,
+            mistake,
+            correct_answer=correct_answer,
+            answered_at=answered_at,
+        )
+        event_type = "review_resolved" if _status_value(updated.status) == MistakeStatus.resolved.value else "review_improved"
+        await self._record_history(
+            db,
+            updated,
+            event_type=event_type,
+            previous_status=previous_status,
+            user_answer_id=user_answer_id,
+            session_id=session_id,
+            correct_answer=correct_answer,
+            metadata_snapshot=metadata_snapshot,
+        )
+        return updated
+
+    async def mark_review_items_unavailable(
+        self,
+        db,
+        telegram_user_id: int,
+        *,
+        external_quiz_ids: list[str],
+        session_id: int | None = None,
+    ) -> list[Mistake]:
+        user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
+        if user is None:
+            return []
+
+        updated: list[Mistake] = []
+        for external_quiz_id in external_quiz_ids:
+            mistake = await self._mistake_repo.find_active_by_user_and_external_quiz_id(
+                db,
+                user_id=user.id,
+                external_quiz_id=external_quiz_id,
+            )
+            if mistake is None:
+                continue
+            previous_status = _status_value(mistake.status)
+            unavailable = await self._mistake_repo.mark_content_unavailable(db, mistake)
+            await self._record_history(
+                db,
+                unavailable,
+                event_type="content_unavailable",
+                previous_status=previous_status,
+                user_answer_id=None,
+                session_id=session_id,
+                metadata_snapshot={"external_quiz_id": external_quiz_id},
+            )
+            updated.append(unavailable)
+        return updated
 
     async def get_review_items(self, db, telegram_user_id: int) -> list[Mistake]:
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
@@ -121,3 +225,32 @@ class MistakeService:
         if user is None:
             return []
         return await self._mistake_repo.get_weak_area_summary(db, user_id=user.id)
+
+    async def _record_history(
+        self,
+        db,
+        mistake: Mistake,
+        *,
+        event_type: str,
+        previous_status: str | None,
+        user_answer_id: int | None,
+        session_id: int | None,
+        wrong_answer: str | None = None,
+        correct_answer: str | None = None,
+        metadata_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        await self._mistake_history_repo.record(
+            db,
+            mistake=mistake,
+            event_type=event_type,
+            previous_status=previous_status,
+            user_answer_id=user_answer_id,
+            session_id=session_id,
+            wrong_answer=wrong_answer,
+            correct_answer=correct_answer,
+            metadata_snapshot=metadata_snapshot,
+        )
+
+
+def _status_value(status: object) -> str:
+    return str(status.value if hasattr(status, "value") else status)

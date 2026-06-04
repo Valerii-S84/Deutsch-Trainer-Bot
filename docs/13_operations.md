@@ -97,6 +97,23 @@ Production deploy не виконується без прямого запиту
 
 Якщо staging відсутній, production deploy має бути blocked або явно approved as risk.
 
+## 4.2.1. Repo-Side Deployment Artifacts
+
+Milestone 12 repo-side deployment artifacts:
+
+| Artifact | Purpose |
+|---|---|
+| `docker-compose.production.yml` | Standalone production Compose definition for bot, PostgreSQL, Redis and Caddy. |
+| `deploy/Caddyfile.production.template` | Caddy HTTPS reverse proxy template without committed real domain. |
+| `deploy/env.production.template` | Production environment variable template without committed secrets. |
+| `deploy/env.staging.template` | Staging environment variable template without committed secrets. |
+| `scripts/ops_preflight.sh` | Non-deploy preflight validation for config, Compose, DB and Redis. |
+| `scripts/ops_smoke.sh` | Non-mutating HTTP, Telegram and Quiz Bank smoke checks. |
+| `docs/20_operations_deployment_runbook.md` | Concrete pre-deploy, deploy, smoke, rollback and incident response runbook. |
+
+These artifacts do not prove production readiness without target-environment
+evidence from staging or production.
+
 ## 4.3. Deployment Preflight
 
 Перед deploy потрібно перевірити:
@@ -168,19 +185,34 @@ Recommended logical variables:
 
 | Variable | Required | Sensitive | Purpose |
 |---|---:|---:|---|
-| `APP_ENV` | Yes | No | `local`, `staging`, `production`. |
+| `APP_ENV` | Yes | No | `development`, `staging`, `production`. |
 | `APP_TIMEZONE` | Yes | No | Must be `Europe/Berlin` for business-day logic. |
 | `LOG_LEVEL` | Yes | No | Runtime logging level. |
-| `TELEGRAM_BOT_TOKEN` | Yes | Yes | Telegram Bot API access. |
+| `BOT_TOKEN` | Yes | Yes | Telegram Bot API access. |
+| `BOT_WEBHOOK_ENABLED` | Production | No | Must be true for production webhook runtime. |
+| `TELEGRAM_WEBHOOK_URL` | If webhook | No | HTTPS public origin; exact production FQDN lives in deploy inventory, not committed docs. |
+| `TELEGRAM_WEBHOOK_PATH` | If webhook | No | Locked Release 1 path: `/telegram/webhook`. |
 | `TELEGRAM_WEBHOOK_SECRET` | If webhook | Yes | Webhook verification, if used. |
 | `QUIZ_BANK_API_BASE_URL` | Yes | No | Quiz Bank API host. |
-| `QUIZ_BANK_API_KEY` | Yes | Yes | Quiz Bank API auth. |
-| `QUIZ_BANK_API_TIMEOUT_MS` | Yes | No | API timeout. |
+| `QUIZ_BANK_EDGE_API_KEY` | Yes | Yes | Edge/API gateway auth. |
+| `QUIZ_BANK_CONSUMER_ID` | Yes | No | Consumer identity for Quiz Bank access. |
+| `QUIZ_BANK_CONSUMER_API_KEY` | Yes | Yes | Consumer API auth. |
+| `QUIZ_BANK_TIMEOUT_SECONDS` | Yes | No | API timeout. |
+| `QUIZ_BANK_MAX_RETRIES` | Yes | No | Safe read retry budget. |
 | `DATABASE_URL` | Yes | Yes | Data store connection. |
-| `PAYMENT_PROVIDER` | Yes | No | `telegram_stars` for Release 1. |
-| `PAYMENT_PROVIDER_SECRET` | If needed | Yes | Payment verification secret, if applicable. |
-| `ADMIN_AUTH_SECRET` | Yes | Yes | Admin access protection. |
-| `ANALYTICS_ENABLED` | Yes | No | Enables internal/external analytics. |
+| `REDIS_URL` | Production | Yes | Redis-backed global rate limits and duplicate update guard. |
+| `SECURITY_STATE_BACKEND` | Yes | No | `auto` locally; Redis outside development. |
+| `SECURITY_RATE_LIMIT_ENABLED` | Yes | No | Enables abuse-sensitive rate limits. |
+| `TELEGRAM_STARS_MODE` | Yes | No | `test` or `prod`; production launch must set `prod`. |
+| `PLUS_PRICE_STARS` | Yes | No | Release 1 default: `100`. |
+| `PRO_PRICE_STARS` | Yes | No | Release 1 default: `250`. |
+| `PLUS_DURATION_DAYS` | Yes | No | Release 1 default: `30`. |
+| `PRO_DURATION_DAYS` | Yes | No | Release 1 default: `90`. |
+| `FREE_DAILY_QUESTION_LIMIT` | Yes | No | Release 1 default: `5`. |
+| `PLUS_DAILY_QUESTION_LIMIT` | Yes | No | Release 1 default: `25`. |
+| `PRO_DAILY_QUESTION_LIMIT` | Yes | No | Release 1 default: `100`. |
+| `PAYWALL_COOLDOWN_POLICY` | Yes | No | Release 1: `none`. |
+| `ADMIN_TELEGRAM_USER_IDS` | Yes | Sensitive | Owner-only Telegram admin allowlist. |
 | `BACKUP_STORAGE_URL` | Production | Sensitive | Backup destination. |
 | `BACKUP_STORAGE_SECRET` | Production | Yes | Backup storage access. |
 
@@ -199,11 +231,14 @@ Secrets must:
 Application startup should fail fast if:
 
 * required production variable is missing;
-* `APP_ENV=production` uses test payment credentials by accident;
+* `APP_ENV=production` is not configured for webhook mode;
+* `APP_ENV=production` uses `SECURITY_STATE_BACKEND=in_memory`;
+* `APP_ENV=production` uses `TELEGRAM_STARS_MODE=test` for real launch;
 * production has no database configuration;
+* production has no Redis configuration for global security state;
 * production has no backup configuration;
 * Quiz Bank API timeout is missing;
-* admin auth is not configured.
+* admin owner allowlist is not configured.
 
 ---
 
@@ -234,6 +269,17 @@ Required health checks:
 | Quiz Bank health | External content API reachable or degraded state known. |
 | Payment readiness | Payment provider config present. |
 | Admin surface health | Protected admin metrics reachable by authorized admin. |
+
+Release 1 monitoring stack:
+
+| Layer | Evidence |
+|---|---|
+| Container/process | Docker Compose health and restart status. |
+| HTTPS edge | Caddy access/error logs and external HTTPS uptime check. |
+| Application | Structured app logs with redaction filter enabled. |
+| Database | PostgreSQL connectivity and admin metrics queries. |
+| Redis | Connectivity check for rate limits and duplicate update guard. |
+| Payments/API | Analytics/admin metrics for payment failures, duplicate provider events and Quiz Bank errors. |
 
 ## 6.3. Operational Metrics
 
@@ -312,7 +358,21 @@ Required controls:
 
 ## 7.3. Backup Frequency
 
-Exact frequency is production configuration.
+Release 1 frequency:
+
+| Backup type | Minimum cadence |
+|---|---|
+| Pre-launch baseline | Before enabling production traffic. |
+| Pre-change safety backup | Before payment-affecting releases and data/schema changes. |
+| Scheduled PostgreSQL backup | Daily after launch. |
+| Restore test | Before launch and monthly after launch. |
+
+Minimum retention:
+
+| Window | Retention |
+|---|---:|
+| Daily backups | 7 |
+| Weekly backups | 4 |
 
 Minimum expectation:
 
@@ -346,6 +406,25 @@ If backup fails:
 * investigate storage/auth issue;
 * do not silently ignore failure;
 * do not perform risky migrations until recovery posture is known.
+
+## 7.6. Repo-Side Backup and Restore Artifacts
+
+Milestone 12 backup artifacts:
+
+| Artifact | Purpose |
+|---|---|
+| `scripts/postgres_backup.sh` | Creates PostgreSQL custom-format dumps; production mode refuses unencrypted backups. |
+| `scripts/postgres_restore_verify.sh` | Restores into a disposable non-production DB and verifies schema and integrity checks. |
+| `docs/20_operations_deployment_runbook.md` | Documents retention, encryption, access control and restore verification rules. |
+
+Minimum production rules:
+
+* backup files are sensitive production data;
+* production backups must be encrypted;
+* backup credentials and encryption private keys stay outside the repository;
+* backup logs must not include DB URLs, tokens or encryption secrets;
+* retention target is 7 daily backups and 4 weekly backups;
+* restore verification is required before launch and monthly after launch.
 
 ---
 
@@ -622,6 +701,23 @@ Production is blocked if:
 * user-facing copy is not German;
 * critical tests fail without accepted risk.
 
+## 12.5. Milestone 12 Evidence Gate
+
+Repo-side M12 artifacts close documentation and script gaps only.
+
+Production remains blocked until evidence exists for:
+
+* production domain and HTTPS endpoint;
+* Telegram webhook registration in the approved environment;
+* protected credential injection without committed secrets;
+* staging smoke test with safe credentials;
+* monitoring for bot, Caddy, DB, Redis, Quiz Bank, payments, subscriptions,
+  admin auth failures, logs and backups;
+* encrypted backup creation;
+* restore verification on a disposable non-production database;
+* rollback target and rollback smoke evidence;
+* post-deploy smoke checks.
+
 ---
 
 ## 13. Operational Acceptance Criteria
@@ -653,4 +749,3 @@ Operations standard is acceptable for Release 1 if:
 8. Logs must not contain secrets.
 9. Production readiness requires tests, backup, monitoring and rollback.
 10. Operational controls must protect learning state and payment correctness.
-

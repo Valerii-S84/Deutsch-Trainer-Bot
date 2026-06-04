@@ -8,6 +8,7 @@ import pytest
 from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.quiz import build_resume_keyboard
 from app.bot.texts import (
+    PAYWALL_DAILY_LIMIT_TEXT,
     TRAINING_ANSWER_DUPLICATE_TEXT,
     TRAINING_EXPLANATION_TEXT,
     TRAINING_FINISH_TEXT,
@@ -17,6 +18,7 @@ from app.bot.texts import (
     TRAINING_QUESTION_TEMPLATE,
     TRAINING_SESSION_RESUME_TEXT,
 )
+from app.services.entitlements import DailyLimitExceededError
 from app.services.training_session import AnswerResult, QuizQuestionPayload
 
 from app.bot.handlers import training
@@ -94,6 +96,18 @@ def _callback_payloads(markup) -> list[str]:
     return [button.callback_data for row in markup.inline_keyboard for button in row]
 
 
+def _daily_limit_error() -> DailyLimitExceededError:
+    state = SimpleNamespace(
+        plan="free",
+        question_limit=1,
+        questions_used=1,
+        remaining=0,
+        reset_at=None,
+        daily_limit=SimpleNamespace(id=77, user_id=111),
+    )
+    return DailyLimitExceededError(state)
+
+
 @pytest.mark.asyncio
 async def test_handle_theme_selected_starts_session_and_shows_question(monkeypatch) -> None:
     db = FakeDb()
@@ -104,7 +118,7 @@ async def test_handle_theme_selected_starts_session_and_shows_question(monkeypat
 
     _patch_service(monkeypatch, service, db)
 
-    callback = _Callback(data="theme:A1:alltag")
+    callback = _Callback(data="theme:A1:Alltag")
     await training.handle_theme_selected(callback)
 
     callback.answer.assert_awaited_once()
@@ -127,6 +141,26 @@ async def test_handle_theme_selected_starts_session_and_shows_question(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_handle_theme_selected_shows_daily_limit_paywall(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.get_active_session.return_value = None
+    service.resume_or_start_session.side_effect = _daily_limit_error()
+
+    _patch_service(monkeypatch, service, db)
+
+    callback = _Callback(data="theme:A1:Alltag")
+    await training.handle_theme_selected(callback)
+
+    assert db.rolled_back == 1
+    callback.message.answer.assert_awaited_once()
+    sent_text = _extract_text(callback.message.answer.await_args)
+    payloads = _callback_payloads(callback.message.answer.await_args.kwargs["reply_markup"])
+    assert PAYWALL_DAILY_LIMIT_TEXT == sent_text
+    assert "menu:subscription" in payloads
+
+
+@pytest.mark.asyncio
 async def test_handle_theme_selected_shows_resume_for_active_session(monkeypatch) -> None:
     db = FakeDb()
     service = AsyncMock()
@@ -134,7 +168,7 @@ async def test_handle_theme_selected_shows_resume_for_active_session(monkeypatch
 
     _patch_service(monkeypatch, service, db)
 
-    callback = _Callback(data="theme:A1:alltag")
+    callback = _Callback(data="theme:A1:Alltag")
     await training.handle_theme_selected(callback)
 
     callback.message.answer.assert_awaited_once()
@@ -157,7 +191,7 @@ async def test_handle_theme_selected_without_level_prompts_level_picker(monkeypa
     sent_text = _extract_text(callback.message.answer.await_args)
     assert TRAINING_NO_LEVEL_SELECTED_TEXT == sent_text
     payloads = _callback_payloads(callback.message.answer.await_args.kwargs["reply_markup"])
-    assert payloads[:6] == ["level:A1", "level:A2", "level:B1", "level:B2", "level:C1", "level:C2"]
+    assert payloads[:5] == ["level:A1", "level:A2", "level:B1", "level:B2", "level:C1"]
     assert service.resume_or_start_session.await_count == 0
 
 
@@ -181,8 +215,16 @@ async def test_handle_submit_answer_returns_result_and_finish(monkeypatch) -> No
     _patch_service(monkeypatch, service, db)
 
     callback = _Callback(data="train:ans:10:tok12345:a")
-    await training.handle_submit_answer(callback)
+    await training.handle_submit_answer(callback, event_update=SimpleNamespace(update_id=777001))
 
+    service.submit_answer.assert_awaited_once_with(
+        db,
+        111,
+        session_id=10,
+        question_token="tok12345",
+        selected_option_id="a",
+        telegram_update_id=777001,
+    )
     callback.message.answer.assert_awaited_once()
     text = _extract_text(callback.message.answer.await_args)
     assert TRAINING_FINISH_TEXT.format(correct=3, total=3, percent=100) in text
@@ -223,9 +265,41 @@ async def test_handle_submit_answer_shows_duplicate_warning_and_next_button(monk
 
 
 @pytest.mark.asyncio
+async def test_handle_submit_answer_shows_correct_answer_text_not_option_id(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.submit_answer.return_value = AnswerResult(
+        selected_answer="b",
+        correct_answer="a",
+        question_token="tok12345",
+        is_correct=False,
+        is_duplicate=False,
+        is_completed=False,
+        explanation=None,
+        correct_answers=0,
+        total_questions=3,
+        session_id=10,
+        correct_answer_text="Option A",
+    )
+
+    _patch_service(monkeypatch, service, db)
+
+    callback = _Callback(data="train:ans:10:tok12345:b")
+    await training.handle_submit_answer(callback)
+
+    text = _extract_text(callback.message.answer.await_args)
+    assert "Option A" in text
+    assert "`a`" not in text
+
+
+@pytest.mark.asyncio
 async def test_handle_next_question_shows_new_question(monkeypatch) -> None:
     db = FakeDb()
     service = AsyncMock()
+    service.get_active_session.return_value = SimpleNamespace(
+        id=10,
+        api_metadata={"pending_question": {"question_token": "tok12345"}},
+    )
     service.get_next_question.return_value = _question()
 
     _patch_service(monkeypatch, service, db)
@@ -233,7 +307,12 @@ async def test_handle_next_question_shows_new_question(monkeypatch) -> None:
     callback = _Callback(data="train:next:10:tok12345")
     await training.handle_next_question(callback)
 
-    service.get_next_question.assert_awaited_once_with(db, 111)
+    service.get_next_question.assert_awaited_once_with(
+        db,
+        111,
+        session_id=10,
+        answered_question_token="tok12345",
+    )
     callback.message.answer.assert_awaited_once()
     args = callback.message.answer.await_args.args
     assert TRAINING_QUESTION_TEMPLATE.format(position=1, total=3, question_text="Was ist korrekt?") in args[0]
@@ -243,6 +322,7 @@ async def test_handle_next_question_shows_new_question(monkeypatch) -> None:
 async def test_handle_cancel_training_confirms_cancel(monkeypatch) -> None:
     db = FakeDb()
     service = AsyncMock()
+    service.get_active_session.return_value = SimpleNamespace(id=10)
     service.cancel_active_session.return_value = True
 
     _patch_service(monkeypatch, service, db)
@@ -255,7 +335,25 @@ async def test_handle_cancel_training_confirms_cancel(monkeypatch) -> None:
     sent_text = _extract_text(callback.message.answer.await_args)
     assert sent_text == training.TRAINING_SESSION_CANCELLED_TEXT
     keyboard_payloads = _callback_payloads(callback.message.answer.await_args.kwargs["reply_markup"])
-    assert keyboard_payloads[:6] == ["level:A1", "level:A2", "level:B1", "level:B2", "level:C1", "level:C2"]
+    assert keyboard_payloads[:5] == ["level:A1", "level:A2", "level:B1", "level:B2", "level:C1"]
+
+
+@pytest.mark.asyncio
+async def test_handle_next_question_rejects_stale_token(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.get_active_session.return_value = SimpleNamespace(
+        id=10,
+        api_metadata={"pending_question": {"question_token": "new-token"}},
+    )
+
+    _patch_service(monkeypatch, service, db)
+
+    callback = _Callback(data="train:next:10:old-token")
+    await training.handle_next_question(callback)
+
+    service.get_next_question.assert_not_awaited()
+    callback.message.answer.assert_awaited_once_with(training.TRAINING_SESSION_ERROR_TEXT)
 
 
 @pytest.mark.asyncio

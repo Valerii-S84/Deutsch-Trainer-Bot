@@ -16,6 +16,7 @@ This milestone sets up a production-oriented code foundation and does not includ
   - Redis,
   - Caddy (HTTPS webhook entrypoint).
 - Foundation test suite in `tests/test_foundation.py`.
+- CI/local checks for compile, explicit lint/type policy, tracked-file secret scan and pytest.
 
 ## Foundation runbook
 
@@ -38,7 +39,7 @@ python3 -m venv .venv
 # 3) Install project + dev dependencies
 python -m pip install -e ".[dev]"
 
-# 4) Install and run local checks
+# 4) Run local checks
 bash scripts/local_ci.sh
 
 # Or use make check
@@ -71,3 +72,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 - Secrets must be supplied through env.
 - No real secrets are stored in repository files.
 - `.env` is ignored by git.
+- `scripts/secret_scan.py` scans tracked files only and reports file/rule locations without printing matched secret values.
+
+## Static analysis policy
+
+- Python lint and type check tools are explicitly not configured yet in `.agent/project/CODE_STYLE.md`.
+- Until a real toolchain is selected, CI runs `scripts/static_policy_check.py` to ensure this remains an explicit policy rather than an omitted check.

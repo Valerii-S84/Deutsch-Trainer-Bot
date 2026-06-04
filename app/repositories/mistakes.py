@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Mistake, MistakeStatus
+
+BERLIN_TZ = ZoneInfo("Europe/Berlin")
+REQUIRED_SUCCESSFUL_REPEATS = 3
+REQUIRED_SUCCESSFUL_REPEAT_DAYS = 2
 
 
 class MistakeRepository:
@@ -72,20 +77,32 @@ class MistakeRepository:
         correct_answer: str,
         source_snapshot: dict[str, Any] | None = None,
     ) -> Mistake:
+        now = datetime.now(UTC)
+        mistake_id = await self._next_id_if_needed(db)
         mistake = Mistake(
+            id=mistake_id,
             user_id=user_id,
             external_quiz_id=external_quiz_id,
+            item_id=external_quiz_id,
             level=level,
             theme=theme,
             wrong_answer=wrong_answer,
             correct_answer=correct_answer,
             mistake_count=1,
-            last_seen_at=datetime.now(UTC),
+            last_seen_at=now,
+            first_mistake_at=now,
+            last_mistake_at=now,
             status=MistakeStatus.new,
             source_snapshot=source_snapshot,
         )
         db.add(mistake)
         return mistake
+
+    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
+        if db.get_bind().dialect.name != "sqlite":
+            return None
+        max_id = await db.scalar(select(func.max(Mistake.id)))
+        return (max_id or 0) + 1
 
     async def increment_wrong(
         self,
@@ -97,17 +114,53 @@ class MistakeRepository:
         source_snapshot: dict[str, Any] | None = None,
     ) -> Mistake:
         mistake.mistake_count = int(max(0, mistake.mistake_count or 0)) + 1
+        mistake.successful_repeats_count = 0
+        mistake.successful_repeat_days_count = 0
+        mistake.last_successful_repeat_at = None
         mistake.wrong_answer = wrong_answer
         mistake.correct_answer = correct_answer
         if source_snapshot is not None:
             mistake.source_snapshot = source_snapshot
+        mistake.item_id = mistake.item_id or mistake.external_quiz_id
         mistake.status = MistakeStatus.repeated if mistake.status in {
             MistakeStatus.new,
             MistakeStatus.repeated,
             MistakeStatus.improved,
         } else mistake.status
         mistake.resolved_at = None
-        mistake.last_seen_at = datetime.now(UTC)
+        mistake.content_available = True
+        now = datetime.now(UTC)
+        mistake.last_seen_at = now
+        mistake.last_mistake_at = now
+        mistake.last_repeated_at = now
+        return mistake
+
+    async def record_successful_repeat(
+        self,
+        db: AsyncSession,
+        mistake: Mistake,
+        *,
+        correct_answer: str,
+        answered_at: datetime | None = None,
+    ) -> Mistake:
+        now = answered_at or datetime.now(UTC)
+        previous_success_day = _berlin_date(mistake.last_successful_repeat_at)
+        current_success_day = _berlin_date(now)
+        mistake.successful_repeats_count = int(mistake.successful_repeats_count or 0) + 1
+        if previous_success_day != current_success_day:
+            mistake.successful_repeat_days_count = int(mistake.successful_repeat_days_count or 0) + 1
+        mistake.correct_answer = correct_answer
+        mistake.last_successful_repeat_at = now
+        mistake.last_seen_at = now
+        mistake.content_available = True
+
+        if _resolution_threshold_met(mistake):
+            mistake.status = MistakeStatus.resolved
+            mistake.resolved_at = now
+            return mistake
+
+        mistake.status = MistakeStatus.improved
+        mistake.resolved_at = None
         return mistake
 
     async def resolve(
@@ -130,18 +183,39 @@ class MistakeRepository:
     ) -> Mistake:
         mistake.status = MistakeStatus.repeated
         mistake.mistake_count = max(1, int(mistake.mistake_count or 0) + 1)
+        mistake.successful_repeats_count = 0
+        mistake.successful_repeat_days_count = 0
+        mistake.last_successful_repeat_at = None
         mistake.resolved_at = None
-        mistake.last_seen_at = datetime.now(UTC)
+        now = datetime.now(UTC)
+        mistake.last_seen_at = now
+        mistake.last_mistake_at = now
+        mistake.last_repeated_at = now
         mistake.wrong_answer = wrong_answer
         mistake.correct_answer = correct_answer
+        mistake.item_id = mistake.item_id or mistake.external_quiz_id
+        mistake.content_available = True
         if source_snapshot is not None:
             mistake.source_snapshot = source_snapshot
+        return mistake
+
+    async def mark_content_unavailable(
+        self,
+        db: AsyncSession,
+        mistake: Mistake,
+    ) -> Mistake:
+        mistake.content_available = False
+        mistake.last_seen_at = datetime.now(UTC)
         return mistake
 
     async def list_active_for_user(self, db: AsyncSession, *, user_id: int) -> list[Mistake]:
         query = (
             select(Mistake)
-            .where(Mistake.user_id == user_id, Mistake.resolved_at.is_(None))
+            .where(
+                Mistake.user_id == user_id,
+                Mistake.resolved_at.is_(None),
+                Mistake.content_available.is_(True),
+            )
             .order_by(Mistake.last_seen_at.desc(), Mistake.id.asc())
         )
         result = await db.execute(query)
@@ -173,3 +247,18 @@ class MistakeRepository:
             }
             for row in rows
         ]
+
+
+def _berlin_date(value: datetime | None) -> date | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(BERLIN_TZ).date()
+
+
+def _resolution_threshold_met(mistake: Mistake) -> bool:
+    return (
+        int(mistake.successful_repeats_count or 0) >= REQUIRED_SUCCESSFUL_REPEATS
+        and int(mistake.successful_repeat_days_count or 0) >= REQUIRED_SUCCESSFUL_REPEAT_DAYS
+    )

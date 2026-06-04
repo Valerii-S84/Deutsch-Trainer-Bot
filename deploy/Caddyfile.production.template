@@ -1,0 +1,27 @@
+{
+    email {$ACME_EMAIL}
+}
+
+{$PUBLIC_DOMAIN} {
+    encode zstd gzip
+
+    @health path /health
+    reverse_proxy @health bot:8080
+
+    @telegram_webhook path {$TELEGRAM_WEBHOOK_PATH:/telegram/webhook}
+    reverse_proxy @telegram_webhook bot:8080
+
+    respond "not found" 404
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        X-Frame-Options "DENY"
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}

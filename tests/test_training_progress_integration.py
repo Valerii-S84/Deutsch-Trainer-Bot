@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,6 +31,7 @@ class FakeSession:
     status: str
     total_questions: int
     correct_answers: int = 0
+    shown_questions_count: int = 0
     source_metadata: dict | None = None
     api_metadata: dict | None = None
     finished_at: str | None = None
@@ -37,12 +39,34 @@ class FakeSession:
 
 @dataclass
 class FakeAnswer:
+    id: int
     session_id: int
     user_id: int
     external_quiz_id: str
     selected_answer: str
     correct_answer: str
     is_correct: bool
+    telegram_update_id: int | None = None
+
+
+@dataclass
+class FakeQuestionReference:
+    id: int
+    item_id: str
+
+
+@dataclass
+class FakeSessionItem:
+    id: int
+    session_id: int
+    user_id: int
+    question_reference_id: int
+    item_id: str
+    position: int
+    status: str = "shown"
+    shown_at: str | None = "now"
+    answered_at: str | None = None
+    daily_limit_charged_at: str | None = None
 
 
 class FakeDatabaseSession:
@@ -165,10 +189,15 @@ class FakeSessionRepository:
         session.correct_answers += delta
         return session.correct_answers
 
+    async def increment_shown_questions_count(self, db, session: FakeSession, delta: int) -> int:
+        session.shown_questions_count += delta
+        return session.shown_questions_count
+
 
 class FakeAnswerRepository:
     def __init__(self) -> None:
         self._answers: list[FakeAnswer] = []
+        self._next_id = 1
 
     async def create(
         self,
@@ -180,17 +209,28 @@ class FakeAnswerRepository:
         selected_answer: str,
         correct_answer: str,
         is_correct: bool,
+        training_session_item_id: int | None = None,
+        question_reference_id: int | None = None,
         quiz_source: str | None = None,
         external_ref: str | None = None,
+        level: str | None = None,
+        theme: str | None = None,
+        theme_key: str | None = None,
+        session_type: str = "regular",
+        metadata_snapshot: dict[str, object] | None = None,
+        telegram_update_id: int | None = None,
     ) -> FakeAnswer:
         answer = FakeAnswer(
+            id=self._next_id,
             session_id=session_id,
             user_id=user_id,
             external_quiz_id=external_quiz_id,
             selected_answer=selected_answer,
             correct_answer=correct_answer,
             is_correct=is_correct,
+            telegram_update_id=telegram_update_id,
         )
+        self._next_id += 1
         self._answers.append(answer)
         return answer
 
@@ -211,6 +251,12 @@ class FakeAnswerRepository:
                 return answer
         return None
 
+    async def get_by_telegram_update_id(self, db, telegram_update_id: int) -> FakeAnswer | None:
+        for answer in self._answers:
+            if answer.telegram_update_id == telegram_update_id:
+                return answer
+        return None
+
     async def count_by_session(self, db, session_id: int) -> int:
         return sum(1 for answer in self._answers if answer.session_id == session_id)
 
@@ -220,6 +266,104 @@ class FakeAnswerRepository:
             for answer in self._answers
             if answer.session_id == session_id
         ]
+
+
+class FakeQuestionReferenceRepository:
+    def __init__(self) -> None:
+        self._items: dict[str, FakeQuestionReference] = {}
+        self._next_id = 1
+
+    async def upsert_snapshot(self, db, *, item_id: str, **kwargs: object) -> FakeQuestionReference:
+        existing = self._items.get(item_id)
+        if existing is not None:
+            return existing
+        item = FakeQuestionReference(id=self._next_id, item_id=item_id)
+        self._next_id += 1
+        self._items[item_id] = item
+        return item
+
+
+class FakeSessionItemRepository:
+    def __init__(self) -> None:
+        self._items: list[FakeSessionItem] = []
+        self._next_id = 1
+
+    async def get_by_session_item(self, db, *, session_id: int, item_id: str) -> FakeSessionItem | None:
+        for item in self._items:
+            if item.session_id == session_id and item.item_id == item_id:
+                return item
+        return None
+
+    async def create_shown(
+        self,
+        db,
+        *,
+        session_id: int,
+        user_id: int,
+        question_reference_id: int,
+        item_id: str,
+        position: int,
+    ) -> FakeSessionItem:
+        existing = await self.get_by_session_item(db, session_id=session_id, item_id=item_id)
+        if existing is not None:
+            return existing
+        item = FakeSessionItem(
+            id=self._next_id,
+            session_id=session_id,
+            user_id=user_id,
+            question_reference_id=question_reference_id,
+            item_id=item_id,
+            position=position,
+        )
+        self._next_id += 1
+        self._items.append(item)
+        return item
+
+    async def mark_answered(self, db, session_item: FakeSessionItem) -> FakeSessionItem:
+        session_item.status = "answered"
+        session_item.answered_at = "now"
+        return session_item
+
+    async def mark_daily_limit_charged(
+        self,
+        db,
+        session_item: FakeSessionItem,
+        *,
+        daily_limit_id: int | None = None,
+    ) -> FakeSessionItem:
+        if session_item.shown_at is None:
+            raise ValueError("Daily limit can only be charged after an item is shown")
+        if session_item.daily_limit_charged_at is None:
+            session_item.daily_limit_charged_at = "now"
+        if daily_limit_id is not None:
+            session_item.daily_limit_id = daily_limit_id
+        return session_item
+
+
+class FakeAnalyticsRepository:
+    def __init__(self) -> None:
+        self.events: list[SimpleNamespace] = []
+
+    async def record(
+        self,
+        db,
+        *,
+        event_name: str,
+        user_id: int | None,
+        session_id: int | None = None,
+        event_metadata: dict | None = None,
+        source: str = "bot",
+    ) -> SimpleNamespace:
+        event = SimpleNamespace(
+            id=len(self.events) + 1,
+            event_name=event_name,
+            user_id=user_id,
+            session_id=session_id,
+            event_metadata=event_metadata or {},
+            source=source,
+        )
+        self.events.append(event)
+        return event
 
 
 class FakeQuizBankService:
@@ -243,7 +387,17 @@ class FakeProgressService:
     def __init__(self) -> None:
         self.recorded_calls: list[dict[str, object]] = []
 
-    async def record_answer_result(self, db, telegram_user_id: int, *, level: str, theme: str | None, is_correct: bool, is_duplicate: bool) -> None:
+    async def record_answer_result(
+        self,
+        db,
+        telegram_user_id: int,
+        *,
+        level: str,
+        theme: str | None,
+        is_correct: bool,
+        is_duplicate: bool,
+        **kwargs: object,
+    ) -> None:
         self.recorded_calls.append(
             {
                 "telegram_user_id": telegram_user_id,
@@ -255,13 +409,34 @@ class FakeProgressService:
         )
 
 
-def _question_payload(item_id: str = "q1", correct_answer: str = "a2") -> QuizQuestionsResponse:
+class FakeMistakeService:
+    def __init__(self) -> None:
+        self.review_items = [SimpleNamespace(external_quiz_id="q_review", level="A1", theme="Alltag")]
+        self.success_calls: list[dict[str, object]] = []
+
+    async def get_review_items(self, db, telegram_user_id: int):
+        return self.review_items
+
+    async def record_review_success(self, db, telegram_user_id: int, **kwargs: object):
+        self.success_calls.append({"telegram_user_id": telegram_user_id, **kwargs})
+
+    async def get_weak_areas(self, db, telegram_user_id: int):
+        return []
+
+
+def _question_payload(
+    item_id: str = "q1",
+    correct_answer: str = "a2",
+    *,
+    theme: str = "Alltag",
+    progress_theme_key: str = "alltag",
+) -> QuizQuestionsResponse:
     return QuizQuestionsResponse(
         items=[
             QuizItem(
                 item_id=item_id,
                 level="A1",
-                theme="Alltag",
+                theme=theme,
                 question_text="Was ist korrekt?",
                 answer_options=[
                     QuizAnswerOption(option_id="a1", text="Antwort A", order=1),
@@ -269,7 +444,7 @@ def _question_payload(item_id: str = "q1", correct_answer: str = "a2") -> QuizQu
                 ],
                 correct_answer=QuizCorrectAnswerReference(option_id=correct_answer),
                 explanation="Richtig erklärt.",
-                metadata={"progress_theme_key": "alltag"},
+                metadata={"progress_theme_key": progress_theme_key},
             )
         ],
         requested_count=1,
@@ -284,6 +459,9 @@ def _make_service() -> tuple[TrainingSessionService, FakeProgressService]:
         user_repo=FakeUserRepository(),
         session_repo=FakeSessionRepository(),
         answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
         quiz_service=FakeQuizBankService([_question_payload()]),
         progress_service=progress_service,
     )
@@ -326,6 +504,58 @@ async def test_submit_answer_records_progress_only_for_new_answers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_submit_answer_records_progress_for_returned_question_theme() -> None:
+    progress_service = FakeProgressService()
+    service = TrainingSessionService(
+        user_repo=FakeUserRepository(),
+        session_repo=FakeSessionRepository(),
+        answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
+        quiz_service=FakeQuizBankService(
+            [
+                _question_payload(
+                    theme="Person / Identitaet / Familie",
+                    progress_theme_key="person-identitaet-familie",
+                ),
+            ],
+        ),
+        progress_service=progress_service,
+    )
+    db = FakeDatabaseSession()
+    telegram_user_id = 115
+
+    await service.start_session(
+        db,
+        telegram_user_id=telegram_user_id,
+        level="A1",
+        theme="Alltag",
+        total_questions=1,
+        force_new=False,
+    )
+    question = await service.get_or_create_current_question(db, telegram_user_id=telegram_user_id, force_refresh=True)
+    await service.submit_answer(
+        db,
+        telegram_user_id=telegram_user_id,
+        session_id=question.session_id,
+        question_token=question.question_token,
+        selected_option_id="a2",
+    )
+
+    assert question.theme == "Person / Identitaet / Familie"
+    assert progress_service.recorded_calls == [
+        {
+            "telegram_user_id": telegram_user_id,
+            "level": "A1",
+            "theme": "Person / Identitaet / Familie",
+            "is_correct": True,
+            "is_duplicate": False,
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_submit_answer_does_not_update_progress_for_duplicate() -> None:
     service, progress_service = _make_service()
     db = FakeDatabaseSession()
@@ -360,6 +590,46 @@ async def test_submit_answer_does_not_update_progress_for_duplicate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_session_correct_answer_records_progress() -> None:
+    progress_service = FakeProgressService()
+    mistakes_service = FakeMistakeService()
+    service = TrainingSessionService(
+        user_repo=FakeUserRepository(),
+        session_repo=FakeSessionRepository(),
+        answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
+        quiz_service=FakeQuizBankService([_question_payload(item_id="q_review")]),
+        progress_service=progress_service,
+        mistakes_service=mistakes_service,
+    )
+    db = FakeDatabaseSession()
+    telegram_user_id = 114
+
+    await service.start_review_session(db, telegram_user_id, force_new=False, total_questions=1)
+    question = await service.get_or_create_current_question(db, telegram_user_id=telegram_user_id, force_refresh=True)
+    await service.submit_answer(
+        db,
+        telegram_user_id=telegram_user_id,
+        session_id=question.session_id,
+        question_token=question.question_token,
+        selected_option_id="a2",
+    )
+
+    assert progress_service.recorded_calls == [
+        {
+            "telegram_user_id": telegram_user_id,
+            "level": "A1",
+            "theme": "Alltag",
+            "is_correct": True,
+            "is_duplicate": False,
+        },
+    ]
+    assert len(mistakes_service.success_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_submit_answer_does_not_record_progress_when_session_not_active() -> None:
     progress_service = FakeProgressService()
     session_repo = FakeSessionRepository()
@@ -367,6 +637,9 @@ async def test_submit_answer_does_not_record_progress_when_session_not_active() 
         user_repo=FakeUserRepository(),
         session_repo=session_repo,
         answer_repo=FakeAnswerRepository(),
+        analytics_repo=FakeAnalyticsRepository(),
+        question_reference_repo=FakeQuestionReferenceRepository(),
+        session_item_repo=FakeSessionItemRepository(),
         quiz_service=FakeQuizBankService([]),
         progress_service=progress_service,
     )

@@ -5,11 +5,11 @@ from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Index, String
 from sqlalchemy import CheckConstraint, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
+from app.db.types import json_document_type
 
 
 class Payment(Base, TimestampMixin):
@@ -36,14 +36,16 @@ class Payment(Base, TimestampMixin):
     )
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    credited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     source: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
         default="telegram_stars",
         server_default=sa.text("'telegram_stars'"),
     )
-    audit_metadata: Mapped[Optional[dict[str, object]]] = mapped_column(JSONB(), nullable=True)
+    audit_metadata: Mapped[Optional[dict[str, object]]] = mapped_column(json_document_type(), nullable=True)
 
     user = relationship("User", back_populates="payments")
 

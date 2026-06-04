@@ -20,3 +20,4 @@ def test_alembic_directory_exists() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     dirs = [revision.path for revision in script.walk_revisions()]
     assert any("202605140001_initial_schema" in str(path) for path in dirs)
+    assert any("202605140002_extend_milestone2_schema" in str(path) for path in dirs)

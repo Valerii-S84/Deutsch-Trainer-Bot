@@ -6,18 +6,73 @@ from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
+from app.bot.formatting import escape_markdown_text
+from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
-from app.bot.texts import MENU_PROMPT, WELCOME_TEXT
+from app.bot.texts import MENU_PROMPT, TRAINING_PROMPT, WELCOME_TEXT
+from app.db.session import get_session as _get_session
+from app.services.analytics import AnalyticsTracker
+from app.repositories.users import UserRepository
 
 router = Router(name="start")
+_user_repo = UserRepository()
+_analytics_tracker = AnalyticsTracker()
+
+
+def _session_factory():
+    return _get_session()
+
+
+async def _remember_user(message: Message):
+    if message.from_user is None:
+        return None
+
+    async with _session_factory() as db:
+        try:
+            existing = None
+            if hasattr(_user_repo, "get_by_telegram_id"):
+                existing = await _user_repo.get_by_telegram_id(db, int(message.from_user.id))
+            user = await _user_repo.create_or_update_from_telegram(db, message.from_user)
+            if user is not None and getattr(user, "id", None) is None and hasattr(db, "flush"):
+                await db.flush()
+            if user is not None:
+                is_first_time_user = existing is None
+                internal_user_id = getattr(user, "id", None)
+                await _analytics_tracker.record(
+                    db,
+                    event_name="bot_started",
+                    user_id=internal_user_id,
+                    event_metadata={"is_first_time_user": is_first_time_user},
+                    source="onboarding",
+                )
+                if is_first_time_user:
+                    await _analytics_tracker.record(
+                        db,
+                        event_name="user_created",
+                        user_id=internal_user_id,
+                        event_metadata={"is_first_time_user": True},
+                        source="onboarding",
+                    )
+            await db.commit()
+            return user
+        except Exception:
+            # /start should still return a safe onboarding screen if persistence is temporarily unavailable.
+            await db.rollback()
+    return None
 
 
 @router.message(CommandStart())
 async def handle_start(message: Message) -> None:
     """Handle /start for both first-time and returning users."""
+    user = await _remember_user(message)
+    if user is None or not getattr(user, "selected_level", None):
+        await message.answer(TRAINING_PROMPT, reply_markup=build_levels_keyboard())
+        return
+
     text = WELCOME_TEXT
     if message.from_user and getattr(message.from_user, "first_name", None):
-        text = f"{text}\n\nHallo *{message.from_user.first_name}*! {MENU_PROMPT}"
+        first_name = escape_markdown_text(message.from_user.first_name)
+        text = f"{text}\n\nHallo *{first_name}*! {MENU_PROMPT}"
     await message.answer(
         text=text,
         reply_markup=build_main_menu_keyboard(),
