@@ -509,16 +509,18 @@ Status rule:
 - `[ ]` means still open for Full Production because external staging/production
   evidence is missing.
 
-Current external evidence status at `2026-05-26T19:34:37Z`: no staging or
-production target inventory, protected credentials, deploy approval, Telegram
-Stars live-test approval, backup storage access, or monitoring access was
-available in this repository pass. Open production gates below remain `[ ]`;
-the concrete staging-first evidence plan and blocked records are tracked in
+Current evidence status at `2026-06-04`: isolated server runtime evidence exists
+for `/opt/deutsch-trainer-bot`, including isolated DB migrations, protected
+Quiz Bank env presence, live Telegram `/start -> menu -> quiz -> question ->
+answer -> result` proof, and local QA. Full production gates below remain `[ ]`
+where webhook-or-approved-polling mode, GitHub/release provenance, Telegram
+Stars proof, backup/restore, rollback, monitoring or production smoke evidence
+is still missing. Detailed evidence records are tracked in
 `docs/15_roadmap_execution_log.md`.
 
-- [ ] Bot works end-to-end from `/start` to onboarding, level, theme, training, result, progress and mistake review. Local handler/service QA passed; staging Telegram smoke is still required.
+- [ ] Bot works end-to-end from `/start` to onboarding, level, theme, training, result, progress and mistake review. Isolated live Telegram quiz flow passed; staging/production closure still requires the approved target runtime.
 - [x] Telegram UI copy is German across onboarding, menus, questions, feedback, progress, mistakes, paywall, payments and errors. Covered by German copy checks in Milestone 13 QA gates.
-- [ ] Quiz Bank API integration is stable, validated and monitored. Runtime contract/failure tests passed; production Quiz Bank monitoring evidence is still required.
+- [ ] Quiz Bank API integration is stable, validated and monitored. Runtime contract/failure tests and isolated service smoke passed; production Quiz Bank monitoring evidence is still required.
 - [x] Bot does not duplicate Quiz Bank as a local question bank. Runtime stores references/snapshots only and local QA checks passed.
 - [x] API failure does not create answers, mistakes, progress or daily limit charge. Covered by training session API/limit tests and QA gates.
 - [x] Database schema supports users, sessions, session items, answers, progress, history, mistakes, subscriptions, payments, limits, analytics and API errors. Runtime PostgreSQL verification passed for current schema.
@@ -539,7 +541,7 @@ the concrete staging-first evidence plan and blocked records are tracked in
 - [x] Logs and analytics contain no secrets. Covered by log redaction, analytics rejection, secret scan and QA evidence redaction checks.
 - [x] Rate limits active for abuse-sensitive actions. Covered by Redis/in-memory limiter tests and security middleware tests.
 - [ ] Rollback plan ready and tested where feasible. Runbook exists; staging/production rollback smoke evidence is still required.
-- [ ] Production smoke tests defined and passing. Smoke script/runbook exists; production smoke execution evidence is still required.
+- [ ] Production smoke tests defined and passing. HTTPS and isolated polling smoke scripts/runbook exist; production smoke execution evidence is still required.
 - [x] Documentation complete for config, deploy, operations, QA, incident response and open decisions. Repository documentation is complete for current scope; environment inventory stays external.
 - [x] All blocking decisions are closed. Architecture, stack, pricing, limits, payments, QA and release-owner decisions are closed; remaining open items are evidence gates, not decision gates.
 
