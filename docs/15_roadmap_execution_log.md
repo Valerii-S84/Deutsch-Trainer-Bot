@@ -28,6 +28,15 @@
   - runtime schema checks and restore verification checks now require the
     Telegram charge unique constraint in addition to idempotency key and
     provider charge constraints.
+- Live/staging Quiz Bank gate coverage strengthened:
+  - added `scripts/quiz_bank_live_smoke.py`;
+  - `scripts/live_integration_gates.sh` now runs read-only Quiz Bank health,
+    levels, themes, availability and question fetch smoke checks when
+    `RUN_QUIZ_BANK_SMOKE=1`;
+  - dynamic Quiz Bank question/options/explanation text is checked for
+    Cyrillic content without printing the payload.
+- Telegram Stars evidence check now fails missing evidence files with an
+  explicit sanitized error instead of a traceback.
 - Verification passed:
   - focused DB/Alembic model tests;
   - focused payment/security tests;
@@ -35,6 +44,7 @@
   - disposable PostgreSQL/Redis runtime smoke on Alembic head `202606050001`;
   - disposable PostgreSQL backup/restore verification with payment idempotency
     integrity checks;
+  - Quiz Bank live smoke unit coverage and payment evidence validator tests;
   - secret scan and whitespace diff check.
 - Still not closed as production evidence:
   - live Telegram smoke;

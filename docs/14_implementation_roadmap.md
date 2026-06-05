@@ -520,7 +520,7 @@ is still missing. Detailed evidence records are tracked in
 
 - [ ] Bot works end-to-end from `/start` to onboarding, level, theme, training, result, progress and mistake review. Isolated live Telegram quiz flow passed; staging/production closure still requires the approved target runtime.
 - [x] Telegram UI copy is German across onboarding, menus, questions, feedback, progress, mistakes, paywall, payments and errors. Covered by German copy checks in Milestone 13 QA gates.
-- [ ] Quiz Bank API integration is stable, validated and monitored. Runtime contract/failure tests and isolated service smoke passed; production Quiz Bank monitoring evidence is still required.
+- [ ] Quiz Bank API integration is stable, validated and monitored. Runtime contract/failure tests, isolated service smoke and repo-side live gate coverage for health/levels/themes/availability/question fetch exist; target Quiz Bank execution and production monitoring evidence are still required.
 - [x] Bot does not duplicate Quiz Bank as a local question bank. Runtime stores references/snapshots only and local QA checks passed.
 - [x] API failure does not create answers, mistakes, progress or daily limit charge. Covered by training session API/limit tests and QA gates.
 - [x] Database schema supports users, sessions, session items, answers, progress, history, mistakes, subscriptions, payments, limits, analytics and API errors. Runtime PostgreSQL verification passed for current schema.
