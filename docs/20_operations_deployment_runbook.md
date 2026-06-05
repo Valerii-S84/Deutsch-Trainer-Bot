@@ -18,6 +18,8 @@ restore, rollback target, and staging smoke results.
 | `scripts/ops_preflight.sh` | Non-deploy preflight validation. |
 | `scripts/ops_smoke.sh` | Non-mutating health, Telegram and Quiz Bank smoke checks. |
 | `scripts/isolated_runtime_smoke.sh` | Non-mutating Docker smoke checks for isolated polling runtime. |
+| `scripts/live_integration_gates.sh` | Manual staging gates for PostgreSQL, Redis, app health, Telegram, Quiz Bank and Telegram Stars evidence. |
+| `scripts/payment_sandbox_evidence_check.py` | Non-secret Telegram Stars sandbox evidence validator. |
 | `scripts/git_release_preflight.sh` | Non-mutating git provenance checks before push/release. |
 | `scripts/postgres_backup.sh` | PostgreSQL dump with required production encryption. |
 | `scripts/postgres_restore_verify.sh` | Disposable restore verification with schema and integrity checks. |
@@ -46,6 +48,17 @@ Preflight command:
 ```bash
 bash scripts/ops_preflight.sh
 ```
+
+Manual staging integration workflow:
+
+```bash
+# GitHub Actions: Staging Integration Gates
+```
+
+The workflow requires protected staging secrets for PostgreSQL, Redis, bot
+token, Quiz Bank credentials, smoke base URL and `TELEGRAM_STARS_EVIDENCE_JSON`.
+The Telegram Stars evidence JSON must contain only non-secret test facts and is
+validated by `scripts/payment_sandbox_evidence_check.py`.
 
 ## Runtime Mode Gate
 
@@ -195,6 +208,15 @@ SMOKE_BASE_URL=https://<deployment-domain-managed-outside-repo> \
 RUN_TELEGRAM_SMOKE=1 \
 RUN_QUIZ_BANK_SMOKE=1 \
 bash scripts/ops_smoke.sh
+```
+
+Live integration gate template:
+
+```bash
+RUN_TELEGRAM_SMOKE=1 \
+RUN_QUIZ_BANK_SMOKE=1 \
+TELEGRAM_STARS_EVIDENCE_FILE=qa_evidence/telegram_stars_sandbox.json \
+bash scripts/live_integration_gates.sh
 ```
 
 Isolated polling runtime smoke template:

@@ -13,6 +13,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
 from app.config import Settings, get_settings
 
@@ -303,8 +304,8 @@ class QuizBankAsyncClient:
         try:
             error = QuizBankErrorResponse.model_validate(payload)
             return error.error_message
-        except Exception:
-            pass
+        except ValidationError:
+            return message
 
         detail = payload.get("detail")
         title = payload.get("title")

@@ -2,7 +2,9 @@
 
 set -euo pipefail
 
-if [[ -z "${VIRTUAL_ENV:-}" && -z "${CONDA_PREFIX:-}" ]]; then
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+if [[ -z "${VIRTUAL_ENV:-}" && -z "${CONDA_PREFIX:-}" && "${CI:-}" != "true" && "${ALLOW_SYSTEM_PYTHON:-0}" != "1" ]]; then
   echo "Active virtual environment is required for runtime checks." >&2
   echo "Run: python3 -m venv .venv && . .venv/bin/activate" >&2
   exit 1
@@ -19,17 +21,15 @@ export DATABASE_URL="${DATABASE_URL:-${TEST_DATABASE_URL}}"
 echo "[db_runtime_check] DATABASE_URL is set"
 
 echo "[db_runtime_check] alembic upgrade head"
-alembic upgrade head
+"$PYTHON_BIN" -m alembic upgrade head
 
 echo "[db_runtime_check] alembic current"
-alembic current
+"$PYTHON_BIN" -m alembic current
 
-if command -v alembic >/dev/null; then
-  echo "[db_runtime_check] alembic check"
-  alembic check
-fi
+echo "[db_runtime_check] alembic check"
+"$PYTHON_BIN" -m alembic check
 
-python3 - <<'PY'
+"$PYTHON_BIN" - <<'PY'
 from __future__ import annotations
 
 import asyncio

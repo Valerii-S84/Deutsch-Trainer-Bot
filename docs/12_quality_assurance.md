@@ -127,9 +127,15 @@ python scripts/qa_release_gates.py --check-plan
 фактичними файлами тестів. Повний release запуск не підміняє local CI: він
 створює QA evidence для release decision.
 
-GitHub CI запускає повний release runner для pull request і push до `main`.
-Це означає, що critical QA gates є CI blocker, а JSON evidence завантажується
-як workflow artifact.
+GitHub CI запускає повний release runner для pull request, push до `main` і
+manual `workflow_dispatch`. CI піднімає PostgreSQL і Redis service containers,
+щоб migration/runtime gates не були лише локальними smoke scripts. Це означає,
+що critical QA gates є CI blocker, а JSON evidence і coverage artifact
+завантажуються як workflow artifacts.
+
+Live Telegram, protected Quiz Bank і Telegram Stars sandbox gates виконуються
+окремим manual workflow `Staging Integration Gates`, тому що вони потребують
+protected secrets і зовнішнього sandbox evidence.
 
 Partial gate runs allowed only for debugging. Якщо виконано не всі critical
 gates, evidence отримує `gate_coverage = partial`, `result = blocked` і
@@ -146,6 +152,11 @@ release. Output у evidence редагується від secret-like values п�
 | `python-integrity` | release evidence | `compileall app tests scripts` |
 | `static-policy` | release evidence | explicit lint/type policy check |
 | `secret-scan` | security, release evidence | tracked-file secret scan |
+| `dependency-security-audit` | dependency audit, security audit, security, release evidence | `pip-audit` plus Bandit |
+| `structure-limits` | structure limits, release evidence | file/function/class/parameter/nesting limits with legacy baseline |
+| `docker-build-config` | Docker, release evidence | default/dev/production Compose config plus Docker build |
+| `db-migration-smoke` | database migrations, release evidence | Alembic head plus PostgreSQL runtime schema check |
+| `redis-runtime-smoke` | Redis runtime, release evidence | live Redis ping and ephemeral read/write |
 | `progress-logic` | progress formulas, topic status, recommendation | progress model/service/repository/integration tests |
 | `answer-to-analytics-flow` | answer → progress → mistake → analytics | training session, progress, mistakes and analytics tests |
 | `telegram-flows` | Telegram flow, paywall, subscription, payment, buttons | handler, keyboard and router tests |
@@ -154,10 +165,38 @@ release. Output у evidence редагується від secret-like values п�
 | `security-abuse` | ownership, admin, secrets, logs, rate limits | security, admin, DB model and foundation tests |
 | `german-copy` | German-only copy | static user-facing copy tests |
 | `qa-gate-runner` | release evidence | gate registry and evidence contract tests |
-| `release-regression` | regression | full pytest suite |
+| `release-regression` | regression, coverage | full pytest suite with branch coverage threshold |
 
 Release cannot be approved if any critical gate fails unless the responsible
 owner explicitly accepts the failure in release evidence.
+
+Coverage threshold is configured in `pyproject.toml` and currently blocks below
+76% branch coverage for `app/`. The threshold is set from the current measured
+baseline and should only move upward with matching tests.
+
+Dependency audit has a narrow known exception for CVE-2026-34993 and
+CVE-2026-47265 while the latest available `aiogram` release requires
+`aiohttp<3.14` and the available fixes require `aiohttp>=3.14`. The exception
+must be removed as soon as an `aiogram` release allows the fixed `aiohttp`.
+
+Security note for the current exception:
+
+* CVE-2026-34993 is only accepted because runtime code does not use
+  `aiohttp.CookieJar` or `CookieJar.load()` with any input.
+* CVE-2026-47265 is only accepted because runtime code does not pass
+  per-request `cookies=` to `aiohttp` requests.
+* Quiz Bank access uses `httpx.AsyncClient` with explicit auth headers and does
+  not use `aiohttp` or cookies.
+* Telegram API access uses the default `aiogram` `AiohttpSession`; audited
+  `aiogram` source creates `ClientSession` with connector and headers only, and
+  uses `post(..., data=..., timeout=...)` / `get(..., headers=..., timeout=...)`
+  without `cookies=`.
+* `scripts/security_audit.py` enforces this runtime assumption by scanning
+  `app/` and installed `aiogram/client/` for `CookieJar`, `.load(` and
+  `cookies=`. If that check fails, the exception is no longer safe; mitigation
+  is to remove the affected usage, pass cookie data through an explicit
+  `Cookie` header only where safe, or replace/override the Telegram HTTP
+  session until `aiohttp>=3.14` is supported.
 
 ---
 
@@ -701,8 +740,14 @@ Release 1 cannot be marked ready unless:
 9. German copy checks pass.
 10. Regression checklist is completed.
 11. Security-critical checks pass.
-12. Known failed tests are explicitly documented and accepted.
-13. `scripts/qa_release_gates.py` evidence exists for the tested environment.
+12. Dependency/security audit passes except explicitly documented known
+    dependency exceptions.
+13. Docker config/build, PostgreSQL migration smoke and Redis runtime smoke pass
+    in CI or the tested release environment.
+14. Known failed tests are explicitly documented and accepted.
+15. `scripts/qa_release_gates.py` evidence exists for the tested environment.
+16. Staging/live integration workflow evidence exists before external release
+    approval.
 
 ---
 

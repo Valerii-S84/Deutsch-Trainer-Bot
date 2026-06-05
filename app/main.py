@@ -12,6 +12,9 @@ from app.logging_config import configure_logging
 from app.bot.dispatcher import build_dispatcher
 
 logger = logging.getLogger(__name__)
+# Container health and webhook endpoints must be reachable inside Docker.
+WEBHOOK_BIND_HOST = "0.0.0.0"  # nosec B104
+WEBHOOK_BIND_PORT = 8080
 
 
 def create_dispatcher() -> Dispatcher:
@@ -73,10 +76,10 @@ async def run_webhook(
     )
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=8080)
+    site = web.TCPSite(runner, host=WEBHOOK_BIND_HOST, port=WEBHOOK_BIND_PORT)
     try:
         await site.start()
-        logger.info("Webhook server is listening on 0.0.0.0:8080")
+        logger.info("Webhook server is listening on %s:%s", WEBHOOK_BIND_HOST, WEBHOOK_BIND_PORT)
         await asyncio.Event().wait()
     finally:
         await runner.cleanup()
