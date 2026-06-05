@@ -12,7 +12,7 @@
 - Runtime / platform: `Telegram bot backend on Python 3.12+, with polling for local development and HTTPS webhook as the locked production deployment model.`
 - Main frameworks / libraries: `aiogram 3.x, SQLAlchemy 2.x async, Alembic, Pydantic Settings, httpx, asyncpg, redis client, pytest, pytest-asyncio.`
 - Data stores: `PostgreSQL is the primary persistent store. Redis is available for rate limits, locks, cache, and short-lived runtime state, but not as the durable learning store.`
-- Default user-facing language: `German. All bot messages, buttons, results, progress, paywall copy, recommendations, and answer explanations must be German.`
+- Default user-facing language: `German. All bot messages, buttons, results, progress, paywall copy, recommendations, and answer explanations must be German. Deutsch Trainer Bot UI language rule: all user-facing Telegram texts must be German only. Ukrainian is allowed only in internal chat, documentation notes, or developer discussion, never in bot messages, buttons, invoices, errors, or payment labels.`
 
 ## 2. Project structure
 

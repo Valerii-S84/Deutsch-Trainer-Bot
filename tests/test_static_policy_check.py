@@ -24,6 +24,12 @@ def test_static_policy_check_validates_shell_scripts() -> None:
     module.validate_shell_scripts()
 
 
+def test_static_policy_check_validates_ci_german_copy_guard() -> None:
+    module = load_static_policy_module()
+
+    module.validate_ci_german_copy_guard()
+
+
 def test_isolated_runtime_smoke_passes_stdin_to_container_python() -> None:
     script = Path("scripts/isolated_runtime_smoke.sh").read_text(encoding="utf-8")
 

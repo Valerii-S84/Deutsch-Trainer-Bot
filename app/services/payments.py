@@ -156,7 +156,7 @@ class PaymentService:
             payload=payload,
             currency=PAYMENT_CURRENCY,
             amount_stars=config.amount_stars,
-            price_label=f"{config.plan.capitalize()}",
+            price_label=f"{config.plan.capitalize()}-Abo",
             provider_token=PAYMENT_PROVIDER_TOKEN,
         )
 

@@ -75,7 +75,7 @@ class FakePaymentService:
             payload="dtbpay:1:key",
             currency="XTR",
             amount_stars=100,
-            price_label="Plus",
+            price_label="Plus-Abo",
             provider_token="",
         )
 
@@ -114,6 +114,10 @@ async def test_payment_plan_callback_sends_stars_invoice(monkeypatch) -> None:
     assert invoice_kwargs["currency"] == "XTR"
     assert invoice_kwargs["provider_token"] == ""
     assert invoice_kwargs["prices"][0].amount == 100
+    assert invoice_kwargs["prices"][0].label == "Plus-Abo"
+    pay_button = invoice_kwargs["reply_markup"].inline_keyboard[0][0]
+    assert pay_button.text == "Bezahlen ⭐ 100"
+    assert pay_button.pay is True
 
 
 @pytest.mark.asyncio
