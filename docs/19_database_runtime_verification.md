@@ -91,6 +91,7 @@
   - `uq_progress_user_level_theme`
   - `uq_daily_limits_user_date_plan`
   - `uq_payments_idempotency_key`
+  - `uq_payments_telegram_payment_charge_id`
   - `uq_payments_provider_payment_charge_id`
   - `ix_mistakes_active_user_external` (partial unique index)
 - JSONB columns verified on PostgreSQL:

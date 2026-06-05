@@ -318,6 +318,7 @@ def test_required_indexes_and_constraints() -> None:
     assert _has_unique_constraint("daily_limits", {"user_id", "limit_date", "plan"})
     assert _has_unique_constraint("user_answers", {"telegram_update_id"})
     assert _has_unique_constraint("payments", {"idempotency_key"})
+    assert _has_unique_constraint("payments", {"telegram_payment_charge_id"})
     assert _has_unique_constraint("payments", {"provider_payment_charge_id"})
 
     assert _has_index("users", ("telegram_user_id",), unique=True)

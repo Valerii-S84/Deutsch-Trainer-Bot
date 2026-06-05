@@ -17,6 +17,33 @@
 - Додатково 2026-05-15: M0 production decisions re-locked; M8 limits/entitlements,
   M9 payment idempotency and M11 Redis-backed security controls implemented with tests.
 
+## Production Checklist Closure Work
+
+### 2026-06-05
+
+- Payment DB idempotency hardening added for Telegram Stars charge reuse:
+  - Alembic head advanced to `202606050001`;
+  - `payments.telegram_payment_charge_id` now has unique constraint
+    `uq_payments_telegram_payment_charge_id`;
+  - runtime schema checks and restore verification checks now require the
+    Telegram charge unique constraint in addition to idempotency key and
+    provider charge constraints.
+- Verification passed:
+  - focused DB/Alembic model tests;
+  - focused payment/security tests;
+  - full `scripts/local_ci.sh`;
+  - disposable PostgreSQL/Redis runtime smoke on Alembic head `202606050001`;
+  - disposable PostgreSQL backup/restore verification with payment idempotency
+    integrity checks;
+  - secret scan and whitespace diff check.
+- Still not closed as production evidence:
+  - live Telegram smoke;
+  - live/staging Quiz Bank connectivity evidence;
+  - Telegram Stars sandbox/live evidence artifact;
+  - target monitoring, encrypted target backup/restore and rollback rehearsal.
+- No production DB/Redis, production bot polling, payment charge/refund/cancel,
+  deploy or secret printing was performed.
+
 ## Server Isolated Runtime Evidence
 
 ### 2026-06-04
@@ -237,7 +264,7 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
       `ix_quiz_sessions_user_id`
     - Unique constraints: `uq_users_telegram_user_id`, `uq_user_answers_user_session_external_quiz`,
       `uq_progress_user_level_theme`, `uq_payments_idempotency_key`,
-      `uq_payments_provider_payment_charge_id`
+      `uq_payments_telegram_payment_charge_id`, `uq_payments_provider_payment_charge_id`
     - JSONB columns confirmed: `quiz_sessions.source_metadata`, `quiz_sessions.api_metadata`,
       `mistakes.source_snapshot`, `payments.audit_metadata`, `analytics_events.event_metadata`
 

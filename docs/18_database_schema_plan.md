@@ -111,7 +111,7 @@ snapshots required for:
 - Subscriptions
   - composite index on (`status`, `expires_at`)
 - Payments
-  - unique constraints on `idempotency_key` and `provider_payment_charge_id`
+  - unique constraints on `idempotency_key`, `telegram_payment_charge_id` and `provider_payment_charge_id`
   - index on `user_id`
 - Analytics
   - composite index on (`event_name`, `event_time`)
