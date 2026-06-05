@@ -5,16 +5,19 @@ from typing import Any
 import pytest
 
 from app.quiz_bank import QuizBankRequestContext, QuizBankService
-from app.quiz_bank.errors import QuizBankValidationError
+from app.quiz_bank.errors import QuizBankError, QuizBankValidationError
 
 
 class StubQuizBankClient:
-    def __init__(self, payloads: list[dict[str, Any]]) -> None:
+    def __init__(self, payloads: list[dict[str, Any] | Exception]) -> None:
         self._payloads = payloads
         self.calls: list[dict[str, Any]] = []
 
     def _pop_payload(self) -> dict[str, Any]:
-        return self._payloads.pop(0)
+        payload = self._payloads.pop(0)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
 
     async def fetch_questions(
         self,
@@ -298,3 +301,30 @@ async def test_service_validates_health_availability_and_metadata() -> None:
     assert metadata.metadata_version == "v1"
     assert cached_metadata is metadata
     assert [call["endpoint"] for call in stub_client.calls] == ["health", "availability", "metadata"]
+
+
+@pytest.mark.asyncio
+async def test_service_falls_back_to_theme_catalog_when_availability_endpoint_is_missing() -> None:
+    stub_client = StubQuizBankClient(
+        [
+            QuizBankError("not found", status_code=404, endpoint="/availability"),
+            {
+                "level": "A1",
+                "themes": [
+                    {
+                        "theme": "Person / Identität / Familie",
+                        "theme_key": "T01",
+                        "available_items_count": 5,
+                        "is_active": True,
+                    },
+                ],
+            },
+        ],
+    )
+    service = QuizBankService(client=stub_client)
+
+    availability = await service.get_availability(level="A1", theme="T01")
+
+    assert availability.available_items_count == 5
+    assert availability.theme_key == "T01"
+    assert [call["endpoint"] for call in stub_client.calls] == ["availability", "themes"]
