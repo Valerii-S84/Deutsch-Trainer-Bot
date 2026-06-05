@@ -52,6 +52,7 @@ class Payment(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_payments_user_id", "user_id"),
         UniqueConstraint("idempotency_key", name="uq_payments_idempotency_key"),
+        UniqueConstraint("telegram_payment_charge_id", name="uq_payments_telegram_payment_charge_id"),
         UniqueConstraint("provider_payment_charge_id", name="uq_payments_provider_payment_charge_id"),
         CheckConstraint("amount_stars >= 0", name="ck_payments_amount_stars_non_negative"),
     )

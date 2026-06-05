@@ -92,6 +92,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "daily_limits": {"uq_daily_limits_user_date_plan"},
     "payments": {
         "uq_payments_idempotency_key",
+        "uq_payments_telegram_payment_charge_id",
         "uq_payments_provider_payment_charge_id",
     },
 }

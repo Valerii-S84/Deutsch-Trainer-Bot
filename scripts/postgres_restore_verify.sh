@@ -121,6 +121,7 @@ BEGIN
     FROM (
         VALUES
             ('uq_payments_idempotency_key'),
+            ('uq_payments_telegram_payment_charge_id'),
             ('uq_payments_provider_payment_charge_id'),
             ('uq_progress_user_level_theme'),
             ('uq_user_answers_telegram_update_id')
@@ -132,6 +133,18 @@ BEGIN
     );
     IF missing_count > 0 THEN
         RAISE EXCEPTION 'required idempotency constraints are missing';
+    END IF;
+
+    SELECT count(*) INTO duplicate_count
+    FROM (
+        SELECT telegram_payment_charge_id
+        FROM payments
+        WHERE telegram_payment_charge_id IS NOT NULL
+        GROUP BY telegram_payment_charge_id
+        HAVING count(*) > 1
+    ) AS duplicates;
+    IF duplicate_count > 0 THEN
+        RAISE EXCEPTION 'duplicate Telegram payment charge ids found';
     END IF;
 
     SELECT count(*) INTO duplicate_count
