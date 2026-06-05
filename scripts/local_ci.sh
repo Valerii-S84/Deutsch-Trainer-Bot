@@ -10,8 +10,11 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
   exit 1
 fi
 
+python -m pip install --upgrade pip
 python -m compileall app tests
 python scripts/qa_release_gates.py --check-plan
 python scripts/static_policy_check.py
 python scripts/secret_scan.py
-python -m pytest -q --capture=no
+python scripts/security_audit.py
+python scripts/structure_limits.py
+python -m pytest -q --capture=no --cov=app --cov-report=term-missing

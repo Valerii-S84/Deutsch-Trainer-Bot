@@ -277,11 +277,14 @@ bash scripts/local_ci.sh
 
 This runs:
 
+- pip upgrade for audit tooling;
 - Python compile checks;
 - QA release gate plan validation;
 - static policy check;
 - tracked-file secret scan;
-- pytest regression suite.
+- dependency and Bandit security audit;
+- structural file/function/class/parameter/nesting limits;
+- pytest regression suite with coverage threshold.
 
 ### Full release QA gates
 
@@ -293,6 +296,11 @@ python scripts/qa_release_gates.py --environment local \
 
 The release gate runner groups checks by product risk:
 
+- coverage;
+- dependency/security audit;
+- Docker config/build;
+- PostgreSQL migration/runtime schema;
+- Redis runtime smoke;
 - progress logic;
 - answer -> progress -> mistake -> analytics flow;
 - Telegram handlers and keyboards;
@@ -301,6 +309,12 @@ The release gate runner groups checks by product risk:
 - security and abuse;
 - German copy;
 - release evidence.
+
+Full release QA gates require Docker plus `DATABASE_URL` or `TEST_DATABASE_URL`
+and `REDIS_URL`. GitHub CI provides PostgreSQL and Redis services for pull
+requests and `main` pushes. Protected Telegram, Quiz Bank and Telegram Stars
+checks run through the manual staging integration workflow because they require
+secrets and external sandbox evidence.
 
 ### Secret scan
 

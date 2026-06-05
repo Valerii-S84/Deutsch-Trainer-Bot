@@ -122,7 +122,7 @@ def build_question_payload(
 ) -> QuizQuestionPayload:
     return QuizQuestionPayload(
         session_id=session_id,
-        question_token=sha1(question.item_id.encode("utf-8")).hexdigest()[:8],
+        question_token=sha1(question.item_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:8],
         question_id=question.item_id,
         question_text=normalize_text(question.question_text),
         answer_options=tuple((item.option_id, normalize_text(item.text)) for item in question.answer_options),

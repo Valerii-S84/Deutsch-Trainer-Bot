@@ -15,7 +15,8 @@ from app.services.entitlements import PLAN_PLUS, PLAN_PRO
 
 PAYMENT_CURRENCY = "XTR"
 PAYMENT_PROVIDER = "telegram_stars"
-PAYMENT_PROVIDER_TOKEN = ""
+# Telegram Stars requires an empty provider token.
+PAYMENT_PROVIDER_TOKEN = ""  # nosec B105
 PAYMENT_PAYLOAD_PREFIX = "dtbpay"
 SUPPORTED_PAYMENT_PLANS = {PLAN_PLUS, PLAN_PRO}
 

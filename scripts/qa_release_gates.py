@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,10 @@ OUTPUT_TAIL_CHARS = 6000
 REDACTED = "[REDACTED]"
 
 REQUIRED_CATEGORIES = (
+    "coverage",
+    "database-migrations",
+    "dependency-audit",
+    "docker",
     "progress-logic",
     "answer-progress-mistake-analytics",
     "telegram-flows",
@@ -32,10 +37,14 @@ REQUIRED_CATEGORIES = (
     "german-copy",
     "regression",
     "release-evidence",
+    "redis-runtime",
+    "security-audit",
+    "structure-limits",
 )
 
 DEFAULT_KNOWN_RISKS = (
     "Local QA gates do not prove live Telegram Stars, staging webhook, production Quiz Bank, or production deployment evidence.",
+    "Dependency audit ignores CVE-2026-34993 and CVE-2026-47265 until aiogram allows aiohttp>=3.14.",
 )
 
 SECRET_PATTERNS = (
@@ -91,6 +100,36 @@ GATES = (
         "Scan tracked files for committed secrets.",
         ("{python}", "scripts/secret_scan.py"),
         ("security", "release-evidence"),
+    ),
+    Gate(
+        "dependency-security-audit",
+        "Audit installed dependencies and application code for known security issues.",
+        ("{python}", "scripts/security_audit.py"),
+        ("dependency-audit", "security-audit", "security", "release-evidence"),
+    ),
+    Gate(
+        "structure-limits",
+        "Enforce file, function, class, parameter, and nesting limits with a locked legacy baseline.",
+        ("{python}", "scripts/structure_limits.py"),
+        ("structure-limits", "release-evidence"),
+    ),
+    Gate(
+        "docker-build-config",
+        "Validate Docker Compose config files and build the application image.",
+        ("bash", "scripts/docker_ci_check.sh"),
+        ("docker", "release-evidence"),
+    ),
+    Gate(
+        "db-migration-smoke",
+        "Apply Alembic head and verify the live PostgreSQL runtime schema.",
+        ("bash", "scripts/db_runtime_check.sh"),
+        ("database-migrations", "release-evidence"),
+    ),
+    Gate(
+        "redis-runtime-smoke",
+        "Verify live Redis ping plus ephemeral read/write behavior.",
+        ("{python}", "scripts/redis_runtime_check.py"),
+        ("redis-runtime", "release-evidence"),
     ),
     Gate(
         "progress-logic",
@@ -208,9 +247,17 @@ GATES = (
     ),
     Gate(
         "release-regression",
-        "Full pytest regression suite.",
-        ("{python}", "-m", "pytest", "-q", "--capture=no"),
-        ("regression",),
+        "Full pytest regression suite with blocking coverage threshold.",
+        (
+            "{python}",
+            "-m",
+            "pytest",
+            "-q",
+            "--capture=no",
+            "--cov=app",
+            "--cov-report=term-missing",
+        ),
+        ("regression", "coverage"),
     ),
 )
 
@@ -323,7 +370,12 @@ def run_gates(gates: Sequence[Gate], *, fail_fast: bool) -> list[GateResult]:
 def run_gate(gate: Gate) -> GateResult:
     command = tuple(sys.executable if token == "{python}" else token for token in gate.command)
     started = time.monotonic()
-    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    env = os.environ.copy()
+    env.setdefault("PYTHON_BIN", sys.executable)
+    env.setdefault("ALLOW_SYSTEM_PYTHON", "1")
+    python_bin_dir = str(Path(sys.executable).resolve().parent)
+    env["PATH"] = f"{python_bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    completed = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     duration = time.monotonic() - started
     result = "passed" if completed.returncode == 0 else "failed"
     return GateResult(
