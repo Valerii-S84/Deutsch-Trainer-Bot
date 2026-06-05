@@ -74,6 +74,11 @@ class StubQuizBankClient:
         self.calls.append({"endpoint": "metadata"})
         return self._pop_payload()
 
+    async def _theme_ids_for_request(self, theme: str) -> list[str]:
+        self.calls.append({"endpoint": "resolve_theme_ids", "theme": theme})
+        payload = self._pop_payload()
+        return list(payload["theme_ids"])
+
 
 @pytest.mark.asyncio
 async def test_service_request_quiz_returns_valid_batch() -> None:
@@ -301,6 +306,17 @@ async def test_service_validates_health_availability_and_metadata() -> None:
     assert metadata.metadata_version == "v1"
     assert cached_metadata is metadata
     assert [call["endpoint"] for call in stub_client.calls] == ["health", "availability", "metadata"]
+
+
+@pytest.mark.asyncio
+async def test_service_resolve_theme_ids_validates_theme_and_delegates() -> None:
+    stub_client = StubQuizBankClient([{"theme_ids": ["T01"]}])
+    service = QuizBankService(client=stub_client)
+
+    theme_ids = await service.resolve_theme_ids(theme=" Artikel ")
+
+    assert theme_ids == ["T01"]
+    assert stub_client.calls == [{"endpoint": "resolve_theme_ids", "theme": "Artikel"}]
 
 
 @pytest.mark.asyncio

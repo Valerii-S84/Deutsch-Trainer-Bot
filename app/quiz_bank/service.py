@@ -159,6 +159,10 @@ class QuizBankService:
         self._set_cached("metadata", response)
         return response
 
+    async def resolve_theme_ids(self, *, theme: str) -> list[str]:
+        theme_value = self._validate_theme(theme)
+        return await self._client._theme_ids_for_request(theme_value)
+
     async def request_quiz(
         self,
         *,
