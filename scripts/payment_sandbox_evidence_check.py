@@ -38,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("Usage: python scripts/payment_sandbox_evidence_check.py <evidence.json>")
 
     path = Path(args[0])
+    if not path.is_file():
+        raise SystemExit("Payment sandbox evidence file is missing")
+
     payload_text = path.read_text(encoding="utf-8")
     if contains_secret_like_value(payload_text):
         raise SystemExit("Payment sandbox evidence contains secret-like values")

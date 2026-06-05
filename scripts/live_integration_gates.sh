@@ -13,6 +13,7 @@ Required env:
   SMOKE_BASE_URL
   BOT_TOKEN with RUN_TELEGRAM_SMOKE=1
   Quiz Bank protected env with RUN_QUIZ_BANK_SMOKE=1
+  QUIZ_BANK_SMOKE_LEVELS optional, default A1,A2,B1
   TELEGRAM_STARS_EVIDENCE_FILE
 
 The script does not deploy, register webhooks, send Telegram messages, or create
@@ -51,6 +52,11 @@ echo "[live_integration_gates] running Redis runtime gate"
 
 echo "[live_integration_gates] running app, Telegram and Quiz Bank smoke gates"
 bash scripts/ops_smoke.sh
+
+if enabled RUN_QUIZ_BANK_SMOKE; then
+  echo "[live_integration_gates] running Quiz Bank level/theme/question smoke gate"
+  "$PYTHON_BIN" scripts/quiz_bank_live_smoke.py
+fi
 
 echo "[live_integration_gates] validating Telegram Stars sandbox evidence"
 "$PYTHON_BIN" scripts/payment_sandbox_evidence_check.py "$TELEGRAM_STARS_EVIDENCE_FILE"

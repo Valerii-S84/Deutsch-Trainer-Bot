@@ -17,6 +17,7 @@ restore, rollback target, and staging smoke results.
 | `deploy/env.staging.template` | Staging env variable template without secrets. |
 | `scripts/ops_preflight.sh` | Non-deploy preflight validation. |
 | `scripts/ops_smoke.sh` | Non-mutating health, Telegram and Quiz Bank smoke checks. |
+| `scripts/quiz_bank_live_smoke.py` | Read-only Quiz Bank health, levels, themes, availability and question smoke checks. |
 | `scripts/isolated_runtime_smoke.sh` | Non-mutating Docker smoke checks for isolated polling runtime. |
 | `scripts/live_integration_gates.sh` | Manual staging gates for PostgreSQL, Redis, app health, Telegram, Quiz Bank and Telegram Stars evidence. |
 | `scripts/payment_sandbox_evidence_check.py` | Non-secret Telegram Stars sandbox evidence validator. |
@@ -215,9 +216,16 @@ Live integration gate template:
 ```bash
 RUN_TELEGRAM_SMOKE=1 \
 RUN_QUIZ_BANK_SMOKE=1 \
+QUIZ_BANK_SMOKE_LEVELS=A1,A2,B1 \
 TELEGRAM_STARS_EVIDENCE_FILE=qa_evidence/telegram_stars_sandbox.json \
 bash scripts/live_integration_gates.sh
 ```
+
+When `RUN_QUIZ_BANK_SMOKE=1`, `scripts/live_integration_gates.sh` runs both the
+basic smoke and `scripts/quiz_bank_live_smoke.py`. The live Quiz Bank smoke
+checks `/v1/health`, `/v1/levels`, available themes, availability and one
+question fetch per configured level without printing protected headers or
+question payloads.
 
 Isolated polling runtime smoke template:
 
