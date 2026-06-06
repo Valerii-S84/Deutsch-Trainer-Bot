@@ -31,10 +31,11 @@
 - Live/staging Quiz Bank gate coverage strengthened:
   - added `scripts/quiz_bank_live_smoke.py`;
   - `scripts/live_integration_gates.sh` now runs read-only Quiz Bank health,
-    levels, themes, availability and question fetch smoke checks when
+    levels, themes, title-to-theme-id resolution and availability smoke checks when
     `RUN_QUIZ_BANK_SMOKE=1`;
-  - dynamic Quiz Bank question/options/explanation text is checked for
-    Cyrillic content without printing the payload.
+  - dynamic Quiz Bank question/options/explanation text is checked through
+    read-only question lookup when `QUIZ_BANK_SMOKE_ITEM_IDS` is configured,
+    without printing the payload.
 - Telegram Stars evidence check now fails missing evidence files with an
   explicit sanitized error instead of a traceback.
 - Verification passed:

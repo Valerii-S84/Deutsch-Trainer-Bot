@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import time
 from typing import TypeVar
 
@@ -9,7 +10,7 @@ from app.config import Settings, get_settings
 from pydantic import BaseModel, ValidationError
 
 from .client import QuizBankAsyncClient
-from .errors import QuizBankValidationError
+from .errors import QuizBankError, QuizBankValidationError
 from .schemas import (
     SUPPORTED_LEVELS,
     QuizAvailabilityResponse,
@@ -99,7 +100,12 @@ class QuizBankService:
         if cached is not None:
             return cached
 
-        payload = await self._client.fetch_availability(level=level_value, theme=theme_value)
+        try:
+            payload = await self._client.fetch_availability(level=level_value, theme=theme_value)
+        except QuizBankError as exc:
+            if exc.status_code != 404:
+                raise
+            payload = await self._availability_from_theme_catalog(level=level_value, theme=theme_value)
         response = self._validate_payload(
             payload,
             QuizAvailabilityResponse,
@@ -107,6 +113,26 @@ class QuizBankService:
         )
         self._set_cached(cache_key, response)
         return response
+
+    async def _availability_from_theme_catalog(self, *, level: str, theme: str) -> dict[str, object]:
+        themes = await self.get_themes(level=level)
+        normalized_theme = theme.casefold()
+        for item in themes.themes:
+            if item.theme_key.casefold() == normalized_theme or item.theme.casefold() == normalized_theme:
+                return {
+                    "level": level,
+                    "theme": item.theme,
+                    "theme_key": item.theme_key,
+                    "available_items_count": item.available_items_count or 0,
+                    "generated_at": datetime.now(UTC).isoformat(),
+                }
+        return {
+            "level": level,
+            "theme": theme,
+            "theme_key": theme,
+            "available_items_count": 0,
+            "generated_at": datetime.now(UTC).isoformat(),
+        }
 
     async def get_question(self, *, item_id: str) -> QuizQuestionLookupResponse:
         item_id_value = item_id.strip()
@@ -132,6 +158,10 @@ class QuizBankService:
         response = self._validate_payload(payload, QuizMetadataResponse, "Quiz Bank metadata response is invalid")
         self._set_cached("metadata", response)
         return response
+
+    async def resolve_theme_ids(self, *, theme: str) -> list[str]:
+        theme_value = self._validate_theme(theme)
+        return await self._client._theme_ids_for_request(theme_value)
 
     async def request_quiz(
         self,

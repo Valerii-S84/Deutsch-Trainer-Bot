@@ -10,7 +10,8 @@ still requires explicit operator confirmation.
 ## Server Identity
 
 The live SSH endpoint is restricted deployment inventory. Do not commit the
-real host, IP address, domain, username, private key path or bot token here.
+real host, IP address, domain, resolved host alias, username, private key path
+or bot token here.
 
 Before opening the server, load the target from protected inventory into the
 operator shell:
@@ -182,8 +183,9 @@ SHORT_SHA="$(git rev-parse --short origin/main)"
 
 The GitHub Actions `CI / test` check for `EXPECTED_SHA` must be successful.
 Do not use this deploy procedure to bypass a skipped, missing or failing PR
-gate. If deploying from a release branch before merge, run
-`bash scripts/git_release_preflight.sh` on that branch before publishing it.
+gate. For `origin/main`, release provenance is the successful protected-branch
+CI result for `EXPECTED_SHA`. If deploying from a release branch before merge,
+run `bash scripts/git_release_preflight.sh` on that branch before publishing it.
 
 ### Database Gates
 
@@ -200,11 +202,14 @@ these are true:
 
 If the target commit changes `alembic/versions/`, `app/db/` or payment-credit
 logic, treat the database gates as mandatory release blockers.
+Record backup, restore verification, migration-impact and rollback/forward-fix
+evidence in protected deployment inventory before running `migrate`.
 
 ### Polling Runtime Gate
 
-The isolated runtime uses polling by operator exception. Before recreating the
-bot container, prove the polling gate without exposing tokens:
+The isolated runtime uses polling by operator exception. Immediately before
+recreating the bot container, prove the polling gate without exposing tokens.
+If any command in this gate fails, do not start the new bot container:
 
 ```bash
 ssh "$DEUTSCH_TRAINER_SSH_TARGET" '

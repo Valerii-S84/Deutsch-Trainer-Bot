@@ -14,6 +14,7 @@ Required env:
   BOT_TOKEN with RUN_TELEGRAM_SMOKE=1
   Quiz Bank protected env with RUN_QUIZ_BANK_SMOKE=1
   QUIZ_BANK_SMOKE_LEVELS optional, default A1,A2,B1
+  QUIZ_BANK_SMOKE_ITEM_IDS optional LEVEL=item_id CSV for read-only lookup checks
   TELEGRAM_STARS_EVIDENCE_FILE
 
 The script does not deploy, register webhooks, send Telegram messages, or create
@@ -54,7 +55,7 @@ echo "[live_integration_gates] running app, Telegram and Quiz Bank smoke gates"
 bash scripts/ops_smoke.sh
 
 if enabled RUN_QUIZ_BANK_SMOKE; then
-  echo "[live_integration_gates] running Quiz Bank level/theme/question smoke gate"
+  echo "[live_integration_gates] running Quiz Bank read-only level/theme/availability smoke gate"
   "$PYTHON_BIN" scripts/quiz_bank_live_smoke.py
 fi
 
