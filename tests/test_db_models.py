@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 
 from app.db.base import Base
 from app.db import models  # noqa: F401
@@ -13,6 +13,23 @@ def _has_unique_constraint(table_name: str, expected_columns: set[str]) -> bool:
     return any(
         isinstance(constraint, UniqueConstraint) and set(constraint.columns.keys()) == expected_columns
         for constraint in table.constraints
+    )
+
+
+def _has_check_constraint(table_name: str, expected_name: str) -> bool:
+    table = Base.metadata.tables[table_name]
+    return any(
+        isinstance(constraint, CheckConstraint) and constraint.name == expected_name
+        for constraint in table.constraints
+    )
+
+
+def _has_foreign_key(table_name: str, column_name: str, referred_table: str, referred_column: str) -> bool:
+    table = Base.metadata.tables[table_name]
+    column = table.columns[column_name]
+    return any(
+        foreign_key.column.table.name == referred_table and foreign_key.column.name == referred_column
+        for foreign_key in column.foreign_keys
     )
 
 
@@ -264,8 +281,19 @@ def test_recommendations_columns_present() -> None:
 
 def test_subscriptions_columns_present() -> None:
     table = Base.metadata.tables["subscriptions"]
-    expected = {"user_id", "plan", "status", "started_at", "expires_at", "source", "created_at", "updated_at"}
+    expected = {
+        "user_id",
+        "plan",
+        "status",
+        "started_at",
+        "expires_at",
+        "source",
+        "payment_id",
+        "created_at",
+        "updated_at",
+    }
     assert expected.issubset(table.columns.keys())
+    assert table.columns["payment_id"].nullable is False
 
 
 def test_payments_columns_present() -> None:
@@ -320,6 +348,9 @@ def test_required_indexes_and_constraints() -> None:
     assert _has_unique_constraint("payments", {"idempotency_key"})
     assert _has_unique_constraint("payments", {"telegram_payment_charge_id"})
     assert _has_unique_constraint("payments", {"provider_payment_charge_id"})
+    assert _has_check_constraint("payments", "ck_payments_confirmed_telegram_charge_id")
+    assert _has_unique_constraint("subscriptions", {"payment_id"})
+    assert _has_foreign_key("subscriptions", "payment_id", "payments", "id")
 
     assert _has_index("users", ("telegram_user_id",), unique=True)
     assert _has_index("quiz_sessions", ("user_id", "status"))

@@ -126,6 +126,19 @@ REQUIRED_UNIQUE_CONSTRAINTS = {
         "uq_payments_telegram_payment_charge_id",
         "uq_payments_provider_payment_charge_id",
     },
+    "subscriptions": {"uq_subscriptions_payment_id"},
+}
+
+REQUIRED_FOREIGN_KEYS = {
+    "subscriptions": {"fk_subscriptions_payment_id_payments"},
+}
+
+REQUIRED_CHECK_CONSTRAINTS = {
+    "payments": {"ck_payments_confirmed_telegram_charge_id"},
+}
+
+REQUIRED_NOT_NULL_COLUMNS = {
+    "subscriptions": {"payment_id"},
 }
 
 REQUIRED_JSONB = {
@@ -184,6 +197,54 @@ async def assert_runtime_schema(database_url: str) -> None:
                         {"table": table, "constraint": constraint},
                     )
                     assert present is not None, f"Unique constraint missing: {table}.{constraint}"
+
+            for table, constraints in REQUIRED_FOREIGN_KEYS.items():
+                for constraint in constraints:
+                    present = await connection.scalar(
+                        text(
+                            """
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_class t ON t.oid = c.conrelid
+                            WHERE t.relname = :table
+                              AND c.conname = :constraint
+                              AND c.contype = 'f'
+                            """,
+                        ),
+                        {"table": table, "constraint": constraint},
+                    )
+                    assert present is not None, f"Foreign key missing: {table}.{constraint}"
+
+            for table, constraints in REQUIRED_CHECK_CONSTRAINTS.items():
+                for constraint in constraints:
+                    present = await connection.scalar(
+                        text(
+                            """
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_class t ON t.oid = c.conrelid
+                            WHERE t.relname = :table
+                              AND c.conname = :constraint
+                              AND c.contype = 'c'
+                            """,
+                        ),
+                        {"table": table, "constraint": constraint},
+                    )
+                    assert present is not None, f"Check constraint missing: {table}.{constraint}"
+
+            for table, columns in REQUIRED_NOT_NULL_COLUMNS.items():
+                for column in columns:
+                    is_nullable = await connection.scalar(
+                        text(
+                            """
+                            SELECT is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema='public' AND table_name=:table AND column_name=:column
+                            """,
+                        ),
+                        {"table": table, "column": column},
+                    )
+                    assert is_nullable == "NO", f"Column must be NOT NULL: {table}.{column}"
 
             partial = await connection.scalar(
                 text(

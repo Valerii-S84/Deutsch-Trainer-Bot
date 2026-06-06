@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -185,6 +185,7 @@ class PaymentService:
         *,
         now: datetime | None = None,
     ) -> Payment:
+        confirmation = _normalized_confirmation(confirmation)
         payment = await self._payment_from_payload(db, confirmation.invoice_payload)
         existing = await self._payment_repo.get_by_charge_id(
             db,
@@ -193,7 +194,6 @@ class PaymentService:
         )
         if existing is not None and existing.id != payment.id:
             raise PaymentVerificationError("provider_reference_reused")
-
         await self._verify_payment_owner(db, payment, telegram_user_id)
         self._verify_payment_config(
             payment,
@@ -400,6 +400,34 @@ def _parse_invoice_payload(invoice_payload: str) -> tuple[int, str]:
     if not idempotency_key:
         raise PaymentVerificationError("invalid_invoice_payload")
     return payment_id, idempotency_key
+
+
+def _normalized_confirmation(confirmation: PaymentConfirmation) -> PaymentConfirmation:
+    return replace(
+        confirmation,
+        telegram_payment_charge_id=_required_telegram_payment_charge_id(
+            confirmation.telegram_payment_charge_id,
+        ),
+        provider_payment_charge_id=_optional_payment_charge_id(
+            confirmation.provider_payment_charge_id,
+        ),
+    )
+
+
+def _required_telegram_payment_charge_id(value: str | None) -> str:
+    if not isinstance(value, str):
+        raise PaymentVerificationError("telegram_payment_charge_id_missing")
+    normalized = value.strip()
+    if not normalized:
+        raise PaymentVerificationError("telegram_payment_charge_id_missing")
+    return normalized
+
+
+def _optional_payment_charge_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _charge_ids_match(payment: Payment, confirmation: PaymentConfirmation) -> bool:
