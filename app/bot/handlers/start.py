@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message
@@ -15,6 +17,7 @@ from app.services.analytics import AnalyticsTracker
 from app.repositories.users import UserRepository
 
 router = Router(name="start")
+logger = logging.getLogger(__name__)
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
 
@@ -53,6 +56,10 @@ async def _remember_user(message: Message):
             return user
         except Exception:
             # /start should still return a safe onboarding screen if persistence is temporarily unavailable.
+            logger.exception(
+                "start_user_persist_failed telegram_user_id=%s",
+                message.from_user.id,
+            )
             await db.rollback()
     return None
 

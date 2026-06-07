@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
@@ -24,6 +26,7 @@ from app.services.analytics import AnalyticsTracker
 from app.services.entitlements import EntitlementService
 
 router = Router(name="subscription")
+logger = logging.getLogger(__name__)
 
 _entitlement_service = EntitlementService()
 _analytics_tracker = AnalyticsTracker()
@@ -88,12 +91,17 @@ def _format_subscription_text(*, access_plan: str, status: str) -> str:
 
 @router.message(Command("subscription"))
 async def handle_subscription_message(message: Message) -> None:
+    telegram_user_id = _extract_user_id(message)
     try:
         async with _session_factory() as db:
-            text = await _subscription_text(db, _extract_user_id(message))
+            text = await _subscription_text(db, telegram_user_id)
             if hasattr(db, "commit"):
                 await db.commit()
     except Exception:
+        logger.exception(
+            "subscription_status_message_failed telegram_user_id=%s",
+            telegram_user_id,
+        )
         text = _format_subscription_text(
             access_plan=SUBSCRIPTION_STATUS_FREE_TEXT,
             status=SUBSCRIPTION_STATUS_INACTIVE_TEXT,
@@ -105,12 +113,17 @@ async def handle_subscription_message(message: Message) -> None:
 async def handle_subscription_callback(callback_query: CallbackQuery) -> None:
     await callback_query.answer()
     if callback_query.message is not None:
+        telegram_user_id = _extract_user_id(callback_query)
         try:
             async with _session_factory() as db:
-                text = await _subscription_text(db, _extract_user_id(callback_query))
+                text = await _subscription_text(db, telegram_user_id)
                 if hasattr(db, "commit"):
                     await db.commit()
         except Exception:
+            logger.exception(
+                "subscription_status_callback_failed telegram_user_id=%s",
+                telegram_user_id,
+            )
             text = _format_subscription_text(
                 access_plan=SUBSCRIPTION_STATUS_FREE_TEXT,
                 status=SUBSCRIPTION_STATUS_INACTIVE_TEXT,

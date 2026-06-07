@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
@@ -26,6 +28,7 @@ from app.repositories.users import UserRepository
 from app.services.analytics import AnalyticsTracker
 
 router = Router(name="level")
+logger = logging.getLogger(__name__)
 _quiz_service = QuizBankService
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
@@ -65,6 +68,11 @@ async def level_selected(callback_query: CallbackQuery) -> None:
                 )
                 await db.commit()
             except Exception:
+                logger.exception(
+                    "level_selection_persist_failed telegram_user_id=%s level=%s",
+                    user_id,
+                    level,
+                )
                 await db.rollback()
 
     try:

@@ -105,11 +105,10 @@ class AnalyticsTracker:
                 source=source,
             )
         except Exception:
-            logger.warning(
+            logger.exception(
                 "analytics_write_failed event_name=%s source=%s",
                 event_name,
                 source,
-                exc_info=True,
             )
             return None
 

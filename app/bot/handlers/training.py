@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from aiogram import F, Router
@@ -61,6 +62,8 @@ from app.services.training_session import (
 from app.services.entitlements import DailyLimitExceededError, EntitlementService
 from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="training")
 
@@ -197,6 +200,12 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
             await _handle_theme_open_error(callback_query.message, user_id, exc, level=level, theme=theme)
             return
         except Exception:
+            logger.exception(
+                "theme_training_open_unexpected_failed telegram_user_id=%s level=%s theme=%s",
+                user_id,
+                level,
+                theme,
+            )
             await db.rollback()
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
             return
@@ -320,6 +329,7 @@ async def handle_start_new_training(callback_query: CallbackQuery) -> None:
                 await callback_query.message.answer(_map_quizbank_error(exc))
             return
         except Exception:
+            logger.exception("new_training_start_failed telegram_user_id=%s session_id=%s", user_id, session_id)
             await db.rollback()
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
             return
@@ -352,6 +362,11 @@ async def handle_cancel_training(callback_query: CallbackQuery) -> None:
             cancelled = await training_service.cancel_active_session(db, user_id)
             await db.commit()
         except Exception:
+            logger.exception(
+                "training_cancel_unexpected_failed telegram_user_id=%s session_id=%s",
+                user_id,
+                session_id,
+            )
             await db.rollback()
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
             return

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import logging
 from typing import Final
 
 from app.config import Settings, get_settings
@@ -11,6 +12,8 @@ from app.repositories.daily_limits import DailyLimitRepository
 from app.repositories.subscriptions import SubscriptionRepository
 from app.repositories.users import UserRepository
 from app.services.analytics import AnalyticsTracker
+
+logger = logging.getLogger(__name__)
 
 PLAN_FREE: Final = "free"
 PLAN_PLUS: Final = "plus"
@@ -322,6 +325,11 @@ class EntitlementService:
                 since=expires_at,
             )
         except Exception:
+            logger.exception(
+                "subscription_expired_event_lookup_failed subscription_id=%s user_id=%s",
+                subscription.id,
+                subscription.user_id,
+            )
             return
         if already_recorded:
             return

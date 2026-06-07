@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 
@@ -31,6 +33,7 @@ from app.services.payments import (
 from app.services.subscription_credits import PaymentPlanChangeError
 
 router = Router(name="payments")
+logger = logging.getLogger(__name__)
 
 _payment_service = PaymentService()
 
@@ -78,6 +81,11 @@ async def handle_payment_plan_callback(callback_query: CallbackQuery) -> None:
             return
         except Exception:
             # Payment start must fail closed without exposing provider or config details.
+            logger.exception(
+                "payment_invoice_create_unexpected_failed telegram_user_id=%s plan=%s",
+                callback_query.from_user.id,
+                plan,
+            )
             await db.rollback()
             await callback_query.message.answer(
                 PAYMENT_FAILURE_TEXT,
@@ -114,6 +122,10 @@ async def handle_pre_checkout_query(pre_checkout_query: PreCheckoutQuery) -> Non
             return
         except Exception:
             # Provider validation must fail closed with a generic German error.
+            logger.exception(
+                "payment_pre_checkout_unexpected_failed telegram_user_id=%s",
+                pre_checkout_query.from_user.id,
+            )
             await db.rollback()
             await pre_checkout_query.answer(ok=False, error_message=PAYMENT_PRECHECKOUT_ERROR_TEXT)
             return
@@ -148,6 +160,10 @@ async def handle_successful_payment(message: Message) -> None:
             return
         except Exception:
             # SuccessfulPayment handling must never unlock access after an unexpected failure.
+            logger.exception(
+                "payment_confirmation_unexpected_failed telegram_user_id=%s",
+                message.from_user.id,
+            )
             await db.rollback()
             await message.answer(PAYMENT_FAILURE_TEXT, reply_markup=build_payment_failure_keyboard())
             return

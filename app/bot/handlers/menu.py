@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from aiogram import Router
+import logging
+
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
-from aiogram import F
 
 from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
@@ -13,6 +14,7 @@ from app.bot.texts import CALLBACK_HOME, HOME_TEXT, MENU_PROMPT
 from app.services.training_session import TrainingSessionService
 
 router = Router(name="menu")
+logger = logging.getLogger(__name__)
 _training_service = TrainingSessionService()
 
 
@@ -32,6 +34,10 @@ async def _abandon_active_training(callback_query: CallbackQuery) -> None:
             await db.commit()
         except Exception:
             # Home must remain a safe escape hatch even if persistence is unavailable.
+            logger.exception(
+                "home_abandon_active_training_failed telegram_user_id=%s",
+                callback_query.from_user.id,
+            )
             await db.rollback()
 
 
