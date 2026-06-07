@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import TrainingSessionItem
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 
 class TrainingSessionItemStatus:
@@ -49,7 +50,7 @@ class TrainingSessionItemRepository:
             return existing
 
         session_item = TrainingSessionItem(
-            id=await self._next_id_if_needed(db),
+            id=await next_sqlite_id_if_needed(db, TrainingSessionItem),
             session_id=session_id,
             user_id=user_id,
             question_reference_id=question_reference_id,
@@ -80,9 +81,3 @@ class TrainingSessionItemRepository:
         session_item.status = TrainingSessionItemStatus.answered
         session_item.answered_at = datetime.now(UTC)
         return session_item
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(TrainingSessionItem.id)))
-        return (max_id or 0) + 1

@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import DailyLimit
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
@@ -50,7 +51,7 @@ class DailyLimitRepository:
             return existing
 
         daily_limit = DailyLimit(
-            id=await self._next_id_if_needed(db),
+            id=await next_sqlite_id_if_needed(db, DailyLimit),
             user_id=user_id,
             plan=plan,
             limit_date=limit_date,
@@ -67,12 +68,6 @@ class DailyLimitRepository:
             raise ValueError("Daily question limit is already reached")
         daily_limit.questions_used = int(daily_limit.questions_used or 0) + 1
         return daily_limit
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(DailyLimit.id)))
-        return (max_id or 0) + 1
 
 
 def _limit_window(value: datetime):

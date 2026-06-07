@@ -5,11 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.bot.handlers import payments as payment_handlers
+from app.bot.handlers import common as handler_common
 from app.config import Settings
 from app.db.models import Payment
-from app.repositories.payments import PaymentRepository
-from app.repositories.subscriptions import SubscriptionRepository
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 from app.services.entitlements import PLAN_PLUS
 from app.services.payments import PAYMENT_CURRENCY, PaymentConfirmation, PaymentService, PaymentVerificationError
 
@@ -18,17 +17,30 @@ NOW = datetime(2026, 5, 15, 10, 0, tzinfo=UTC)
 
 def test_payment_session_factory_uses_configured_get_session(monkeypatch) -> None:
     session = object()
-    monkeypatch.setattr(payment_handlers, "_get_session", lambda: session)
+    monkeypatch.setattr(handler_common, "get_session", lambda: session)
 
-    assert payment_handlers._session_factory() is session
+    assert handler_common.session_factory() is session
 
 
 @pytest.mark.asyncio
 async def test_repository_next_id_returns_none_outside_sqlite() -> None:
     db = SimpleNamespace(get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="postgresql")))
 
-    assert await PaymentRepository()._next_id_if_needed(db) is None
-    assert await SubscriptionRepository()._next_id_if_needed(db) is None
+    assert await next_sqlite_id_if_needed(db, Payment) is None
+
+
+@pytest.mark.asyncio
+async def test_repository_next_id_returns_next_sqlite_id() -> None:
+    db = FakeSqliteDb(max_id=41)
+
+    assert await next_sqlite_id_if_needed(db, Payment) == 42
+
+
+@pytest.mark.asyncio
+async def test_repository_next_id_starts_at_one_for_empty_sqlite_table() -> None:
+    db = FakeSqliteDb(max_id=None)
+
+    assert await next_sqlite_id_if_needed(db, Payment) == 1
 
 
 @pytest.mark.asyncio
@@ -65,6 +77,17 @@ class FakeDb:
         self.flushed += 1
         if self.user.id is None:
             self.user.id = 77
+
+
+class FakeSqliteDb:
+    def __init__(self, *, max_id: int | None) -> None:
+        self.max_id = max_id
+
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
+    async def scalar(self, _query):
+        return self.max_id
 
 
 class FakeUserRepo:

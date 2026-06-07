@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Mistake, Progress, UserAnswer
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 from app.services.progress_model import TopicAnswerEvent, TopicMistakeSignals, TopicScores
 
 
@@ -38,7 +39,7 @@ class ProgressRepository:
         level: str,
         theme: str | None,
     ) -> Progress:
-        progress_id = await self._next_id_if_needed(db)
+        progress_id = await next_sqlite_id_if_needed(db, Progress)
         progress = Progress(
             id=progress_id,
             user_id=user_id,
@@ -53,12 +54,6 @@ class ProgressRepository:
         )
         db.add(progress)
         return progress
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(Progress.id)))
-        return (max_id or 0) + 1
 
     async def get_or_create(
         self,

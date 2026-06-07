@@ -3,10 +3,10 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Progress, ProgressHistory
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 
 class ProgressHistoryRepository:
@@ -24,7 +24,7 @@ class ProgressHistoryRepository:
         reason_code: str,
     ) -> ProgressHistory:
         history = ProgressHistory(
-            id=await self._next_id_if_needed(db),
+            id=await next_sqlite_id_if_needed(db, ProgressHistory),
             progress_id=progress.id,
             user_id=progress.user_id,
             session_id=session_id,
@@ -76,13 +76,6 @@ class ProgressHistoryRepository:
             "stability_delta": _number_delta(previous_scores.get("stability_score"), new_scores.get("stability_score")),
             "weakness_delta": _number_delta(previous_scores.get("weakness_score"), new_scores.get("weakness_score")),
         }
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(ProgressHistory.id)))
-        return (max_id or 0) + 1
-
 
 def _to_json_number(value: object) -> float | None:
     if value is None:

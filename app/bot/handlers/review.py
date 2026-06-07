@@ -8,6 +8,9 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from app.bot.formatting import escape_markdown_text
+from app.bot.handlers.common import extract_user_id as _extract_user_id
+from app.bot.handlers.common import map_quizbank_error as _map_quizbank_error
+from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.main_menu import build_back_to_main_menu_button
 from app.bot.keyboards.quiz import build_question_options_keyboard
 from app.bot.keyboards.review import build_review_empty_keyboard, build_review_screen_keyboard
@@ -17,17 +20,12 @@ from app.bot.texts import (
     CALLBACK_REVIEW_START,
     REVIEW_EMPTY_STATE_TEXT,
     REVIEW_SCREEN_TEXT,
-    TRAINING_QUIZBANK_AUTH_ERROR_TEXT,
-    TRAINING_QUIZBANK_RATE_LIMIT_TEXT,
-    TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
-    TRAINING_QUIZBANK_VALIDATION_TEXT,
     TRAINING_QUESTION_TEMPLATE,
     TRAINING_SESSION_ERROR_TEXT,
     TRAINING_SESSION_RESUME_TEXT,
     PAYWALL_MISTAKE_REPEAT_TEXT,
     PAYWALL_DAILY_LIMIT_TEXT,
 )
-from app.db.session import get_session as _get_session
 from app.quiz_bank.errors import (
     QuizBankAuthError,
     QuizBankError,
@@ -66,14 +64,6 @@ _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
 
 
-def _extract_user_id(event: CallbackQuery) -> int | None:
-    return getattr(getattr(event, "from_user", None), "id", None)
-
-
-def _session_factory():
-    return _get_session()
-
-
 def _question_message(position: int, total_questions: int, question_text: str) -> str:
     return TRAINING_QUESTION_TEMPLATE.format(
         position=position,
@@ -95,18 +85,6 @@ async def _session_context():
             if hasattr(db, "rollback"):
                 await db.rollback()
             raise
-
-
-def _map_quizbank_error(error: Exception) -> str:
-    if isinstance(error, QuizBankAuthError):
-        return TRAINING_QUIZBANK_AUTH_ERROR_TEXT
-    if isinstance(error, QuizBankRateLimitError):
-        return TRAINING_QUIZBANK_RATE_LIMIT_TEXT
-    if isinstance(error, QuizBankUnavailableError):
-        return TRAINING_QUIZBANK_UNAVAILABLE_TEXT
-    if isinstance(error, QuizBankValidationError):
-        return TRAINING_QUIZBANK_VALIDATION_TEXT
-    return TRAINING_SESSION_ERROR_TEXT
 
 
 def _quiz_bank_error_category(error: QuizBankError) -> str:

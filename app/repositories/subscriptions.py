@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, case, desc, func, select
+from sqlalchemy import and_, case, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Payment, Subscription
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 PAID_PLANS = {"plus", "pro"}
 PAID_PLAN_RANK = {"plus": 1, "pro": 2}
@@ -82,7 +83,7 @@ class SubscriptionRepository:
         provider_reference: str | None,
     ) -> Subscription:
         subscription = Subscription(
-            id=await self._next_id_if_needed(db),
+            id=await next_sqlite_id_if_needed(db, Subscription),
             user_id=user_id,
             plan=plan,
             status="active",
@@ -129,12 +130,6 @@ class SubscriptionRepository:
         )
         result = await db.execute(query)
         return list(result.scalars().all())
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(Subscription.id)))
-        return (max_id or 0) + 1
 
 
 def _paid_plan_rank_expression():

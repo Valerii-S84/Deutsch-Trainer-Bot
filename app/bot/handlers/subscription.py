@@ -6,6 +6,8 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from app.bot.handlers.common import extract_user_id as _extract_user_id
+from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.subscription import build_subscription_keyboard
 from app.bot.texts import (
     CALLBACK_SUBSCRIPTION,
@@ -18,7 +20,6 @@ from app.bot.texts import (
     SUBSCRIPTION_STATUS_PENDING_TEXT,
     SUBSCRIPTION_TEXT,
 )
-from app.db.session import get_session as _get_session
 from app.services.analytics import AnalyticsTracker
 from app.services.entitlements import EntitlementService
 
@@ -26,14 +27,6 @@ router = Router(name="subscription")
 
 _entitlement_service = EntitlementService()
 _analytics_tracker = AnalyticsTracker()
-
-
-def _session_factory():
-    return _get_session()
-
-
-def _extract_user_id(event: Message | CallbackQuery) -> int | None:
-    return getattr(getattr(event, "from_user", None), "id", None)
 
 
 async def _subscription_text(db, telegram_user_id: int | None) -> str:

@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Mistake, MistakeStatus
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
 REQUIRED_SUCCESSFUL_REPEATS = 3
@@ -78,7 +79,7 @@ class MistakeRepository:
         source_snapshot: dict[str, Any] | None = None,
     ) -> Mistake:
         now = datetime.now(UTC)
-        mistake_id = await self._next_id_if_needed(db)
+        mistake_id = await next_sqlite_id_if_needed(db, Mistake)
         mistake = Mistake(
             id=mistake_id,
             user_id=user_id,
@@ -97,12 +98,6 @@ class MistakeRepository:
         )
         db.add(mistake)
         return mistake
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(Mistake.id)))
-        return (max_id or 0) + 1
 
     async def increment_wrong(
         self,

@@ -4,6 +4,8 @@ from typing import Any, Callable
 
 from aiogram.types import CallbackQuery, Message, Update
 
+from app.bot.handlers.common import extract_user_id
+from app.bot.handlers.common import map_quizbank_error
 from app.bot.formatting import escape_markdown_text
 from app.bot.keyboards.quiz import (
     build_finish_keyboard,
@@ -28,10 +30,6 @@ from app.bot.texts import (
     TRAINING_FINISH_WEAK_THEME_TEXT,
     TRAINING_INCORRECT_ANSWER_TEXT,
     TRAINING_QUESTION_TEMPLATE,
-    TRAINING_QUIZBANK_AUTH_ERROR_TEXT,
-    TRAINING_QUIZBANK_RATE_LIMIT_TEXT,
-    TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
-    TRAINING_QUIZBANK_VALIDATION_TEXT,
     TRAINING_SESSION_COMPLETED_TEXT,
     TRAINING_SESSION_ERROR_TEXT,
 )
@@ -49,10 +47,6 @@ from app.services.training_payloads import (
     NoMoreQuestionsError,
     QuestionStateError,
 )
-
-
-def extract_user_id(event: Message | CallbackQuery) -> int | None:
-    return getattr(getattr(event, "from_user", None), "id", None)
 
 
 def extract_update_id(event_update: Update | None) -> int | None:
@@ -113,18 +107,6 @@ def pending_question_token(session: object) -> str | None:
         return None
     token = pending.get("question_token")
     return token if isinstance(token, str) else None
-
-
-def map_quizbank_error(error: Exception) -> str:
-    if isinstance(error, QuizBankAuthError):
-        return TRAINING_QUIZBANK_AUTH_ERROR_TEXT
-    if isinstance(error, QuizBankRateLimitError):
-        return TRAINING_QUIZBANK_RATE_LIMIT_TEXT
-    if isinstance(error, QuizBankUnavailableError):
-        return TRAINING_QUIZBANK_UNAVAILABLE_TEXT
-    if isinstance(error, QuizBankValidationError):
-        return TRAINING_QUIZBANK_VALIDATION_TEXT
-    return TRAINING_SESSION_ERROR_TEXT
 
 
 def map_session_error(error: Exception) -> str:

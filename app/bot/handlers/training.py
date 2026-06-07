@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, Update
 
 from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.quiz import build_resume_keyboard
+from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.handlers.training_flow import (
     extract_update_id as _extract_update_id,
     extract_user_id as _extract_user_id,
@@ -40,7 +41,6 @@ from app.bot.texts import (
     TRAINING_SESSION_RESUME_TEXT,
     TRAINING_THEME_NOT_AVAILABLE_TEXT,
 )
-from app.db.session import get_session as _get_session
 from app.quiz_bank.errors import (
     QuizBankAuthError,
     QuizBankError,
@@ -73,10 +73,6 @@ training_service = TrainingSessionService(
 _api_error_log_repo = ApiErrorLogRepository()
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
-
-
-def _session_factory():
-    return _get_session()
 
 
 async def _persist_quiz_bank_error(

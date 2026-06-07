@@ -15,19 +15,12 @@ from app.bot.texts import (
     LEVEL_SELECTED_TEXT,
     THEME_EMPTY_STATE_TEXT,
     TRAINING_PROMPT,
-    TRAINING_QUIZBANK_AUTH_ERROR_TEXT,
-    TRAINING_QUIZBANK_RATE_LIMIT_TEXT,
     TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
-    TRAINING_QUIZBANK_VALIDATION_TEXT,
 )
-from app.db.session import get_session as _get_session
-from app.quiz_bank.errors import (
-    QuizBankAuthError,
-    QuizBankError,
-    QuizBankRateLimitError,
-    QuizBankUnavailableError,
-    QuizBankValidationError,
-)
+from app.bot.handlers.common import extract_user_id as _extract_user_id
+from app.bot.handlers.common import map_quizbank_error
+from app.bot.handlers.common import session_factory as _session_factory
+from app.quiz_bank.errors import QuizBankError
 from app.quiz_bank.service import QuizBankService
 from app.repositories.users import UserRepository
 from app.services.analytics import AnalyticsTracker
@@ -36,26 +29,6 @@ router = Router(name="level")
 _quiz_service = QuizBankService
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
-
-
-def _session_factory():
-    return _get_session()
-
-
-def _extract_user_id(callback_query: CallbackQuery) -> int | None:
-    return getattr(getattr(callback_query, "from_user", None), "id", None)
-
-
-def _map_quizbank_error(error: Exception) -> str:
-    if isinstance(error, QuizBankAuthError):
-        return TRAINING_QUIZBANK_AUTH_ERROR_TEXT
-    if isinstance(error, QuizBankRateLimitError):
-        return TRAINING_QUIZBANK_RATE_LIMIT_TEXT
-    if isinstance(error, QuizBankUnavailableError):
-        return TRAINING_QUIZBANK_UNAVAILABLE_TEXT
-    if isinstance(error, QuizBankValidationError):
-        return TRAINING_QUIZBANK_VALIDATION_TEXT
-    return TRAINING_QUIZBANK_UNAVAILABLE_TEXT
 
 
 @router.callback_query(F.data == CALLBACK_LEVELS)
@@ -98,7 +71,10 @@ async def level_selected(callback_query: CallbackQuery) -> None:
         themes_response = await _quiz_service().get_themes(level=level)
     except QuizBankError as exc:
         if callback_query.message is not None:
-            await callback_query.message.answer(_map_quizbank_error(exc), reply_markup=build_levels_keyboard())
+            await callback_query.message.answer(
+                map_quizbank_error(exc, default_text=TRAINING_QUIZBANK_UNAVAILABLE_TEXT),
+                reply_markup=build_levels_keyboard(),
+            )
         return
 
     if callback_query.message is not None:

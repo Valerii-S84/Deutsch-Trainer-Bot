@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import QuestionReference
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 
 class QuestionReferenceRepository:
@@ -43,7 +44,7 @@ class QuestionReferenceRepository:
             return existing
 
         question_reference = QuestionReference(
-            id=await self._next_id_if_needed(db),
+            id=await next_sqlite_id_if_needed(db, QuestionReference),
             item_id=item_id,
             level=level,
             theme=theme,
@@ -56,9 +57,3 @@ class QuestionReferenceRepository:
         )
         db.add(question_reference)
         return question_reference
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(QuestionReference.id)))
-        return (max_id or 0) + 1
