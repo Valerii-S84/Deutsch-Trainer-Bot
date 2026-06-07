@@ -226,8 +226,8 @@ def test_release_one_launch_config_defaults_are_locked() -> None:
     assert settings.plus_daily_question_limit == 25
     assert settings.pro_daily_question_limit == 100
     assert settings.paywall_cooldown_policy == "none"
-    assert settings.plus_price_stars == "100"
-    assert settings.pro_price_stars == "250"
+    assert settings.plus_price_stars == "10"
+    assert settings.pro_price_stars == "20"
     assert settings.plus_duration_days == 30
     assert settings.pro_duration_days == 90
     assert settings.telegram_stars_mode == "test"

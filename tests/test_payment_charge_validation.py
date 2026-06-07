@@ -98,7 +98,7 @@ async def test_credited_payment_requires_non_empty_telegram_charge_id(db_session
 
 def _settings() -> Settings:
     return Settings(
-        PLUS_PRICE_STARS="100",
+        PLUS_PRICE_STARS="10",
         PLUS_DURATION_DAYS=30,
         FREE_DAILY_QUESTION_LIMIT=1,
         PLUS_DAILY_QUESTION_LIMIT=3,
@@ -137,7 +137,7 @@ def _payment(*, status: str, telegram_payment_charge_id: str | None) -> Payment:
         id=900,
         user_id=900,
         plan=PLAN_PLUS,
-        amount_stars=100,
+        amount_stars=10,
         status=status,
         idempotency_key=f"pay-{status}",
         telegram_payment_charge_id=telegram_payment_charge_id,

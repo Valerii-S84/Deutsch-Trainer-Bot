@@ -119,8 +119,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - Free daily limit: `5`.
 - Plus daily limit: `25`.
 - Pro daily limit: `100`.
-- Plus package: `100` Telegram Stars / `30` days.
-- Pro package: `250` Telegram Stars / `90` days.
+- Plus package: `10` Telegram Stars / `30` days.
+- Pro package: `20` Telegram Stars / `90` days.
 - Telegram Stars mode: `test` by default, `prod` required by production secret validation.
 - Monthly limits: Decision closed as `not in Release 1`.
 - Paywall cooldown: Decision closed as `none`.
@@ -164,8 +164,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 ### Що виконано
 
 - Approved packages:
-  - Plus: `100` Stars, `30` days.
-  - Pro: `250` Stars, `90` days.
+  - Plus: `10` Stars, `30` days.
+  - Pro: `20` Stars, `90` days.
 - Telegram Stars payload format locked: `dtbpay:{payment_id}:{idempotency_key}`.
 - Provider fields locked: currency `XTR`, empty provider token for Stars, charge references validated when present.
 - Local payment flow covers invoice creation, pre-checkout validation, successful payment confirmation, credit and active subscription.

@@ -37,8 +37,8 @@ Release 1 launch values are locked as typed runtime config defaults and remain e
 | `FREE_DAILY_QUESTION_LIMIT` | `5` questions/day | `app/config.py` validation: Free < Plus < Pro |
 | `PLUS_DAILY_QUESTION_LIMIT` | `25` questions/day | service-layer daily limit enforcement |
 | `PRO_DAILY_QUESTION_LIMIT` | `100` questions/day | service-layer daily limit enforcement |
-| `PLUS_PRICE_STARS` | `100` Stars | Telegram Stars invoice config |
-| `PRO_PRICE_STARS` | `250` Stars | Telegram Stars invoice config |
+| `PLUS_PRICE_STARS` | `10` Stars | Telegram Stars invoice config |
+| `PRO_PRICE_STARS` | `20` Stars | Telegram Stars invoice config |
 | `PLUS_DURATION_DAYS` | `30` days | credited subscription expiry calculation |
 | `PRO_DURATION_DAYS` | `90` days | credited subscription expiry calculation |
 | `TELEGRAM_STARS_MODE` | `test` by default, `prod` only by production env | typed validation |

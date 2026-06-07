@@ -100,10 +100,10 @@ def test_payment_invoice_copy_and_pay_button_are_german() -> None:
 
     assert samples["plus.title"] == "Plus aktivieren"
     assert samples["plus.price_label"] == "Plus-Abo"
-    assert samples["plus.pay_button"] == "Bezahlen ⭐ 100"
+    assert samples["plus.pay_button"] == "Bezahlen ⭐ 10"
     assert samples["pro.title"] == "Pro aktivieren"
     assert samples["pro.price_label"] == "Pro-Abo"
-    assert samples["pro.pay_button"] == "Bezahlen ⭐ 250"
+    assert samples["pro.pay_button"] == "Bezahlen ⭐ 20"
 
 
 def test_rendered_core_telegram_scenarios_are_german_only() -> None:
@@ -392,8 +392,8 @@ def keyboard_button_text_samples(source: str, markup) -> list[tuple[str, str]]:
 
 def _payment_settings() -> Settings:
     return Settings(
-        PLUS_PRICE_STARS="100",
-        PRO_PRICE_STARS="250",
+        PLUS_PRICE_STARS="10",
+        PRO_PRICE_STARS="20",
         PLUS_DURATION_DAYS=30,
         PRO_DURATION_DAYS=90,
         FREE_DAILY_QUESTION_LIMIT=1,

@@ -51,8 +51,8 @@ async def db_session() -> AsyncSession:
 
 def _settings() -> Settings:
     return Settings(
-        PLUS_PRICE_STARS="100",
-        PRO_PRICE_STARS="250",
+        PLUS_PRICE_STARS="10",
+        PRO_PRICE_STARS="20",
         PLUS_DURATION_DAYS=30,
         PRO_DURATION_DAYS=90,
         FREE_DAILY_QUESTION_LIMIT=1,
@@ -121,14 +121,14 @@ async def test_create_invoice_creates_payment_before_invoice(db_session: AsyncSe
     ]
     assert invoice.currency == PAYMENT_CURRENCY
     assert invoice.provider_token == ""
-    assert invoice.amount_stars == 100
+    assert invoice.amount_stars == 10
     assert invoice.title == "Plus aktivieren"
     assert invoice.description == "Mehr Übungen pro Tag, vollständiger Fortschritt und gezielte Fehlerwiederholung."
     assert invoice.price_label == "Plus-Abo"
     assert invoice.payload.startswith(f"dtbpay:{payment.id}:")
     assert payment.status == "created"
     assert payment.plan == PLAN_PLUS
-    assert payment.amount_stars == 100
+    assert payment.amount_stars == 10
     assert payment.audit_metadata["invoice_payload"] == invoice.payload
     assert event_names == ["paywall_clicked", "payment_started"]
 

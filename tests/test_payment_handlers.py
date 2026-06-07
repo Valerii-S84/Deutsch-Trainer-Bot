@@ -52,7 +52,7 @@ class FakeCallback:
 
 
 class FakePreCheckoutQuery:
-    def __init__(self, *, payload: str = "payload", amount: int = 100, currency: str = "XTR") -> None:
+    def __init__(self, *, payload: str = "payload", amount: int = 10, currency: str = "XTR") -> None:
         self.from_user = SimpleNamespace(id=111)
         self.invoice_payload = payload
         self.total_amount = amount
@@ -76,7 +76,7 @@ class FakePaymentService:
             description="Mehr Übungen pro Tag.",
             payload="dtbpay:1:key",
             currency="XTR",
-            amount_stars=100,
+            amount_stars=10,
             price_label="Plus-Abo",
             provider_token="",
         )
@@ -115,10 +115,10 @@ async def test_payment_plan_callback_sends_stars_invoice(monkeypatch) -> None:
     assert db.committed == 1
     assert invoice_kwargs["currency"] == "XTR"
     assert invoice_kwargs["provider_token"] == ""
-    assert invoice_kwargs["prices"][0].amount == 100
+    assert invoice_kwargs["prices"][0].amount == 10
     assert invoice_kwargs["prices"][0].label == "Plus-Abo"
     pay_button = invoice_kwargs["reply_markup"].inline_keyboard[0][0]
-    assert pay_button.text == "Bezahlen ⭐ 100"
+    assert pay_button.text == "Bezahlen ⭐ 10"
     assert pay_button.pay is True
 
 
@@ -193,7 +193,7 @@ async def test_successful_payment_credits_subscription_and_shows_success(monkeyp
     successful_payment = SimpleNamespace(
         invoice_payload="dtbpay:1:key",
         currency="XTR",
-        total_amount=100,
+        total_amount=10,
         telegram_payment_charge_id="tg-1",
         provider_payment_charge_id="provider-1",
     )
@@ -217,7 +217,7 @@ async def test_successful_payment_failure_shows_safe_copy(monkeypatch) -> None:
     successful_payment = SimpleNamespace(
         invoice_payload="dtbpay:1:key",
         currency="XTR",
-        total_amount=100,
+        total_amount=10,
         telegram_payment_charge_id="tg-1",
         provider_payment_charge_id="provider-1",
     )
