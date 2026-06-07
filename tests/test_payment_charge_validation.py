@@ -57,6 +57,17 @@ async def test_blank_telegram_payment_charge_id_is_rejected(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
+async def test_non_string_telegram_payment_charge_id_is_rejected(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+    invoice = await _prepared_invoice(service, db_session)
+
+    with pytest.raises(PaymentVerificationError, match="telegram_payment_charge_id_missing"):
+        await service.confirm_and_credit_payment(db_session, 111, _confirmation(invoice, telegram_charge_id=123))
+
+    assert await db_session.scalar(select(func.count(Subscription.id))) == 0
+
+
+@pytest.mark.asyncio
 async def test_telegram_payment_charge_id_is_trimmed_before_storage(db_session: AsyncSession) -> None:
     service = PaymentService(settings=_settings())
     invoice = await _prepared_invoice(service, db_session)
@@ -69,6 +80,44 @@ async def test_telegram_payment_charge_id_is_trimmed_before_storage(db_session: 
 
     assert result.payment.telegram_payment_charge_id == "tg-trimmed"
     assert result.payment.provider_payment_charge_id == "provider-trimmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("telegram_charge_id", "provider_charge_id"),
+    [("tg-no-provider", None), ("tg-blank-provider", "   ")],
+)
+async def test_optional_provider_payment_charge_id_is_normalized_to_missing(
+    db_session: AsyncSession,
+    telegram_charge_id: str,
+    provider_charge_id: str | None,
+) -> None:
+    service = PaymentService(settings=_settings())
+    invoice = await _prepared_invoice(service, db_session)
+
+    result = await service.confirm_and_credit_payment(
+        db_session,
+        111,
+        _confirmation(invoice, telegram_charge_id=telegram_charge_id, provider_charge_id=provider_charge_id),
+    )
+
+    assert result.payment.telegram_payment_charge_id == telegram_charge_id
+    assert result.payment.provider_payment_charge_id is None
+
+
+@pytest.mark.asyncio
+async def test_naive_payment_time_is_stored_as_utc(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+    invoice = await _prepared_invoice(service, db_session)
+
+    payment = await service.confirm_payment(
+        db_session,
+        111,
+        _confirmation(invoice, telegram_charge_id="tg-naive"),
+        now=datetime(2026, 5, 15, 10, 0),
+    )
+
+    assert payment.paid_at == datetime(2026, 5, 15, 10, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
