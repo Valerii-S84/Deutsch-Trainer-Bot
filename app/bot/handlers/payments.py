@@ -15,6 +15,7 @@ from app.bot.texts import (
     CALLBACK_PAYMENT_PLAN_PREFIX,
     PAYMENT_CONFIG_REQUIRED_TEXT,
     PAYMENT_FAILURE_TEXT,
+    PAYMENT_PLAN_CHANGE_BLOCKED_TEXT,
     PAYMENT_PRECHECKOUT_ERROR_TEXT,
     PAYMENT_SUCCESS_PLUS_TEXT,
     PAYMENT_SUCCESS_PRO_TEXT,
@@ -27,6 +28,7 @@ from app.services.payments import (
     PaymentService,
     PaymentVerificationError,
 )
+from app.services.subscription_credits import PaymentPlanChangeError
 
 router = Router(name="payments")
 
@@ -64,6 +66,13 @@ async def handle_payment_plan_callback(callback_query: CallbackQuery) -> None:
         try:
             invoice = await _payment_service.create_invoice(db, callback_query.from_user.id, plan=plan)
             await db.commit()
+        except PaymentPlanChangeError:
+            await db.rollback()
+            await callback_query.message.answer(
+                PAYMENT_PLAN_CHANGE_BLOCKED_TEXT,
+                reply_markup=build_subscription_keyboard(),
+            )
+            return
         except PaymentConfigurationError:
             await db.rollback()
             await callback_query.message.answer(
@@ -103,7 +112,7 @@ async def handle_pre_checkout_query(pre_checkout_query: PreCheckoutQuery) -> Non
                 total_amount=pre_checkout_query.total_amount,
             )
             await db.commit()
-        except (PaymentConfigurationError, PaymentVerificationError):
+        except (PaymentConfigurationError, PaymentPlanChangeError, PaymentVerificationError):
             await db.rollback()
             await pre_checkout_query.answer(ok=False, error_message=PAYMENT_PRECHECKOUT_ERROR_TEXT)
             return
@@ -137,7 +146,7 @@ async def handle_successful_payment(message: Message) -> None:
                 confirmation,
             )
             await db.commit()
-        except (PaymentConfigurationError, PaymentVerificationError):
+        except (PaymentConfigurationError, PaymentPlanChangeError, PaymentVerificationError):
             await db.rollback()
             await message.answer(PAYMENT_FAILURE_TEXT, reply_markup=build_payment_failure_keyboard())
             return

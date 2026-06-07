@@ -163,24 +163,9 @@ async def _seed_metrics_data(db_session: AsyncSession, now: datetime) -> None:
 
     db_session.add_all(
         [
-            Payment(
-                id=30,
-                user_id=1,
-                plan="plus",
-                amount_stars=100,
-                status="credited",
-                idempotency_key="pay-30",
-                credited_at=now,
-            ),
-            Payment(
-                id=31,
-                user_id=2,
-                plan="plus",
-                amount_stars=100,
-                status="failed",
-                idempotency_key="pay-31",
-                failed_at=now,
-            ),
+            _credited_payment(30, 1, now),
+            _failed_payment(31, 2, now),
+            _credited_payment(32, 1, now - timedelta(days=30)),
             Subscription(
                 id=40,
                 user_id=1,
@@ -197,7 +182,7 @@ async def _seed_metrics_data(db_session: AsyncSession, now: datetime) -> None:
                 status="expired",
                 started_at=now - timedelta(days=30),
                 expires_at=now - timedelta(hours=1),
-                payment_id=30,
+                payment_id=32,
             ),
             ApiErrorLog(
                 id=50,
@@ -208,6 +193,31 @@ async def _seed_metrics_data(db_session: AsyncSession, now: datetime) -> None:
         ],
     )
     await db_session.flush()
+
+
+def _credited_payment(payment_id: int, user_id: int, credited_at: datetime) -> Payment:
+    return Payment(
+        id=payment_id,
+        user_id=user_id,
+        plan="plus",
+        amount_stars=100,
+        status="credited",
+        idempotency_key=f"pay-{payment_id}",
+        telegram_payment_charge_id=f"tg-{payment_id}",
+        credited_at=credited_at,
+    )
+
+
+def _failed_payment(payment_id: int, user_id: int, failed_at: datetime) -> Payment:
+    return Payment(
+        id=payment_id,
+        user_id=user_id,
+        plan="plus",
+        amount_stars=100,
+        status="failed",
+        idempotency_key=f"pay-{payment_id}",
+        failed_at=failed_at,
+    )
 
 
 def _event(event_id: int, user_id: int, event_name: str, event_time: datetime) -> AnalyticsEvent:

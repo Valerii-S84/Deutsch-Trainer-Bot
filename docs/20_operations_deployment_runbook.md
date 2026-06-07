@@ -61,6 +61,20 @@ token, Quiz Bank credentials, smoke base URL and `TELEGRAM_STARS_EVIDENCE_JSON`.
 The Telegram Stars evidence JSON must contain only non-secret test facts and is
 validated by `scripts/payment_sandbox_evidence_check.py`.
 
+Monetization must not be marked production-ready until this evidence exists.
+The evidence has to prove a real Telegram Stars test-mode payment path, not only
+local unit tests. Required non-secret facts include:
+
+- invoice was created with `invoice_payload_prefix=dtbpay`;
+- observed invoice payload hash and payload format matched
+  `dtbpay:{payment_id}:{idempotency_key}`;
+- pre-checkout was received, matched the payment, and was answered `ok=true`;
+- successful payment was delivered and matched the original payment;
+- `telegram_payment_charge_id` was present, recorded only as a SHA-256 hash in
+  the evidence artifact;
+- paid subscription was credited and verified active;
+- duplicate provider event handling was verified.
+
 ## Runtime Mode Gate
 
 The default production runtime remains HTTPS webhook with Caddy. Polling is

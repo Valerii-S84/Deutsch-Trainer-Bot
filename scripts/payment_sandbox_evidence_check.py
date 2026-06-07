@@ -12,9 +12,15 @@ from pathlib import Path
 
 REQUIRED_TRUE_FIELDS = (
     "invoice_created",
+    "invoice_payload_matches_expected_format",
     "pre_checkout_received",
+    "pre_checkout_payload_matched_payment",
+    "pre_checkout_answered_ok",
     "successful_payment_received",
+    "successful_payment_payload_matched_payment",
+    "telegram_payment_charge_id_received",
     "subscription_credited",
+    "active_subscription_verified",
     "duplicate_event_rejected",
 )
 REQUIRED_TEXT_FIELDS = (
@@ -23,7 +29,12 @@ REQUIRED_TEXT_FIELDS = (
     "telegram_bot_username",
     "telegram_stars_mode",
     "evidence_owner",
+    "invoice_payload_prefix",
+    "invoice_payload_sha256",
+    "telegram_payment_charge_id_sha256",
+    "credited_plan",
 )
+SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 SECRET_PATTERNS = (
     re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{35,}\b"),
     re.compile(r"(?i)\b(api[_-]?key|token|secret|password|credential)\b\s*[:=]\s*['\"]?[^'\"\s]{8,}"),
@@ -48,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = json.loads(payload_text)
     validate_text_fields(payload)
     validate_true_fields(payload)
+    validate_payment_observations(payload)
     validate_timestamp(payload["tested_at"])
 
     if payload["telegram_stars_mode"] != "test":
@@ -68,6 +80,16 @@ def validate_true_fields(payload: dict[str, object]) -> None:
     for field in REQUIRED_TRUE_FIELDS:
         if payload.get(field) is not True:
             raise SystemExit(f"{field} must be true")
+
+
+def validate_payment_observations(payload: dict[str, object]) -> None:
+    if payload["invoice_payload_prefix"] != "dtbpay":
+        raise SystemExit("invoice_payload_prefix must be dtbpay")
+    if payload["credited_plan"] not in {"plus", "pro"}:
+        raise SystemExit("credited_plan must be plus or pro")
+    for field in ("invoice_payload_sha256", "telegram_payment_charge_id_sha256"):
+        if not SHA256_RE.fullmatch(payload[field]):
+            raise SystemExit(f"{field} must be a SHA-256 hex digest")
 
 
 def validate_timestamp(raw_value: str) -> None:

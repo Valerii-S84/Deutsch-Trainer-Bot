@@ -80,6 +80,7 @@ async def _credited_subscription(
         amount_stars=100,
         status=payment_status,
         idempotency_key=f"pay-{user.id}-{plan}",
+        telegram_payment_charge_id=f"tg-{user.id}-{plan}" if payment_status in {"paid", "credited"} else None,
         credited_at=datetime(2026, 5, 14, 10, 0, tzinfo=UTC) if credited else None,
     )
     subscription = Subscription(

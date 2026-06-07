@@ -9,10 +9,12 @@ from app.bot.handlers import payments
 from app.bot.texts import (
     PAYMENT_CONFIG_REQUIRED_TEXT,
     PAYMENT_FAILURE_TEXT,
+    PAYMENT_PLAN_CHANGE_BLOCKED_TEXT,
     PAYMENT_PRECHECKOUT_ERROR_TEXT,
     PAYMENT_SUCCESS_PLUS_TEXT,
 )
 from app.services.payments import PaymentConfigurationError, PaymentVerificationError
+from app.services.subscription_credits import PaymentPlanChangeError
 
 
 class FakeDb:
@@ -50,7 +52,7 @@ class FakeCallback:
 
 
 class FakePreCheckoutQuery:
-    def __init__(self, *, payload: str = "payload", amount: int = 100, currency: str = "XTR") -> None:
+    def __init__(self, *, payload: str = "payload", amount: int = 10, currency: str = "XTR") -> None:
         self.from_user = SimpleNamespace(id=111)
         self.invoice_payload = payload
         self.total_amount = amount
@@ -74,7 +76,7 @@ class FakePaymentService:
             description="Mehr Übungen pro Tag.",
             payload="dtbpay:1:key",
             currency="XTR",
-            amount_stars=100,
+            amount_stars=10,
             price_label="Plus-Abo",
             provider_token="",
         )
@@ -113,10 +115,10 @@ async def test_payment_plan_callback_sends_stars_invoice(monkeypatch) -> None:
     assert db.committed == 1
     assert invoice_kwargs["currency"] == "XTR"
     assert invoice_kwargs["provider_token"] == ""
-    assert invoice_kwargs["prices"][0].amount == 100
+    assert invoice_kwargs["prices"][0].amount == 10
     assert invoice_kwargs["prices"][0].label == "Plus-Abo"
     pay_button = invoice_kwargs["reply_markup"].inline_keyboard[0][0]
-    assert pay_button.text == "Bezahlen ⭐ 100"
+    assert pay_button.text == "Bezahlen ⭐ 10"
     assert pay_button.pay is True
 
 
@@ -134,6 +136,22 @@ async def test_payment_plan_callback_missing_config_shows_safe_copy(monkeypatch)
     assert db.rolled_back == 1
     assert PAYMENT_CONFIG_REQUIRED_TEXT == text
     assert "payment:plan:plus" in _payloads(callback.message.answer.await_args.kwargs["reply_markup"])
+
+
+@pytest.mark.asyncio
+async def test_payment_plan_callback_blocked_downgrade_shows_plan_copy(monkeypatch) -> None:
+    db = FakeDb()
+    service = FakePaymentService(should_raise=PaymentPlanChangeError("downgrade_not_allowed"))
+    monkeypatch.setattr(payments, "_session_factory", lambda: db)
+    monkeypatch.setattr(payments, "_payment_service", service)
+
+    callback = FakeCallback(data="payment:plan:plus")
+    await payments.handle_payment_plan_callback(callback)
+
+    text = callback.message.answer.await_args.args[0]
+    assert db.rolled_back == 1
+    assert PAYMENT_PLAN_CHANGE_BLOCKED_TEXT == text
+    assert "payment:plan:pro" in _payloads(callback.message.answer.await_args.kwargs["reply_markup"])
 
 
 @pytest.mark.asyncio
@@ -175,7 +193,7 @@ async def test_successful_payment_credits_subscription_and_shows_success(monkeyp
     successful_payment = SimpleNamespace(
         invoice_payload="dtbpay:1:key",
         currency="XTR",
-        total_amount=100,
+        total_amount=10,
         telegram_payment_charge_id="tg-1",
         provider_payment_charge_id="provider-1",
     )
@@ -199,7 +217,7 @@ async def test_successful_payment_failure_shows_safe_copy(monkeypatch) -> None:
     successful_payment = SimpleNamespace(
         invoice_payload="dtbpay:1:key",
         currency="XTR",
-        total_amount=100,
+        total_amount=10,
         telegram_payment_charge_id="tg-1",
         provider_payment_charge_id="provider-1",
     )

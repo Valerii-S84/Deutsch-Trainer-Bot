@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String
-from sqlalchemy import CheckConstraint
+from sqlalchemy import CheckConstraint, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import sqlalchemy as sa
 
@@ -38,12 +38,13 @@ class Subscription(Base, TimestampMixin):
         server_default=sa.text("'telegram_stars'"),
     )
     provider_reference: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    payment_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    payment_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("payments.id"), nullable=False)
 
     user = relationship("User", back_populates="subscriptions")
 
     __table_args__ = (
         Index("ix_subscriptions_user_id", "user_id"),
         Index("ix_subscriptions_status_expires_at", "status", "expires_at"),
+        UniqueConstraint("payment_id", name="uq_subscriptions_payment_id"),
         CheckConstraint("expires_at IS NULL OR started_at IS NULL OR expires_at >= started_at", name="ck_subscriptions_dates"),
     )

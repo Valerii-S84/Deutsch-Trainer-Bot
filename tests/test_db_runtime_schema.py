@@ -95,6 +95,19 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
         "uq_payments_telegram_payment_charge_id",
         "uq_payments_provider_payment_charge_id",
     },
+    "subscriptions": {"uq_subscriptions_payment_id"},
+}
+
+EXPECTED_FOREIGN_KEYS = {
+    "subscriptions": {"fk_subscriptions_payment_id_payments"},
+}
+
+EXPECTED_CHECK_CONSTRAINTS = {
+    "payments": {"ck_payments_confirmed_telegram_charge_id"},
+}
+
+EXPECTED_NOT_NULL_COLUMNS = {
+    "subscriptions": {"payment_id"},
 }
 
 EXPECTED_JSONB = {
@@ -180,6 +193,65 @@ async def test_postgres_constraints_exist(db_connection: AsyncConnection) -> Non
                 {"table": table, "constraint_name": constraint_name},
             )
             assert present is not None, f"Constraint missing: {table}.{constraint_name}"
+
+
+@pytest.mark.asyncio
+async def test_postgres_foreign_keys_exist(db_connection: AsyncConnection) -> None:
+    connection = db_connection
+    for table, constraints in EXPECTED_FOREIGN_KEYS.items():
+        for constraint_name in constraints:
+            present = await connection.scalar(
+                text(
+                    """
+                    SELECT 1
+                    FROM pg_constraint c
+                    JOIN pg_class t ON t.oid = c.conrelid
+                    WHERE t.relname = :table
+                      AND c.conname = :constraint_name
+                      AND c.contype = 'f'
+                    """,
+                ),
+                {"table": table, "constraint_name": constraint_name},
+            )
+            assert present is not None, f"Foreign key missing: {table}.{constraint_name}"
+
+
+@pytest.mark.asyncio
+async def test_postgres_check_constraints_exist(db_connection: AsyncConnection) -> None:
+    connection = db_connection
+    for table, constraints in EXPECTED_CHECK_CONSTRAINTS.items():
+        for constraint_name in constraints:
+            present = await connection.scalar(
+                text(
+                    """
+                    SELECT 1
+                    FROM pg_constraint c
+                    JOIN pg_class t ON t.oid = c.conrelid
+                    WHERE t.relname = :table
+                      AND c.conname = :constraint_name
+                      AND c.contype = 'c'
+                    """,
+                ),
+                {"table": table, "constraint_name": constraint_name},
+            )
+            assert present is not None, f"Check constraint missing: {table}.{constraint_name}"
+
+
+@pytest.mark.asyncio
+async def test_postgres_required_columns_are_not_nullable(db_connection: AsyncConnection) -> None:
+    for table, columns in EXPECTED_NOT_NULL_COLUMNS.items():
+        for column in columns:
+            is_nullable = await db_connection.scalar(
+                text(
+                    """
+                    SELECT is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name=:table AND column_name=:column
+                    """,
+                ),
+                {"table": table, "column": column},
+            )
+            assert is_nullable == "NO", f"Column must be NOT NULL: {table}.{column}"
 
 
 @pytest.mark.asyncio

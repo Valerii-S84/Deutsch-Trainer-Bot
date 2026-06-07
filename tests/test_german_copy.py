@@ -32,7 +32,7 @@ from app.services.analytics import (
     format_admin_metrics,
 )
 from app.services.entitlements import PLAN_PLUS, PLAN_PRO
-from app.services.payments import PaymentService
+from app.services.payments import _plan_config
 from app.services.training_session import AnswerResult, QuizQuestionPayload
 
 
@@ -100,10 +100,10 @@ def test_payment_invoice_copy_and_pay_button_are_german() -> None:
 
     assert samples["plus.title"] == "Plus aktivieren"
     assert samples["plus.price_label"] == "Plus-Abo"
-    assert samples["plus.pay_button"] == "Bezahlen ⭐ 100"
+    assert samples["plus.pay_button"] == "Bezahlen ⭐ 10"
     assert samples["pro.title"] == "Pro aktivieren"
     assert samples["pro.price_label"] == "Pro-Abo"
-    assert samples["pro.pay_button"] == "Bezahlen ⭐ 250"
+    assert samples["pro.pay_button"] == "Bezahlen ⭐ 20"
 
 
 def test_rendered_core_telegram_scenarios_are_german_only() -> None:
@@ -211,10 +211,10 @@ def extract_text_keyword_literals(path: Path, node: ast.AST) -> tuple[tuple[Path
 
 
 def iter_payment_invoice_copy_samples() -> tuple[tuple[str, str], ...]:
-    service = PaymentService(settings=_payment_settings())
+    settings = _payment_settings()
     samples: list[tuple[str, str]] = []
     for plan in (PLAN_PLUS, PLAN_PRO):
-        config = service._plan_config(plan)
+        config = _plan_config(settings, plan)
         markup = build_invoice_payment_keyboard(amount_stars=config.amount_stars)
         pay_button = markup.inline_keyboard[0][0]
         samples.extend(
@@ -295,6 +295,7 @@ def iter_subscription_samples() -> tuple[tuple[str, str], ...]:
 def iter_payment_flow_samples() -> tuple[tuple[str, str], ...]:
     samples = [
         ("payment.config_required", bot_texts.PAYMENT_CONFIG_REQUIRED_TEXT),
+        ("payment.plan_change_blocked", bot_texts.PAYMENT_PLAN_CHANGE_BLOCKED_TEXT),
         ("payment.precheckout_error", bot_texts.PAYMENT_PRECHECKOUT_ERROR_TEXT),
         ("payment.success_plus", bot_texts.PAYMENT_SUCCESS_PLUS_TEXT),
         ("payment.success_pro", bot_texts.PAYMENT_SUCCESS_PRO_TEXT),
@@ -391,8 +392,8 @@ def keyboard_button_text_samples(source: str, markup) -> list[tuple[str, str]]:
 
 def _payment_settings() -> Settings:
     return Settings(
-        PLUS_PRICE_STARS="100",
-        PRO_PRICE_STARS="250",
+        PLUS_PRICE_STARS="10",
+        PRO_PRICE_STARS="20",
         PLUS_DURATION_DAYS=30,
         PRO_DURATION_DAYS=90,
         FREE_DAILY_QUESTION_LIMIT=1,

@@ -49,8 +49,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     telegram_stars_mode: str = Field(default="test", alias="TELEGRAM_STARS_MODE")
-    plus_price_stars: Optional[str] = Field(default="100", alias="PLUS_PRICE_STARS")
-    pro_price_stars: Optional[str] = Field(default="250", alias="PRO_PRICE_STARS")
+    plus_price_stars: Optional[str] = Field(default="10", alias="PLUS_PRICE_STARS")
+    pro_price_stars: Optional[str] = Field(default="20", alias="PRO_PRICE_STARS")
     plus_duration_days: Optional[int] = Field(default=30, alias="PLUS_DURATION_DAYS")
     pro_duration_days: Optional[int] = Field(default=90, alias="PRO_DURATION_DAYS")
     tariff_public_copy: str = Field(

@@ -204,8 +204,8 @@ Recommended logical variables:
 | `SECURITY_STATE_BACKEND` | Yes | No | `auto` locally; Redis outside development. |
 | `SECURITY_RATE_LIMIT_ENABLED` | Yes | No | Enables abuse-sensitive rate limits. |
 | `TELEGRAM_STARS_MODE` | Yes | No | `test` or `prod`; production launch must set `prod`. |
-| `PLUS_PRICE_STARS` | Yes | No | Release 1 default: `100`. |
-| `PRO_PRICE_STARS` | Yes | No | Release 1 default: `250`. |
+| `PLUS_PRICE_STARS` | Yes | No | Release 1 default: `10`. |
+| `PRO_PRICE_STARS` | Yes | No | Release 1 default: `20`. |
 | `PLUS_DURATION_DAYS` | Yes | No | Release 1 default: `30`. |
 | `PRO_DURATION_DAYS` | Yes | No | Release 1 default: `90`. |
 | `FREE_DAILY_QUESTION_LIMIT` | Yes | No | Release 1 default: `5`. |

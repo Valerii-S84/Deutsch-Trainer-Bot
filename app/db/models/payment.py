@@ -55,4 +55,9 @@ class Payment(Base, TimestampMixin):
         UniqueConstraint("telegram_payment_charge_id", name="uq_payments_telegram_payment_charge_id"),
         UniqueConstraint("provider_payment_charge_id", name="uq_payments_provider_payment_charge_id"),
         CheckConstraint("amount_stars >= 0", name="ck_payments_amount_stars_non_negative"),
+        CheckConstraint(
+            "status NOT IN ('paid', 'credited') "
+            "OR (telegram_payment_charge_id IS NOT NULL AND trim(telegram_payment_charge_id) <> '')",
+            name="ck_payments_confirmed_telegram_charge_id",
+        ),
     )

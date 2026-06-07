@@ -119,8 +119,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 - Free daily limit: `5`.
 - Plus daily limit: `25`.
 - Pro daily limit: `100`.
-- Plus package: `100` Telegram Stars / `30` days.
-- Pro package: `250` Telegram Stars / `90` days.
+- Plus package: `10` Telegram Stars / `30` days.
+- Pro package: `20` Telegram Stars / `90` days.
 - Telegram Stars mode: `test` by default, `prod` required by production secret validation.
 - Monthly limits: Decision closed as `not in Release 1`.
 - Paywall cooldown: Decision closed as `none`.
@@ -164,8 +164,8 @@ Architecture Lock: **COMPLETED** (`docs/16_architecture_lock.md`)
 ### Що виконано
 
 - Approved packages:
-  - Plus: `100` Stars, `30` days.
-  - Pro: `250` Stars, `90` days.
+  - Plus: `10` Stars, `30` days.
+  - Pro: `20` Stars, `90` days.
 - Telegram Stars payload format locked: `dtbpay:{payment_id}:{idempotency_key}`.
 - Provider fields locked: currency `XTR`, empty provider token for Stars, charge references validated when present.
 - Local payment flow covers invoice creation, pre-checkout validation, successful payment confirmation, credit and active subscription.
@@ -511,6 +511,12 @@ staging-first actions and record why each gate remains open in this local pass.
 | Telegram E2E smoke | `/start` through onboarding, level, theme, training, result, progress and mistake review. | Staging first; production only after explicit approval. | Manual Telegram smoke with safe staging bot credentials, staging DB, staging Redis and approved Quiz Bank smoke data; capture non-secret transcript/result. | Blocked, not run: no staging target inventory, bot token, webhook/domain evidence or protected credentials were available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local handler tests cannot prove Telegram delivery, webhook routing, real callback payloads or target DB writes. | None recorded. |
 | Quiz Bank monitoring evidence | Runtime Quiz Bank health, latency/error monitoring and protected credential path. | Staging first; production evidence before release. | `SMOKE_BASE_URL=https://<staging-domain-managed-outside-repo> RUN_QUIZ_BANK_SMOKE=1 bash scripts/ops_smoke.sh`, plus monitoring dashboard/alert evidence for Quiz Bank API. | Blocked, not run: no target Quiz Bank credentials, endpoint inventory or monitoring access was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Contract tests do not prove live availability, alert routing or production credential wiring. | None recorded. |
 | Telegram Stars payment evidence | Live test/prod payment path, invoice, pre-checkout, successful payment, idempotent credit and subscription activation. | Telegram Stars test mode first; production mode only with explicit approval. | Execute approved Stars test payment in staging with `TELEGRAM_STARS_MODE=test`; production payment evidence requires separate approval and owner sign-off. | Blocked, not run: no live Telegram payment credentials/test approval or production approval was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local payment tests cannot prove Telegram provider behavior, live pre-checkout delivery or production Stars configuration. | None recorded. |
+
+Monetization production readiness remains blocked until Telegram Stars sandbox
+or approved live evidence proves real invoice payload delivery, pre-checkout
+delivery, `telegram_payment_charge_id` presence, successful payment delivery and
+active subscription crediting. Green local tests are not sufficient for this
+gate.
 | Active monitoring | Bot, DB, Redis, Quiz Bank API, payments, subscriptions, logs and backups. | Staging first; production before release. | Verify target dashboards/alerts and run non-mutating health checks from `docs/20_operations_deployment_runbook.md`. | Blocked, not run: no monitoring system access or target environment inventory was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Monitoring artifacts in repo do not prove active alerting, retention, routing or operator visibility. | None recorded. |
 | Production backup configured | Encrypted, access-controlled PostgreSQL backup in target storage. | Production, after explicit approval. | `APP_ENV=production BACKUP_ENCRYPTION=age bash scripts/postgres_backup.sh` from protected target environment; verify restricted backup path/access without printing secrets. | Blocked, not run: production DB, backup storage, encryption recipient/key and production approval were not available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local backup script evidence does not prove target encryption, retention, operator access control or storage durability. | None recorded. |
 | Target-environment backup/restore verification | Restore latest target backup into disposable non-production DB and verify schema/idempotency checks. | Staging or disposable target restore DB; never production restore target. | `RESTORE_CONFIRM_NON_PRODUCTION=I_UNDERSTAND_THIS_IS_NOT_PRODUCTION bash scripts/postgres_restore_verify.sh` using target backup and disposable restore DB. | Blocked, not run: no target backup artifact, restore DB or backup access credentials were available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local disposable restore evidence does not prove target backup decryptability, restore access or target-data integrity. | None recorded. |

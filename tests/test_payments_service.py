@@ -15,8 +15,15 @@ from app.services.payments import (
     PAYMENT_CURRENCY,
     PaymentConfirmation,
     PaymentConfigurationError,
+    PaymentCreditResult,
+    PaymentInvoice,
     PaymentService,
     PaymentVerificationError,
+)
+from app.services.subscription_credits import (
+    SUBSCRIPTION_CHANGE_RENEWAL,
+    SUBSCRIPTION_CHANGE_UPGRADE,
+    PaymentPlanChangeError,
 )
 
 
@@ -44,8 +51,8 @@ async def db_session() -> AsyncSession:
 
 def _settings() -> Settings:
     return Settings(
-        PLUS_PRICE_STARS="100",
-        PRO_PRICE_STARS="250",
+        PLUS_PRICE_STARS="10",
+        PRO_PRICE_STARS="20",
         PLUS_DURATION_DAYS=30,
         PRO_DURATION_DAYS=90,
         FREE_DAILY_QUESTION_LIMIT=1,
@@ -70,6 +77,34 @@ async def _payment_by_id(db_session: AsyncSession, payment_id: int) -> Payment:
     return payment
 
 
+async def _purchase_plan(
+    db_session: AsyncSession,
+    service: PaymentService,
+    telegram_user_id: int,
+    *,
+    plan: str,
+    now: datetime,
+) -> tuple[PaymentInvoice, PaymentConfirmation, PaymentCreditResult]:
+    invoice = await service.create_invoice(db_session, telegram_user_id, plan=plan)
+    confirmation = _confirmation(invoice)
+    result = await service.confirm_and_credit_payment(
+        db_session,
+        telegram_user_id,
+        confirmation,
+        now=now,
+    )
+    return invoice, confirmation, result
+
+
+async def _subscription_started_metadata(db_session: AsyncSession) -> list[dict[str, object]]:
+    rows = await db_session.execute(
+        select(AnalyticsEvent.event_metadata)
+        .where(AnalyticsEvent.event_name == "subscription_started")
+        .order_by(AnalyticsEvent.id.asc()),
+    )
+    return [metadata for metadata, in rows.all()]
+
+
 @pytest.mark.asyncio
 async def test_create_invoice_creates_payment_before_invoice(db_session: AsyncSession) -> None:
     service = PaymentService(settings=_settings())
@@ -86,14 +121,14 @@ async def test_create_invoice_creates_payment_before_invoice(db_session: AsyncSe
     ]
     assert invoice.currency == PAYMENT_CURRENCY
     assert invoice.provider_token == ""
-    assert invoice.amount_stars == 100
+    assert invoice.amount_stars == 10
     assert invoice.title == "Plus aktivieren"
     assert invoice.description == "Mehr Übungen pro Tag, vollständiger Fortschritt und gezielte Fehlerwiederholung."
     assert invoice.price_label == "Plus-Abo"
     assert invoice.payload.startswith(f"dtbpay:{payment.id}:")
     assert payment.status == "created"
     assert payment.plan == PLAN_PLUS
-    assert payment.amount_stars == 100
+    assert payment.amount_stars == 10
     assert payment.audit_metadata["invoice_payload"] == invoice.payload
     assert event_names == ["paywall_clicked", "payment_started"]
 
@@ -222,6 +257,126 @@ async def test_duplicate_provider_event_does_not_create_second_subscription(db_s
     assert second.subscription.id == first.subscription.id
     assert subscription_count == 1
     assert event_names == ["paywall_clicked", "payment_started", "payment_succeeded", "subscription_started"]
+
+
+@pytest.mark.asyncio
+async def test_same_plan_purchase_extends_current_subscription(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+    _, _, first = await _purchase_plan(
+        db_session,
+        service,
+        123,
+        plan=PLAN_PLUS,
+        now=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+    )
+    _, renewal_confirmation, renewal = await _purchase_plan(
+        db_session,
+        service,
+        123,
+        plan=PLAN_PLUS,
+        now=datetime(2026, 6, 5, 10, 0, tzinfo=UTC),
+    )
+    duplicate = await service.confirm_and_credit_payment(
+        db_session,
+        123,
+        renewal_confirmation,
+        now=datetime(2026, 6, 5, 10, 5, tzinfo=UTC),
+    )
+
+    subscription_count = await db_session.scalar(select(func.count(Subscription.id)))
+    event_metadata = await _subscription_started_metadata(db_session)
+    assert renewal.subscription.id == first.subscription.id
+    assert duplicate.duplicate is True
+    assert duplicate.subscription.id == first.subscription.id
+    assert subscription_count == 1
+    assert renewal.subscription.expires_at == datetime(2026, 7, 14, 10, 0, tzinfo=UTC)
+    assert renewal.payment.audit_metadata["subscription_credit_action"] == SUBSCRIPTION_CHANGE_RENEWAL
+    assert event_metadata[-1]["change_type"] == SUBSCRIPTION_CHANGE_RENEWAL
+
+
+@pytest.mark.asyncio
+async def test_higher_plan_purchase_starts_now_and_closes_lower_plan(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+    entitlements = EntitlementService(settings=_settings())
+    _, _, plus = await _purchase_plan(
+        db_session,
+        service,
+        124,
+        plan=PLAN_PLUS,
+        now=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+    )
+    _, _, pro = await _purchase_plan(
+        db_session,
+        service,
+        124,
+        plan=PLAN_PRO,
+        now=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
+    )
+
+    access = await entitlements.get_access_state(
+        db_session,
+        124,
+        now=datetime(2026, 5, 21, 10, 0, tzinfo=UTC),
+    )
+    event_metadata = await _subscription_started_metadata(db_session)
+    assert plus.subscription.status == "cancelled"
+    assert plus.subscription.expires_at == datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
+    assert pro.subscription.plan == PLAN_PRO
+    assert pro.subscription.status == "active"
+    assert pro.subscription.started_at == datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
+    assert pro.subscription.expires_at == datetime(2026, 8, 18, 10, 0, tzinfo=UTC)
+    assert pro.payment.audit_metadata["subscription_credit_action"] == SUBSCRIPTION_CHANGE_UPGRADE
+    assert access.plan == PLAN_PRO
+    assert event_metadata[-1]["previous_plan"] == PLAN_PLUS
+    assert event_metadata[-1]["change_type"] == SUBSCRIPTION_CHANGE_UPGRADE
+
+
+@pytest.mark.asyncio
+async def test_lower_plan_purchase_is_blocked_while_higher_plan_is_active(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+    await _purchase_plan(
+        db_session,
+        service,
+        125,
+        plan=PLAN_PRO,
+        now=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(PaymentPlanChangeError, match="downgrade_not_allowed"):
+        await service.create_invoice(db_session, 125, plan=PLAN_PLUS)
+
+    payment_count = await db_session.scalar(select(func.count(Payment.id)))
+    assert payment_count == 1
+
+
+@pytest.mark.asyncio
+async def test_lower_plan_credit_is_blocked_when_higher_plan_became_active(db_session: AsyncSession) -> None:
+    service = PaymentService(settings=_settings())
+    plus_invoice = await service.create_invoice(db_session, 126, plan=PLAN_PLUS)
+    plus_payment = await service.confirm_payment(
+        db_session,
+        126,
+        _confirmation(plus_invoice),
+        now=datetime(2026, 5, 15, 10, 0, tzinfo=UTC),
+    )
+    await _purchase_plan(
+        db_session,
+        service,
+        126,
+        plan=PLAN_PRO,
+        now=datetime(2026, 5, 16, 10, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(PaymentPlanChangeError, match="downgrade_not_allowed"):
+        await service.credit_payment(
+            db_session,
+            plus_payment,
+            now=datetime(2026, 5, 16, 10, 5, tzinfo=UTC),
+        )
+
+    subscription_count = await db_session.scalar(select(func.count(Subscription.id)))
+    assert plus_payment.status == "paid"
+    assert subscription_count == 1
 
 
 @pytest.mark.asyncio

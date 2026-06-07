@@ -84,6 +84,10 @@ PAYMENT_CONFIG_REQUIRED_TEXT = (
     "Die Zahlung ist aktuell nicht verfügbar.\n\n"
     "Bitte versuche es später erneut."
 )
+PAYMENT_PLAN_CHANGE_BLOCKED_TEXT = (
+    "Plus ist erst wieder verfügbar, wenn dein Pro-Abo abgelaufen ist.\n\n"
+    "Dein aktueller Pro-Zugang bleibt aktiv."
+)
 PAYMENT_PRECHECKOUT_ERROR_TEXT = "Diese Zahlung konnte nicht bestätigt werden."
 PAYMENT_SUCCESS_PLUS_TEXT = (
     "Plus ist aktiv ✅\n\n"

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from datetime import datetime
-
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Payment, Subscription
 
 PAID_PLANS = {"plus", "pro"}
+PAID_PLAN_RANK = {"plus": 1, "pro": 2}
 
 
 class SubscriptionRepository:
@@ -37,9 +36,17 @@ class SubscriptionRepository:
                     Subscription.expires_at > current_time,
                 ),
             )
-            .order_by(desc(Subscription.expires_at), desc(Subscription.id))
+            .order_by(desc(_paid_plan_rank_expression()), desc(Subscription.expires_at), desc(Subscription.id))
         )
         return await db.scalar(query)
+
+    async def get_by_id(
+        self,
+        db: AsyncSession,
+        *,
+        subscription_id: int,
+    ) -> Subscription | None:
+        return await db.scalar(select(Subscription).where(Subscription.id == subscription_id))
 
     async def get_latest_for_user(
         self,
@@ -88,6 +95,27 @@ class SubscriptionRepository:
         db.add(subscription)
         return subscription
 
+    async def extend_current_period(
+        self,
+        _db: AsyncSession,
+        subscription: Subscription,
+        *,
+        expires_at: datetime,
+    ) -> Subscription:
+        subscription.expires_at = expires_at
+        return subscription
+
+    async def close_for_upgrade(
+        self,
+        _db: AsyncSession,
+        subscription: Subscription,
+        *,
+        ended_at: datetime,
+    ) -> Subscription:
+        subscription.status = "cancelled"
+        subscription.expires_at = ended_at
+        return subscription
+
     async def list_user_subscriptions(
         self,
         db: AsyncSession,
@@ -107,3 +135,10 @@ class SubscriptionRepository:
             return None
         max_id = await db.scalar(select(func.max(Subscription.id)))
         return (max_id or 0) + 1
+
+
+def _paid_plan_rank_expression():
+    return case(
+        *((Subscription.plan == plan, rank) for plan, rank in PAID_PLAN_RANK.items()),
+        else_=0,
+    )
