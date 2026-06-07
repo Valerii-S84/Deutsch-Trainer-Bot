@@ -54,8 +54,6 @@ LEGACY_BASELINE = {
     ("app/services/mistakes.py", "parameters", "MistakeService._record_history"): 9,
     ("app/services/mistakes.py", "parameters", "MistakeService.record_review_success"): 10,
     ("app/services/mistakes.py", "parameters", "MistakeService.record_wrong_answer"): 12,
-    ("app/services/payments.py", "class-lines", "PaymentService"): 306,
-    ("app/services/payments.py", "function-lines", "PaymentService.create_invoice"): 65,
     ("app/services/progress.py", "parameters", "ProgressService.record_answer_result"): 14,
     ("app/services/progress_model.py", "parameters", "calculate_topic_scores"): 8,
     ("app/services/progress_model.py", "parameters", "determine_topic_status"): 8,

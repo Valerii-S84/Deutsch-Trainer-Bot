@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from app.config import Settings, get_settings
@@ -11,7 +11,8 @@ from app.repositories.payments import PaymentRepository
 from app.repositories.subscriptions import SubscriptionRepository
 from app.repositories.users import UserRepository
 from app.services.analytics import AnalyticsTracker
-from app.services.entitlements import PLAN_PLUS, PLAN_PRO
+from app.services.entitlements import PLAN_FREE, PLAN_PLUS, PLAN_PRO
+from app.services.subscription_credits import SubscriptionCredit, SubscriptionCreditError, SubscriptionCreditPolicy
 
 PAYMENT_CURRENCY = "XTR"
 PAYMENT_PROVIDER = "telegram_stars"
@@ -93,14 +94,21 @@ class PaymentService:
         self._subscription_repo = subscription_repo or SubscriptionRepository()
         self._analytics_repo = analytics_repo or AnalyticsEventRepository()
         self._analytics_tracker = AnalyticsTracker(self._analytics_repo)
+        self._subscription_credit_policy = SubscriptionCreditPolicy(self._subscription_repo)
         self._settings = settings or get_settings()
 
     async def create_invoice(self, db, telegram_user_id: int, *, plan: str) -> PaymentInvoice:
-        config = self._plan_config(plan)
+        config = _plan_config(self._settings, plan)
         user = await self._user_repo.create_if_missing(db, telegram_user_id)
         if getattr(user, "id", None) is None and hasattr(db, "flush"):
             await db.flush()
 
+        current_subscription = await self._subscription_credit_policy.ensure_plan_change_allowed(
+            db,
+            user_id=user.id,
+            requested_plan=config.plan,
+        )
+        current_plan = current_subscription.plan if current_subscription is not None else PLAN_FREE
         idempotency_key = uuid4().hex
         payment = await self._payment_repo.create(
             db,
@@ -125,8 +133,6 @@ class PaymentService:
             **(payment.audit_metadata or {}),
             "invoice_payload": payload,
         }
-        current_subscription = await self._subscription_repo.get_effective_paid_subscription(db, user_id=user.id)
-        current_plan = current_subscription.plan if current_subscription is not None else "free"
         await self._record_event(
             db,
             event_name="paywall_clicked",
@@ -149,17 +155,7 @@ class PaymentService:
                 "provider": PAYMENT_PROVIDER,
             },
         )
-        return PaymentInvoice(
-            payment_id=payment.id,
-            plan=config.plan,
-            title=config.title,
-            description=config.description,
-            payload=payload,
-            currency=PAYMENT_CURRENCY,
-            amount_stars=config.amount_stars,
-            price_label=f"{config.plan.capitalize()}-Abo",
-            provider_token=PAYMENT_PROVIDER_TOKEN,
-        )
+        return _payment_invoice(config, payment_id=payment.id, payload=payload)
 
     async def verify_pre_checkout(
         self,
@@ -173,6 +169,11 @@ class PaymentService:
         payment = await self._payment_from_payload(db, invoice_payload)
         await self._verify_payment_owner(db, payment, telegram_user_id)
         self._verify_payment_config(payment, currency=currency, total_amount=total_amount)
+        await self._subscription_credit_policy.ensure_plan_change_allowed(
+            db,
+            user_id=payment.user_id,
+            requested_plan=payment.plan,
+        )
         if payment.status not in {"created", "pending"}:
             raise PaymentVerificationError("payment_not_payable")
         return await self._payment_repo.mark_pending(db, payment)
@@ -244,41 +245,60 @@ class PaymentService:
     ) -> PaymentCreditResult:
         existing_subscription = await self._subscription_repo.get_by_payment_id(db, payment_id=payment.id)
         if payment.status == "credited":
-            if existing_subscription is None:
-                raise PaymentVerificationError("credited_subscription_missing")
-            return PaymentCreditResult(payment=payment, subscription=existing_subscription, duplicate=True)
+            subscription = existing_subscription or await self._credited_subscription_from_metadata(db, payment)
+            return PaymentCreditResult(payment=payment, subscription=subscription, duplicate=True)
         if payment.status != "paid":
             raise PaymentVerificationError("payment_not_paid")
+        if existing_subscription is not None:
+            await self._payment_repo.mark_credited(db, payment, credited_at=_as_aware_utc(now or datetime.now(UTC)))
+            return PaymentCreditResult(payment=payment, subscription=existing_subscription, duplicate=False)
 
-        config = self._plan_config(payment.plan)
+        config = _plan_config(self._settings, payment.plan)
         started_at = _as_aware_utc(now or datetime.now(UTC))
-        expires_at = started_at + timedelta(days=config.duration_days)
-        subscription = existing_subscription
-        if subscription is None:
-            subscription = await self._subscription_repo.create_active_from_payment(
-                db,
-                user_id=payment.user_id,
-                plan=payment.plan,
-                payment_id=payment.id,
-                started_at=started_at,
-                expires_at=expires_at,
-                provider_reference=payment.telegram_payment_charge_id or payment.provider_payment_charge_id,
-            )
-            await self._record_event(
-                db,
-                event_name="subscription_started",
-                user_id=payment.user_id,
-                metadata={
-                    "payment_id": payment.id,
-                    "plan": payment.plan,
-                    "previous_plan": "free",
-                    "provider": PAYMENT_PROVIDER,
-                    "started_at": started_at.isoformat(),
-                    "expires_at": expires_at.isoformat(),
-                },
-            )
+        credit = await self._subscription_credit_policy.apply(
+            db,
+            payment=payment,
+            duration_days=config.duration_days,
+            credited_at=started_at,
+        )
+        await self._record_subscription_credit_event(
+            db,
+            payment=payment,
+            credit=credit,
+        )
         await self._payment_repo.mark_credited(db, payment, credited_at=started_at)
-        return PaymentCreditResult(payment=payment, subscription=subscription, duplicate=False)
+        return PaymentCreditResult(payment=payment, subscription=credit.subscription, duplicate=False)
+
+    async def _credited_subscription_from_metadata(self, db, payment: Payment) -> Subscription:
+        try:
+            return await self._subscription_credit_policy.subscription_from_credit_metadata(db, payment)
+        except SubscriptionCreditError as exc:
+            raise PaymentVerificationError(exc.reason_code) from exc
+
+    async def _record_subscription_credit_event(
+        self,
+        db,
+        *,
+        payment: Payment,
+        credit: SubscriptionCredit,
+    ) -> None:
+        subscription = credit.subscription
+        await self._record_event(
+            db,
+            event_name="subscription_started",
+            user_id=payment.user_id,
+            metadata={
+                "payment_id": payment.id,
+                "subscription_id": subscription.id,
+                "plan": payment.plan,
+                "previous_plan": credit.previous_plan,
+                "change_type": credit.change_type,
+                "provider": PAYMENT_PROVIDER,
+                "started_at": _as_aware_utc(subscription.started_at or credit.credited_at).isoformat(),
+                "expires_at": _as_aware_utc(subscription.expires_at or credit.credited_at).isoformat(),
+                "credited_at": credit.credited_at.isoformat(),
+            },
+        )
 
     async def confirm_and_credit_payment(
         self,
@@ -319,33 +339,6 @@ class PaymentService:
         )
         return failed
 
-    def _plan_config(self, plan: str) -> PaymentPlanConfig:
-        normalized_plan = str(plan).lower()
-        if normalized_plan not in SUPPORTED_PAYMENT_PLANS:
-            raise PaymentConfigurationError("unsupported_plan")
-        if normalized_plan == PLAN_PLUS:
-            amount = _required_positive_int(self._settings.plus_price_stars, "plus_price_missing")
-            duration = _required_positive_int(self._settings.plus_duration_days, "plus_duration_missing")
-            return PaymentPlanConfig(
-                plan=PLAN_PLUS,
-                amount_stars=amount,
-                duration_days=duration,
-                title="Plus aktivieren",
-                description="Mehr Übungen pro Tag, vollständiger Fortschritt und gezielte Fehlerwiederholung.",
-                config_reference=f"plus:{amount}:stars:{duration}:days",
-            )
-
-        amount = _required_positive_int(self._settings.pro_price_stars, "pro_price_missing")
-        duration = _required_positive_int(self._settings.pro_duration_days, "pro_duration_missing")
-        return PaymentPlanConfig(
-            plan=PLAN_PRO,
-            amount_stars=amount,
-            duration_days=duration,
-            title="Pro aktivieren",
-            description="Erweiterte Statistik, mehr Training und ein tieferer Fehlerüberblick.",
-            config_reference=f"pro:{amount}:stars:{duration}:days",
-        )
-
     async def _payment_from_payload(self, db, invoice_payload: str) -> Payment:
         payment_id, idempotency_key = _parse_invoice_payload(invoice_payload)
         payment = await self._payment_repo.get_by_idempotency_key(db, idempotency_key=idempotency_key)
@@ -363,7 +356,7 @@ class PaymentService:
     def _verify_payment_config(self, payment: Payment, *, currency: str, total_amount: int) -> None:
         if currency != PAYMENT_CURRENCY:
             raise PaymentVerificationError("payment_currency_mismatch")
-        config = self._plan_config(payment.plan)
+        config = _plan_config(self._settings, payment.plan)
         if payment.amount_stars != config.amount_stars or total_amount != config.amount_stars:
             raise PaymentVerificationError("payment_amount_mismatch")
 
@@ -382,6 +375,48 @@ class PaymentService:
             event_metadata=metadata,
             source="payments",
         )
+
+
+def _payment_invoice(config: PaymentPlanConfig, *, payment_id: int, payload: str) -> PaymentInvoice:
+    return PaymentInvoice(
+        payment_id=payment_id,
+        plan=config.plan,
+        title=config.title,
+        description=config.description,
+        payload=payload,
+        currency=PAYMENT_CURRENCY,
+        amount_stars=config.amount_stars,
+        price_label=f"{config.plan.capitalize()}-Abo",
+        provider_token=PAYMENT_PROVIDER_TOKEN,
+    )
+
+
+def _plan_config(settings: Settings, plan: str) -> PaymentPlanConfig:
+    normalized_plan = str(plan).lower()
+    if normalized_plan not in SUPPORTED_PAYMENT_PLANS:
+        raise PaymentConfigurationError("unsupported_plan")
+    if normalized_plan == PLAN_PLUS:
+        amount = _required_positive_int(settings.plus_price_stars, "plus_price_missing")
+        duration = _required_positive_int(settings.plus_duration_days, "plus_duration_missing")
+        return PaymentPlanConfig(
+            plan=PLAN_PLUS,
+            amount_stars=amount,
+            duration_days=duration,
+            title="Plus aktivieren",
+            description="Mehr Übungen pro Tag, vollständiger Fortschritt und gezielte Fehlerwiederholung.",
+            config_reference=f"plus:{amount}:stars:{duration}:days",
+        )
+
+    amount = _required_positive_int(settings.pro_price_stars, "pro_price_missing")
+    duration = _required_positive_int(settings.pro_duration_days, "pro_duration_missing")
+    return PaymentPlanConfig(
+        plan=PLAN_PRO,
+        amount_stars=amount,
+        duration_days=duration,
+        title="Pro aktivieren",
+        description="Erweiterte Statistik, mehr Training und ein tieferer Fehlerüberblick.",
+        config_reference=f"pro:{amount}:stars:{duration}:days",
+    )
 
 
 def _build_invoice_payload(payment_id: int, idempotency_key: str) -> str:

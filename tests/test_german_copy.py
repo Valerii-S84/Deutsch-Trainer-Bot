@@ -32,7 +32,7 @@ from app.services.analytics import (
     format_admin_metrics,
 )
 from app.services.entitlements import PLAN_PLUS, PLAN_PRO
-from app.services.payments import PaymentService
+from app.services.payments import _plan_config
 from app.services.training_session import AnswerResult, QuizQuestionPayload
 
 
@@ -211,10 +211,10 @@ def extract_text_keyword_literals(path: Path, node: ast.AST) -> tuple[tuple[Path
 
 
 def iter_payment_invoice_copy_samples() -> tuple[tuple[str, str], ...]:
-    service = PaymentService(settings=_payment_settings())
+    settings = _payment_settings()
     samples: list[tuple[str, str]] = []
     for plan in (PLAN_PLUS, PLAN_PRO):
-        config = service._plan_config(plan)
+        config = _plan_config(settings, plan)
         markup = build_invoice_payment_keyboard(amount_stars=config.amount_stars)
         pay_button = markup.inline_keyboard[0][0]
         samples.extend(
@@ -295,6 +295,7 @@ def iter_subscription_samples() -> tuple[tuple[str, str], ...]:
 def iter_payment_flow_samples() -> tuple[tuple[str, str], ...]:
     samples = [
         ("payment.config_required", bot_texts.PAYMENT_CONFIG_REQUIRED_TEXT),
+        ("payment.plan_change_blocked", bot_texts.PAYMENT_PLAN_CHANGE_BLOCKED_TEXT),
         ("payment.precheckout_error", bot_texts.PAYMENT_PRECHECKOUT_ERROR_TEXT),
         ("payment.success_plus", bot_texts.PAYMENT_SUCCESS_PLUS_TEXT),
         ("payment.success_pro", bot_texts.PAYMENT_SUCCESS_PRO_TEXT),
