@@ -37,6 +37,71 @@ def _as_str_secret(value: object) -> str | None:
     return str(value)
 
 
+async def _send_json_request(
+    http_client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    *,
+    params: Mapping[str, Any] | None,
+    json_body: Mapping[str, Any] | None,
+    headers: Mapping[str, str],
+    timeout_seconds: int,
+) -> httpx.Response:
+    return await http_client.request(
+        method=method,
+        url=path,
+        params=params,
+        json=dict(json_body) if json_body is not None else None,
+        headers=headers,
+        timeout=httpx.Timeout(timeout_seconds),
+    )
+
+
+async def _retry_if_allowed(
+    client: "QuizBankAsyncClient",
+    *,
+    can_retry: bool,
+    attempt: int,
+    max_attempts: int,
+    status_code: int | None = None,
+) -> bool:
+    if not can_retry or attempt >= max_attempts:
+        return False
+    if status_code is not None and status_code != 429 and not 500 <= status_code < 600:
+        return False
+    await client._sleep_with_backoff(attempt, client._max_retries)
+    return True
+
+
+def _raise_for_error_response(
+    client: "QuizBankAsyncClient",
+    response: httpx.Response,
+    *,
+    path: str,
+    request_id: str,
+) -> None:
+    status = response.status_code
+    context = {"status_code": status, "endpoint": path, "request_id": request_id}
+    if status == 403 and client._problem_reason_code(response) == "CONSUMER_THEME_NOT_ALLOWED":
+        client._record_permanent_error(path, status, request_id, "scope")
+        raise QuizBankValidationError(client._error_message(response), **context)
+    if status == 401 or status == 403:
+        client._record_permanent_error(path, status, request_id, "auth")
+        raise QuizBankAuthError("Quiz Bank authentication failed", **context)
+    if status == 404:
+        client._record_permanent_error(path, status, request_id, "not_found")
+        raise QuizBankUnavailableError("Quiz Bank content not found", **context)
+    if status == 429:
+        client._record_transient_failure(path, request_id=request_id, status_code=status, error_category="rate_limit")
+        raise QuizBankRateLimitError("Quiz Bank API rate limit exceeded", **context)
+    if 500 <= status < 600:
+        client._record_transient_failure(path, request_id=request_id, status_code=status, error_category="server")
+        raise QuizBankUnavailableError("Quiz Bank API server error", **context)
+    if status >= 400:
+        client._record_permanent_error(path, status, request_id, "validation")
+        raise QuizBankValidationError(client._error_message(response), **context)
+
+
 class QuizBankAsyncClient:
     """HTTP client with timeout and retry policy for protected Quiz Bank API."""
 
@@ -115,7 +180,6 @@ class QuizBankAsyncClient:
         extra_headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         self._raise_if_circuit_open(path)
-        timeout = httpx.Timeout(self._timeout_seconds)
         attempt = 0
         max_attempts = max(0, self._max_retries) + 1
         can_retry = method.upper() == "GET"
@@ -127,17 +191,17 @@ class QuizBankAsyncClient:
             if extra_headers:
                 headers.update(extra_headers)
             try:
-                response = await self._http_client.request(
-                    method=method,
-                    url=path,
+                response = await _send_json_request(
+                    self._http_client,
+                    method,
+                    path,
                     params=params,
-                    json=dict(json_body) if json_body is not None else None,
+                    json_body=json_body,
                     headers=headers,
-                    timeout=timeout,
+                    timeout_seconds=self._timeout_seconds,
                 )
             except httpx.RequestError as exc:
-                if can_retry and attempt < max_attempts:
-                    await self._sleep_with_backoff(attempt, self._max_retries)
+                if await _retry_if_allowed(self, can_retry=can_retry, attempt=attempt, max_attempts=max_attempts):
                     continue
                 self._record_transient_failure(path, request_id=request_id, error_category="transport")
                 raise QuizBankUnavailableError(
@@ -146,76 +210,15 @@ class QuizBankAsyncClient:
                     endpoint=path,
                 ) from exc
 
-            if response.status_code == 403 and self._problem_reason_code(response) == "CONSUMER_THEME_NOT_ALLOWED":
-                self._record_permanent_error(path, response.status_code, request_id, "scope")
-                raise QuizBankValidationError(
-                    self._error_message(response),
-                    status_code=response.status_code,
-                    endpoint=path,
-                    request_id=request_id,
-                )
-
-            if response.status_code == 401 or response.status_code == 403:
-                self._record_permanent_error(path, response.status_code, request_id, "auth")
-                raise QuizBankAuthError(
-                    "Quiz Bank authentication failed",
-                    status_code=response.status_code,
-                    endpoint=path,
-                    request_id=request_id,
-                )
-
-            if response.status_code == 404:
-                self._record_permanent_error(path, response.status_code, request_id, "not_found")
-                raise QuizBankUnavailableError(
-                    "Quiz Bank content not found",
-                    status_code=response.status_code,
-                    endpoint=path,
-                    request_id=request_id,
-                )
-
-            if response.status_code == 429:
-                if can_retry and attempt < max_attempts:
-                    await self._sleep_with_backoff(attempt, self._max_retries)
-                    continue
-                self._record_transient_failure(
-                    path,
-                    request_id=request_id,
-                    status_code=response.status_code,
-                    error_category="rate_limit",
-                )
-                raise QuizBankRateLimitError(
-                    "Quiz Bank API rate limit exceeded",
-                    status_code=response.status_code,
-                    endpoint=path,
-                    request_id=request_id,
-                )
-
-            if 500 <= response.status_code < 600:
-                if can_retry and attempt < max_attempts:
-                    await self._sleep_with_backoff(attempt, self._max_retries)
-                    continue
-                self._record_transient_failure(
-                    path,
-                    request_id=request_id,
-                    status_code=response.status_code,
-                    error_category="server",
-                )
-                raise QuizBankUnavailableError(
-                    "Quiz Bank API server error",
-                    status_code=response.status_code,
-                    endpoint=path,
-                    request_id=request_id,
-                )
-
-            if response.status_code >= 400:
-                message = self._error_message(response)
-                self._record_permanent_error(path, response.status_code, request_id, "validation")
-                raise QuizBankValidationError(
-                    message,
-                    status_code=response.status_code,
-                    endpoint=path,
-                    request_id=request_id,
-                )
+            if await _retry_if_allowed(
+                self,
+                can_retry=can_retry,
+                attempt=attempt,
+                max_attempts=max_attempts,
+                status_code=response.status_code,
+            ):
+                continue
+            _raise_for_error_response(self, response, path=path, request_id=request_id)
 
             self._reset_circuit()
             return self._parse_json(response)
