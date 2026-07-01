@@ -127,6 +127,7 @@ UNKNOWN_CALLBACK_TEXT = (
 )
 
 RATE_LIMIT_HIT_TEXT = "Bitte warte kurz und versuche es dann erneut."
+SATURATION_RETRY_TEXT = "Das System ist gerade ausgelastet. Bitte versuche es gleich erneut."
 
 ADMIN_METRICS_UNAUTHORIZED_TEXT = "Diese Admin-Funktion ist nicht verfügbar."
 ADMIN_METRICS_UNAVAILABLE_TEXT = "Admin-Metriken sind aktuell nicht verfügbar."

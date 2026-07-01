@@ -22,6 +22,21 @@ class QuestionReferenceRepository:
             ),
         )
 
+    async def get_by_catalog_item(
+        self,
+        db: AsyncSession,
+        *,
+        catalog_id: str,
+        item_id: str,
+        item_version: str | None,
+    ) -> QuestionReference | None:
+        query = select(QuestionReference).where(
+            QuestionReference.catalog_id == catalog_id,
+            QuestionReference.item_id == item_id,
+            QuestionReference.item_version == item_version,
+        )
+        return await db.scalar(query)
+
     async def upsert_snapshot(
         self,
         db: AsyncSession,
@@ -36,11 +51,24 @@ class QuestionReferenceRepository:
         correct_answer_snapshot: str | None,
         explanation_snapshot: str | None,
     ) -> QuestionReference:
-        existing = await self.get_by_item_id(db, item_id)
+        catalog_id = _catalog_id_from_metadata(metadata_snapshot)
+        item_version = _item_version_from_metadata(metadata_snapshot, content_version)
+        if catalog_id:
+            existing = await self.get_by_catalog_item(
+                db,
+                catalog_id=catalog_id,
+                item_id=item_id,
+                item_version=item_version,
+            )
+        else:
+            existing = await self.get_by_item_id(db, item_id)
         if existing is not None:
+            existing.catalog_id = catalog_id
+            existing.item_version = item_version
             existing.level = level
             existing.theme = theme
             existing.theme_key = theme_key
+            existing.source = "local_quiz_catalog" if catalog_id else existing.source
             existing.metadata_snapshot = metadata_snapshot
             existing.content_version = content_version
             existing.question_text_snapshot = question_text_snapshot
@@ -51,10 +79,13 @@ class QuestionReferenceRepository:
 
         question_reference = QuestionReference(
             id=await next_sqlite_id_if_needed(db, QuestionReference),
+            catalog_id=catalog_id,
             item_id=item_id,
+            item_version=item_version,
             level=level,
             theme=theme,
             theme_key=theme_key,
+            source="local_quiz_catalog" if catalog_id else "quiz_bank_api",
             metadata_snapshot=metadata_snapshot,
             content_version=content_version,
             question_text_snapshot=question_text_snapshot,
@@ -63,3 +94,15 @@ class QuestionReferenceRepository:
         )
         db.add(question_reference)
         return question_reference
+
+
+def _catalog_id_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+    value = (metadata or {}).get("catalog_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _item_version_from_metadata(metadata: dict[str, Any] | None, fallback: str | None) -> str | None:
+    value = (metadata or {}).get("item_version")
+    if isinstance(value, str) and value:
+        return value
+    return fallback

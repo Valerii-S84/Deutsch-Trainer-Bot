@@ -7,7 +7,7 @@ from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-SUPPORTED_LEVELS: Final[set[str]] = {"A1", "A2", "B1", "B2", "C1"}
+SUPPORTED_LEVELS: Final[set[str]] = {"A1", "A2", "B1", "B2", "C1", "C2"}
 
 
 class QuizBankRequestContext(BaseModel):

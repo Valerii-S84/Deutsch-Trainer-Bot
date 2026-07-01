@@ -40,6 +40,7 @@ async def test_submit_answer_marks_score_once_for_duplicate_click() -> None:
     active_session = await service._session_repo.get_active_for_user(db, user.id)  # type: ignore[attr-defined]
     assert active_session is not None
     assert active_session.correct_answers == 0
+    assert len(service._outbox_repo.events) == 1  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -71,6 +72,7 @@ async def test_submit_answer_is_idempotent_by_telegram_update_id() -> None:
     assert first.is_duplicate is False
     assert second.is_duplicate is True
     assert service._answer_repo.create_calls == 1  # type: ignore[attr-defined]
+    assert len(service._outbox_repo.events) == 1  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -132,4 +134,3 @@ async def test_submit_answer_from_another_user_is_rejected() -> None:
         )
 
     assert service._answer_repo.create_calls == 0  # type: ignore[attr-defined]
-

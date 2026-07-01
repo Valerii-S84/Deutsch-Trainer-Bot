@@ -8,12 +8,21 @@ services:
       BOT_WEBHOOK_ENABLED: "True"
       BOT_POLLING_ENABLED: "False"
       BOT_MAX_REQUEST_TIMEOUT: ${BOT_MAX_REQUEST_TIMEOUT:-30}
+      BOT_GLOBAL_IN_FLIGHT_LIMIT: ${BOT_GLOBAL_IN_FLIGHT_LIMIT:-512}
+      BOT_GLOBAL_IN_FLIGHT_TIMEOUT_SECONDS: ${BOT_GLOBAL_IN_FLIGHT_TIMEOUT_SECONDS:-0.05}
       TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:?set HTTPS public origin outside repo}
       TELEGRAM_WEBHOOK_PATH: ${TELEGRAM_WEBHOOK_PATH:-/telegram/webhook}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set in protected secret storage}
+      TELEGRAM_WEBHOOK_MAX_CONNECTIONS: ${TELEGRAM_WEBHOOK_MAX_CONNECTIONS:-40}
       TELEGRAM_DUPLICATE_UPDATE_TTL_SECONDS: ${TELEGRAM_DUPLICATE_UPDATE_TTL_SECONDS:-300}
       DATABASE_URL: ${DATABASE_URL:?set in protected secret storage}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-5}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-True}
       REDIS_URL: ${REDIS_URL:?set in protected secret storage}
+      REDIS_MAX_CONNECTIONS: ${REDIS_MAX_CONNECTIONS:-256}
       QUIZ_BANK_API_BASE_URL: ${QUIZ_BANK_API_BASE_URL:?set Quiz Bank origin outside repo}
       QUIZ_BANK_EDGE_API_KEY: ${QUIZ_BANK_EDGE_API_KEY:?set in protected secret storage}
       QUIZ_BANK_CONSUMER_ID: ${QUIZ_BANK_CONSUMER_ID:?set approved consumer id}
@@ -48,6 +57,36 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  worker:
+    image: ${BOT_IMAGE:?set immutable BOT_IMAGE}
+    command: ["python", "-m", "app.workers.run_outbox"]
+    environment:
+      APP_ENV: production
+      APP_NAME: ${APP_NAME:-deutsch-trainer-bot}
+      DATABASE_URL: ${DATABASE_URL:?set in protected secret storage}
+      DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-5}
+      DB_POOL_TIMEOUT: ${WORKER_DB_POOL_TIMEOUT:-5}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-True}
+      WORKER_DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-10}
+      WORKER_DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-5}
+      WORKER_DB_POOL_TIMEOUT: ${WORKER_DB_POOL_TIMEOUT:-5}
+      REDIS_URL: ${REDIS_URL:?set in protected secret storage}
+      REDIS_MAX_CONNECTIONS: ${REDIS_MAX_CONNECTIONS:-256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SECURITY_RATE_LIMIT_ENABLED: "True"
+      SECURITY_STATE_BACKEND: redis
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file

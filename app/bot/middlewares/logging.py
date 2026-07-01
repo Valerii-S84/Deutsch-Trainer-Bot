@@ -5,12 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from aiogram import BaseMiddleware
-
 logger = logging.getLogger(__name__)
 
 
-class LoggingMiddleware(BaseMiddleware):
+class LoggingMiddleware:
     """Log update metadata without leaking payload details or secrets."""
 
     async def __call__(self, handler: Any, event: Any, data: dict[str, Any]) -> Any:

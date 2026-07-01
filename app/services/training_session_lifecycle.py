@@ -89,6 +89,7 @@ class TrainingSessionLifecycleMixin:
             source_metadata=self._default_source_metadata(flow, telegram_user_id),
             api_metadata={"started_at": datetime.now(UTC).isoformat()},
         )
+        await self._attach_catalog_context(db, session)
         await db.flush()
         await self._record_training_started(db, user_id=user.id, session=session, flow=flow)
         return session
@@ -103,7 +104,6 @@ class TrainingSessionLifecycleMixin:
     ):
         if self._mistakes_service is None:
             raise NoReviewItemsError("Review service is not configured")
-
         user = await self.get_user(db, telegram_user_id)
         review_items = await self._mistakes_service.get_review_items(db, telegram_user_id)
         if not review_items:
@@ -137,6 +137,7 @@ class TrainingSessionLifecycleMixin:
             source_metadata=self._default_source_metadata(self.SESSION_FLOW_REVIEW, telegram_user_id),
             api_metadata={"review_count": len(review_items)},
         )
+        await self._attach_catalog_context(db, session)
         await db.flush()
         await self._record_training_started(
             db,

@@ -53,8 +53,8 @@ Release 1 production має включати:
 | Component | Purpose |
 |---|---|
 | Telegram bot runtime | Обробка user messages і callbacks. |
-| Persistent data store | Users, sessions, answers, progress, mistakes, subscriptions, payments. |
-| Quiz Bank API client | Отримання навчального контенту. |
+| Persistent data store | Local Quiz Catalog, users, sessions, answers, progress, mistakes, subscriptions, payments. |
+| Local Quiz Catalog importer | Imports snapshot catalog data into PostgreSQL before runtime use. |
 | Payment integration | Telegram Stars payment flow. |
 | Admin metrics surface | Базова статистика й operational diagnostics. |
 | Logging | Technical diagnostics and incident review. |
@@ -108,11 +108,27 @@ Milestone 12 repo-side deployment artifacts:
 | `deploy/env.production.template` | Production environment variable template without committed secrets. |
 | `deploy/env.staging.template` | Staging environment variable template without committed secrets. |
 | `scripts/ops_preflight.sh` | Non-deploy preflight validation for config, Compose, DB and Redis. |
-| `scripts/ops_smoke.sh` | Non-mutating HTTP, Telegram and Quiz Bank smoke checks. |
+| `scripts/ops_smoke.sh` | Non-mutating HTTP, Telegram and Local Catalog readiness smoke checks. |
+| `scripts/import_local_catalog.py` | Local Quiz Catalog import and dry-run validation from snapshot data sources. |
 | `docs/20_operations_deployment_runbook.md` | Concrete pre-deploy, deploy, smoke, rollback and incident response runbook. |
 
 These artifacts do not prove production readiness without target-environment
 evidence from staging or production.
+
+Local Catalog import operations:
+
+```bash
+python scripts/import_local_catalog.py \
+  --source-path "${CATALOG_SOURCE_PATH:-ProductionQuizBank}" \
+  --catalog-id "<new-catalog-id>" \
+  --catalog-version "<snapshot-version>" \
+  --dry-run
+```
+
+The importer report must include catalog checksum, manifest checksum, source
+count comparison and `added_count`, `updated_count`, `skipped_count`,
+`failed_count`. Manifest count drift is handled as a warning unless row
+validation fails.
 
 ## 4.3. Deployment Preflight
 
@@ -123,7 +139,8 @@ evidence from staging or production.
 * environment variables present;
 * secrets loaded from protected storage;
 * Telegram bot token configured;
-* Quiz Bank API access works;
+* `ACTIVE_CATALOG_ID` configured for runtime environments;
+* Local Quiz Catalog import completed and active catalog exists in PostgreSQL;
 * payment provider test or production mode explicitly known;
 * database reachable;
 * backup exists or initial backup policy is active;
@@ -139,7 +156,7 @@ Deploy має:
 * не змінювати production data вручну без окремого approval;
 * не bypass-ити test gates без documented risk;
 * не активувати paid access logic без payment verification;
-* не змінювати Quiz Bank ownership boundary.
+* не змінювати Local Quiz Catalog active version без catalog rollback/import evidence.
 
 ## 4.5. Post-Deploy Verification
 
@@ -149,7 +166,7 @@ Deploy має:
 |---|---|
 | Bot health | Runtime accepts Telegram updates. |
 | `/start` flow | User can reach Home or onboarding. |
-| Quiz Bank API | Health and question fetch work. |
+| Local Quiz Catalog | Active catalog exists and question selection reads from PostgreSQL. |
 | Training session | Question can be shown and answered. |
 | Progress update | Accepted answer updates progress. |
 | Mistake creation | Wrong answer creates mistake. |
@@ -172,7 +189,7 @@ Environment variables configure runtime behavior without committing secrets or p
 |---|---|
 | Runtime | Environment, timezone, log level. |
 | Telegram | Bot token, webhook or polling mode. |
-| Quiz Bank API | Base URL, API key, timeout. |
+| Local Quiz Catalog | Active catalog id, enabled levels, import source path and importer mode. |
 | Database | Connection string or credentials. |
 | Payment | Telegram Stars/payment provider settings. |
 | Admin | Admin auth and access configuration. |
@@ -190,16 +207,26 @@ Recommended logical variables:
 | `LOG_LEVEL` | Yes | No | Runtime logging level. |
 | `BOT_TOKEN` | Yes | Yes | Telegram Bot API access. |
 | `BOT_WEBHOOK_ENABLED` | Production | No | Must be true for production webhook runtime. |
+| `BOT_POLLING_ENABLED` | Yes | No | Must be false for production webhook runtime unless an explicit polling exception is approved. |
+| `BOT_GLOBAL_IN_FLIGHT_LIMIT` | Yes | No | Process-level cap for concurrent Telegram update handling. |
+| `BOT_GLOBAL_IN_FLIGHT_TIMEOUT_SECONDS` | Yes | No | Maximum wait before rejecting a saturated update with a retry response. |
 | `TELEGRAM_WEBHOOK_URL` | If webhook | No | HTTPS public origin; exact production FQDN lives in deploy inventory, not committed docs. |
 | `TELEGRAM_WEBHOOK_PATH` | If webhook | No | Locked Release 1 path: `/telegram/webhook`. |
 | `TELEGRAM_WEBHOOK_SECRET` | If webhook | Yes | Webhook verification, if used. |
-| `QUIZ_BANK_API_BASE_URL` | Yes | No | Quiz Bank API host. |
-| `QUIZ_BANK_EDGE_API_KEY` | Yes | Yes | Edge/API gateway auth. |
-| `QUIZ_BANK_CONSUMER_ID` | Yes | No | Consumer identity for Quiz Bank access. |
-| `QUIZ_BANK_CONSUMER_API_KEY` | Yes | Yes | Consumer API auth. |
-| `QUIZ_BANK_TIMEOUT_SECONDS` | Yes | No | API timeout. |
-| `QUIZ_BANK_MAX_RETRIES` | Yes | No | Safe read retry budget. |
+| `TELEGRAM_WEBHOOK_MAX_CONNECTIONS` | If webhook | No | Telegram webhook connection fanout; must match tested capacity. |
+| `ACTIVE_CATALOG_ID` | Production | No | Selects the imported Local Quiz Catalog for new gameplay. |
+| `CATALOG_SOURCE_PATH` | Import only | No | Snapshot source directory, for example `ProductionQuizBank/` or `data/catalogs/...`. |
+| `CATALOG_IMPORT_DRY_RUN` | Import only | No | Allows validation/reporting without writes. |
+| `ENABLED_CEFR_LEVELS` | Yes | No | Runtime levels that UI/gameplay may serve; catalog storage supports A1-C2. |
 | `DATABASE_URL` | Yes | Yes | Data store connection. |
+| `DB_POOL_SIZE` | Yes | No | Web process SQLAlchemy pool size. |
+| `DB_MAX_OVERFLOW` | Yes | No | Web process temporary overflow connections. |
+| `DB_POOL_TIMEOUT` | Yes | No | Maximum DB checkout wait before timeout. |
+| `DB_POOL_RECYCLE` | Yes | No | SQLAlchemy pool recycle seconds. |
+| `DB_POOL_PRE_PING` | Yes | No | Enables stale connection detection before checkout use. |
+| `WORKER_DB_POOL_SIZE` | Production | No | Outbox worker pool size mapped to `DB_POOL_SIZE` in worker process. |
+| `WORKER_DB_MAX_OVERFLOW` | Production | No | Outbox worker overflow connections mapped to `DB_MAX_OVERFLOW`. |
+| `WORKER_DB_POOL_TIMEOUT` | Production | No | Outbox worker DB checkout timeout mapped to `DB_POOL_TIMEOUT`. |
 | `REDIS_URL` | Production | Yes | Redis-backed global rate limits and duplicate update guard. |
 | `SECURITY_STATE_BACKEND` | Yes | No | `auto` locally; Redis outside development. |
 | `SECURITY_RATE_LIMIT_ENABLED` | Yes | No | Enables abuse-sensitive rate limits. |
@@ -237,7 +264,8 @@ Application startup should fail fast if:
 * production has no database configuration;
 * production has no Redis configuration for global security state;
 * production has no backup configuration;
-* Quiz Bank API timeout is missing;
+* production has no `ACTIVE_CATALOG_ID`;
+* active Local Quiz Catalog is missing or not imported;
 * admin owner allowlist is not configured.
 
 ---
@@ -249,7 +277,7 @@ Application startup should fail fast if:
 Monitoring має показувати:
 
 * чи бот доступний;
-* чи працює Quiz Bank API;
+* чи імпортований і активний Local Quiz Catalog;
 * чи проходять тренувальні сесії;
 * чи зберігаються відповіді;
 * чи працюють платежі;
@@ -264,9 +292,10 @@ Required health checks:
 | Check | Purpose |
 |---|---|
 | Bot runtime health | Process is running. |
+| Bot readiness | `/ready` confirms DB checkout and Redis ping within budget. |
 | Telegram connectivity | Bot can receive or poll updates. |
 | Database health | Data store reachable. |
-| Quiz Bank health | External content API reachable or degraded state known. |
+| Local Catalog health | Active catalog exists, is active, and has selectable items for enabled levels. |
 | Payment readiness | Payment provider config present. |
 | Admin surface health | Protected admin metrics reachable by authorized admin. |
 
@@ -279,7 +308,8 @@ Release 1 monitoring stack:
 | Application | Structured app logs with redaction filter enabled. |
 | Database | PostgreSQL connectivity and admin metrics queries. |
 | Redis | Connectivity check for rate limits and duplicate update guard. |
-| Payments/API | Analytics/admin metrics for payment failures, duplicate provider events and Quiz Bank errors. |
+| Local Catalog | Active catalog id, import status, item counts, checksum evidence and selection smoke. |
+| Payments/API | Analytics/admin metrics for payment failures and duplicate provider events. |
 
 ## 6.3. Operational Metrics
 
@@ -289,11 +319,18 @@ Monitor:
 |---|---|
 | `bot_errors_rate` | Runtime instability. |
 | `telegram_update_failures` | Telegram handling issue. |
-| `quiz_api_error_rate` | Quiz Bank instability. |
-| `quiz_api_latency_p95` | Slow content delivery. |
+| `catalog_import_failures` | Catalog import or validation instability. |
+| `active_catalog_missing` | Gameplay cannot safely select questions. |
+| `catalog_selection_latency_p95` | Slow local question selection. |
 | `training_started_count` | Activity baseline. |
 | `training_completion_rate` | Product flow health. |
 | `answer_write_failures` | Data integrity risk. |
+| `answer_accept_latency_p95/p99` | User-facing answer path latency. |
+| `db_pool_wait_p95/p99` | Pool saturation and timeout storm risk. |
+| `redis_latency_p95/p99` | Rate limit and duplicate guard dependency health. |
+| `outbox_worker_lag_p95/p99` | Progress/mistake/analytics backlog risk. |
+| `outbox_dead_events` | Worker idempotency or poison event risk. |
+| `duplicate_answer_rejected_count` | DB-level answer idempotency pressure. |
 | `daily_limit_charge_errors` | Limit accounting risk. |
 | `payment_failed_count` | Payment issue. |
 | `payment_duplicate_event_count` | Idempotency pressure. |
@@ -305,7 +342,7 @@ Monitor:
 
 | Level | Meaning | Example |
 |---|---|---|
-| `info` | Needs observation. | Temporary API degradation. |
+| `info` | Needs observation. | Temporary catalog import warning. |
 | `warning` | Needs operator review. | Elevated payment failures. |
 | `critical` | Needs immediate action. | Bot down, database unavailable, payment credit broken. |
 
@@ -331,6 +368,9 @@ Production backup must cover:
 * users;
 * training sessions;
 * training session items;
+* local quiz catalogs;
+* local quiz catalog items;
+* local quiz catalog import runs;
 * question references;
 * user answers;
 * progress topics;
@@ -378,6 +418,7 @@ Minimum expectation:
 
 | Data | Backup Need |
 |---|---|
+| Local Quiz Catalog and import history | Regular backup and restore proof before switching active catalog. |
 | User and learning state | Regular backup. |
 | Payments and subscriptions | High reliability backup. |
 | Analytics events | Backup if internal analytics is source of truth. |
@@ -441,10 +482,10 @@ Rollback should be considered if:
 * bot cannot process Telegram updates;
 * training sessions cannot start;
 * answers cannot be saved;
+* active Local Quiz Catalog is missing or corrupted;
 * progress is corrupted or not updated;
 * payments cannot be credited safely;
 * duplicate subscriptions are created;
-* API integration breaks core training;
 * admin metrics expose sensitive data;
 * logs expose secrets.
 
@@ -492,10 +533,10 @@ An incident is any production condition that threatens:
 
 * availability;
 * learning data integrity;
+* catalog integrity;
 * payment correctness;
 * user privacy;
 * admin access security;
-* Quiz Bank integration;
 * backup recoverability.
 
 ## 9.2. Severity Levels
@@ -503,7 +544,7 @@ An incident is any production condition that threatens:
 | Severity | Meaning | Examples |
 |---|---|---|
 | `SEV1` | Critical production impact. | Bot down, payment credit duplicated, data leak. |
-| `SEV2` | Major degraded behavior. | API unavailable for many users, answer writes failing. |
+| `SEV2` | Major degraded behavior. | Active catalog unavailable for many users, answer writes failing. |
 | `SEV3` | Limited issue. | One paywall context broken, admin metric delayed. |
 | `SEV4` | Minor operational issue. | Non-critical analytics delay. |
 
@@ -530,7 +571,7 @@ Incident record should include:
 | `started_at` | When issue began. |
 | `detected_at` | When detected. |
 | `resolved_at` | When resolved. |
-| `affected_area` | Bot, API, payment, data, admin, backup. |
+| `affected_area` | Bot, catalog, payment, data, admin, backup. |
 | `user_impact` | What users experienced. |
 | `root_cause` | Confirmed cause or unknown. |
 | `mitigation` | Action taken. |
@@ -567,7 +608,9 @@ Release 1 admin surface must show:
 | `answers_today` | Learning activity. |
 | `payment_count` | Payment activity. |
 | `active_subscriptions` | Current paid users. |
-| `api_errors_today` | Quiz Bank reliability. |
+| `active_catalog_id` | Currently selected Local Quiz Catalog. |
+| `catalog_items_active` | Number of active selectable local catalog items. |
+| `catalog_import_failures` | Recent import validation or checksum failures. |
 | `payment_errors_today` | Payment reliability. |
 
 ## 10.3. Recommended Learning Metrics
@@ -604,7 +647,7 @@ Admin metrics must:
 Production logs should support:
 
 * request correlation;
-* API failure diagnosis;
+* catalog selection/import diagnosis;
 * payment incident diagnosis;
 * admin access audit;
 * deploy/rollback traceability.
@@ -614,12 +657,10 @@ Production logs should support:
 Logs must not contain:
 
 * Telegram bot token;
-* Quiz Bank API key;
 * payment credentials;
 * database credentials;
 * raw Authorization headers;
 * full provider payloads;
-* full raw Quiz Bank responses;
 * `.env` contents;
 * private keys.
 
@@ -645,7 +686,8 @@ Before enabling production:
 * implementation stack selected;
 * database selected and configured;
 * Telegram bot token stored in secret storage;
-* Quiz Bank API key stored in secret storage;
+* Local Quiz Catalog imported into PostgreSQL;
+* `ACTIVE_CATALOG_ID` configured and verified;
 * payment provider configured;
 * admin authentication configured;
 * required environment variables configured;
@@ -676,7 +718,7 @@ After each deploy:
 
 * bot responds to Telegram;
 * `/start` works;
-* Quiz Bank API request works;
+* active Local Quiz Catalog readiness works;
 * training session works;
 * answer save works;
 * progress update works;
@@ -696,8 +738,8 @@ Production is blocked if:
 * backup is not configured;
 * restore was never tested;
 * rollback target is unknown;
-* Quiz Bank API access is not validated;
-* API failure charges daily limit;
+* active Local Quiz Catalog is missing or not validated;
+* catalog selection failure charges daily limit;
 * user-facing copy is not German;
 * critical tests fail without accepted risk.
 
@@ -711,7 +753,7 @@ Production remains blocked until evidence exists for:
 * Telegram webhook registration in the approved environment;
 * protected credential injection without committed secrets;
 * staging smoke test with safe credentials;
-* monitoring for bot, Caddy, DB, Redis, Quiz Bank, payments, subscriptions,
+* monitoring for bot, Caddy, DB, Redis, Local Catalog, payments, subscriptions,
   admin auth failures, logs and backups;
 * encrypted backup creation;
 * restore verification on a disposable non-production database;
@@ -726,7 +768,7 @@ Operations standard is acceptable for Release 1 if:
 
 1. Deployment has preflight and post-deploy checks.
 2. Environment variable groups and sensitive variables are defined.
-3. Monitoring covers bot, API, database, payment and backup health.
+3. Monitoring covers bot, Local Catalog, database, payment and backup health.
 4. Backup scope, protection and restore rules are defined.
 5. Rollback triggers and safety rules are defined.
 6. Incident response has severity levels and response steps.
@@ -741,7 +783,7 @@ Operations standard is acceptable for Release 1 if:
 
 1. Production deploy must be repeatable and reversible.
 2. Secrets live outside committed files.
-3. Monitoring must detect API, payment and data integrity failures.
+3. Monitoring must detect catalog, payment and data integrity failures.
 4. Backup is not valid until restore is tested.
 5. Rollback must not duplicate payments or corrupt learning data.
 6. Incidents require evidence and follow-up.

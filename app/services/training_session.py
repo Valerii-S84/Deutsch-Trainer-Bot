@@ -4,7 +4,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.quiz_bank import QuizBankService
+from app.catalog.service import LocalCatalogNotConfiguredError, LocalCatalogQuizService
+from app.config import get_settings
 from app.quiz_bank.errors import (
     QuizBankAuthError,
     QuizBankError,
@@ -14,7 +15,6 @@ from app.quiz_bank.errors import (
 )
 from app.services.entitlements import EntitlementService
 from app.services.analytics import AnalyticsTracker
-from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
 from app.services.training_session_lifecycle import TrainingSessionLifecycleMixin
 from app.services.training_answer_flow import TrainingAnswerProcessor
@@ -32,6 +32,7 @@ from app.services.training_payloads import (
 from app.repositories.answers import AnswerRepository
 from app.repositories.analytics_events import AnalyticsEventRepository
 from app.repositories.api_error_logs import ApiErrorLogRepository
+from app.repositories.outbox import OutboxRepository
 from app.repositories.question_references import QuestionReferenceRepository
 from app.repositories.quiz_sessions import QuizSessionRepository, QuizSessionStatus
 from app.repositories.training_session_items import TrainingSessionItemRepository
@@ -46,11 +47,10 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
     CANCELLED_SESSION_STATUS = QuizSessionStatus.cancelled
     FAILED_SESSION_STATUS = QuizSessionStatus.failed
     DEFAULT_SESSION_QUESTIONS = 5
-    QUIZ_SOURCE = "quiz_bank_api"
+    QUIZ_SOURCE = "local_quiz_catalog"
     SESSION_FLOW_REGULAR = "regular"
     SESSION_FLOW_REVIEW = "mistake_review"
     SESSION_FLOW_RECOMMENDED = "recommended"
-
     def __init__(
         self,
         *,
@@ -61,10 +61,10 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         api_error_log_repo: ApiErrorLogRepository | None = None,
         question_reference_repo: QuestionReferenceRepository | None = None,
         session_item_repo: TrainingSessionItemRepository | None = None,
-        quiz_service: QuizBankService | None = None,
-        progress_service: ProgressService | None = None,
+        quiz_service: Any | None = None,
         mistakes_service: MistakeService | None = None,
         entitlement_service: EntitlementService | None = None,
+        outbox_repo: OutboxRepository | None = None,
     ) -> None:
         self._user_repo = user_repo or UserRepository()
         self._session_repo = session_repo or QuizSessionRepository()
@@ -74,16 +74,63 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
         self._question_reference_repo = question_reference_repo or QuestionReferenceRepository()
         self._session_item_repo = session_item_repo or TrainingSessionItemRepository()
         self._quiz_service = quiz_service
-        self._progress_service = progress_service
         self._mistakes_service = mistakes_service
         self._entitlement_service = entitlement_service
+        self._outbox_repo = outbox_repo or OutboxRepository()
         self._analytics_tracker = AnalyticsTracker(self._analytics_repo)
+        self._settings = get_settings()
 
     @property
-    def _quiz_bank_service(self) -> QuizBankService:
+    def _catalog_service(self) -> Any:
         if self._quiz_service is None:
-            self._quiz_service = QuizBankService()
+            self._quiz_service = LocalCatalogQuizService(self._settings)
         return self._quiz_service
+
+    def _uses_local_catalog(self) -> bool:
+        return isinstance(self._catalog_service, LocalCatalogQuizService)
+
+    def _active_catalog_id(self) -> str:
+        catalog_id = (self._settings.active_catalog_id or "").strip()
+        if not catalog_id:
+            raise LocalCatalogNotConfiguredError("ACTIVE_CATALOG_ID is required for training gameplay")
+        return catalog_id
+
+    async def _active_catalog_version(self, db: AsyncSession) -> str | None:
+        if not self._uses_local_catalog():
+            return None
+        return await self._catalog_service.catalog_version(db, catalog_id=self._active_catalog_id())
+
+    async def _attach_catalog_context(self, db: AsyncSession, session) -> None:
+        if not self._uses_local_catalog():
+            return
+        session.catalog_id = self._active_catalog_id()
+        session.catalog_version = await self._active_catalog_version(db)
+
+    async def _request_quiz_items(
+        self,
+        db: AsyncSession,
+        *,
+        session,
+        user,
+        request_context,
+    ):
+        service = self._catalog_service
+        if not self._uses_local_catalog():
+            return await service.request_quiz(
+                level=session.level,
+                theme=session.theme,
+                limit=1,
+                user_context=request_context,
+            )
+        return await service.request_quiz(
+            db,
+            catalog_id=self._active_catalog_id(),
+            level=session.level,
+            theme=session.theme,
+            limit=1,
+            user_context=request_context,
+            seed_material=f"{user.id}:{session.id}:{session.shown_questions_count}",
+        )
 
     def _session_flow(self, session) -> str:
         metadata = session.source_metadata or {}
@@ -164,11 +211,19 @@ class TrainingSessionService(TrainingSessionLifecycleMixin):
     ) -> int | None:
         if not theme:
             return None
-        quiz_service = self._quiz_bank_service
+        quiz_service = self._catalog_service
         if not hasattr(quiz_service, "get_availability"):
             return None
         try:
-            availability = await quiz_service.get_availability(level=level, theme=theme)
+            if self._uses_local_catalog():
+                availability = await quiz_service.get_availability(
+                    db,
+                    catalog_id=self._active_catalog_id(),
+                    level=level,
+                    theme=theme,
+                )
+            else:
+                availability = await quiz_service.get_availability(level=level, theme=theme)
         except QuizBankError as exc:
             await self._record_quiz_bank_error(
                 db,

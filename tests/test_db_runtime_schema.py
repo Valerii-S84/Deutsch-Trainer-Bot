@@ -13,6 +13,7 @@ EXPECTED_TABLES = {
     "quiz_catalogs",
     "quiz_catalog_items",
     "quiz_catalog_import_runs",
+    "outbox_events",
     "quiz_sessions",
     "question_references",
     "training_session_items",
@@ -43,6 +44,7 @@ EXPECTED_INDEXES = {
         "ix_quiz_catalog_import_runs_catalog_started",
         "ix_quiz_catalog_import_runs_status",
     },
+    "outbox_events": {"ix_outbox_events_claim", "ix_outbox_events_aggregate"},
     "question_references": {
         "uq_question_references_api_item_id",
         "ix_question_references_item_id",
@@ -122,6 +124,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
         "uq_payments_provider_payment_charge_id",
     },
     "subscriptions": {"uq_subscriptions_payment_id"},
+    "outbox_events": {"uq_outbox_events_idempotency_key"},
 }
 
 EXPECTED_FOREIGN_KEYS = {
@@ -133,6 +136,11 @@ EXPECTED_FOREIGN_KEYS = {
 EXPECTED_CHECK_CONSTRAINTS = {
     "question_references": {"ck_question_references_supported_level"},
     "training_session_items": {"ck_training_session_items_catalog_scope_complete"},
+    "outbox_events": {
+        "ck_outbox_events_status",
+        "ck_outbox_events_retry_count_non_negative",
+        "ck_outbox_events_max_retries_non_negative",
+    },
     "payments": {"ck_payments_confirmed_telegram_charge_id"},
 }
 
@@ -142,7 +150,8 @@ EXPECTED_NOT_NULL_COLUMNS = {
 
 EXPECTED_JSONB = {
     "quiz_catalogs": {"metadata"},
-    "quiz_catalog_items": {"tags", "metadata"},
+    "quiz_catalog_items": {"options", "tags", "metadata"},
+    "outbox_events": {"payload"},
     "quiz_catalog_import_runs": {"error_summary"},
     "quiz_sessions": {"source_metadata", "api_metadata"},
     "question_references": {"metadata_snapshot"},

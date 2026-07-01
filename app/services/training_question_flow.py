@@ -55,7 +55,6 @@ class TrainingQuestionProcessor:
             pending = self._pending_payload(context.session)
             if pending is not None:
                 return pending
-
         seen_item_ids = await self._service._answer_repo.list_question_ids_by_session(db, context.session.id)
         question_request = await self._build_question_request(
             db,
@@ -95,7 +94,6 @@ class TrainingQuestionProcessor:
         pending = metadata.get("pending_question")
         if not isinstance(pending, dict):
             return None
-
         payload = deserialize_question_payload(pending)
         if payload.session_id != session.id:
             return None
@@ -170,11 +168,11 @@ class TrainingQuestionProcessor:
     ):
         service = self._service
         try:
-            return await service._quiz_bank_service.request_quiz(
-                level=context.session.level,
-                theme=context.session.theme,
-                limit=1,
-                user_context=question_request.request_context,
+            return await service._request_quiz_items(
+                db,
+                session=context.session,
+                user=context.user,
+                request_context=question_request.request_context,
             )
         except QuizBankError as exc:
             await service._record_quiz_bank_error(
@@ -198,7 +196,7 @@ class TrainingQuestionProcessor:
             return response.items[0]
 
         await self._mark_no_more_questions(db, context, question_request)
-        raise NoMoreQuestionsError("Quiz Bank returned no questions")
+        raise NoMoreQuestionsError("Local catalog returned no questions")
 
     async def _mark_no_more_questions(
         self,
@@ -306,6 +304,7 @@ class TrainingQuestionProcessor:
             item_id=question.item_id,
             position=context.answered + 1,
         )
+        _apply_catalog_session_item_context(session_item, question)
         await self._record_question_shown(db, context, session_item, existing_session_item)
         return session_item
 
@@ -347,3 +346,13 @@ class TrainingQuestionProcessor:
         api_metadata["returned_count"] = response.returned_count
         api_metadata["has_more"] = response.has_more
         await service._session_repo.set_api_metadata(db, session, api_metadata)
+
+
+def _catalog_id_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+    value = (metadata or {}).get("catalog_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _apply_catalog_session_item_context(session_item: Any, question: Any) -> None:
+    session_item.catalog_id = _catalog_id_from_metadata(question.metadata)
+    session_item.item_version = question.content_version

@@ -102,7 +102,16 @@ async def test_submit_answer_completes_session_and_clears_pending() -> None:
     assert session_item is not None
     assert session_item.status == "answered"
     event_names = [event.event_name for event in service._analytics_repo.events]  # type: ignore[attr-defined]
-    assert event_names == ["training_started", "question_answered", "training_completed", "result_shown"]
+    assert event_names == ["training_started"]
+    assert len(service._outbox_repo.events) == 1  # type: ignore[attr-defined]
+    outbox_event = service._outbox_repo.events[0]  # type: ignore[attr-defined]
+    assert outbox_event["event_type"] == "answer.accepted"
+    assert outbox_event["aggregate_type"] == "user_answer"
+    payload = outbox_event["payload"]
+    assert outbox_event["aggregate_id"] == payload["answer_id"]
+    assert payload["session_completed"] is True
+    assert payload["is_correct"] is True
+    assert payload["correct_answers"] == 1
 
 
 @pytest.mark.asyncio
@@ -176,4 +185,3 @@ def make_training_service_with_user_repo(user_repo: FakeUserRepository):
         session_item_repo=FakeSessionItemRepository(),
         quiz_service=StubQuizBankService([]),
     )
-

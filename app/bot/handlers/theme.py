@@ -15,14 +15,13 @@ from app.bot.texts import (
     TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
 )
 from app.bot.handlers.common import extract_user_id as _extract_user_id
-from app.bot.handlers.common import map_quizbank_error
 from app.bot.handlers.common import session_factory as _session_factory
-from app.quiz_bank.errors import QuizBankError
-from app.quiz_bank.service import QuizBankService
+from app.catalog.service import LocalCatalogNotConfiguredError, LocalCatalogQuizService
+from app.catalog.selection import CatalogLevelDisabledError
 from app.repositories.users import UserRepository
 
 router = Router(name="theme")
-_quiz_service = QuizBankService
+_catalog_service = LocalCatalogQuizService
 _user_repo = UserRepository()
 
 
@@ -46,11 +45,12 @@ async def open_theme_selection(callback_query: CallbackQuery) -> None:
         return
 
     try:
-        themes_response = await _quiz_service().get_themes(level=selected_level)
-    except QuizBankError as exc:
+        async with _session_factory() as db:
+            themes_response = await _catalog_service().get_themes(db, level=selected_level)
+    except (CatalogLevelDisabledError, LocalCatalogNotConfiguredError):
         if callback_query.message is not None:
             await callback_query.message.answer(
-                map_quizbank_error(exc, default_text=TRAINING_QUIZBANK_UNAVAILABLE_TEXT),
+                TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
                 reply_markup=build_levels_keyboard(),
             )
         return

@@ -50,6 +50,19 @@ def smoke_health(client: httpx.Client, base_url: str) -> None:
     print("[ops_smoke] application health passed")
 
 
+def smoke_ready(client: httpx.Client, base_url: str) -> None:
+    response = client.get(f"{base_url.rstrip('/')}/ready")
+    if response.status_code != 200:
+        raise SystemExit("Application readiness check failed")
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise SystemExit("Application readiness response is not JSON") from exc
+    if body.get("status") != "ok":
+        raise SystemExit("Application readiness status is not ok")
+    print("[ops_smoke] application readiness passed")
+
+
 def smoke_telegram(client: httpx.Client) -> None:
     token = require_env("BOT_TOKEN")
     response = client.get(f"https://api.telegram.org/bot{token}/getMe")
@@ -92,6 +105,7 @@ timeout = float(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 try:
     with httpx.Client(timeout=timeout, follow_redirects=False) as client:
         smoke_health(client, base_url)
+        smoke_ready(client, base_url)
         if enabled("RUN_TELEGRAM_SMOKE"):
             smoke_telegram(client)
         if enabled("RUN_QUIZ_BANK_SMOKE"):

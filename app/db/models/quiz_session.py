@@ -72,8 +72,8 @@ class QuizSession(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
-        default="quiz_bank_api",
-        server_default=sa.text("'quiz_bank_api'"),
+        default="local_quiz_catalog",
+        server_default=sa.text("'local_quiz_catalog'"),
     )
     source_metadata: Mapped[Optional[dict[str, object]]] = mapped_column(json_document_type(), nullable=True)
     api_request_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

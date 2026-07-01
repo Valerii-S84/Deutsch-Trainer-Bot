@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.bot.dispatcher import create_dispatcher
 from app.bot.routers import build_root_router
+from app.bot.middlewares.backpressure import BackpressureMiddleware
 from app.bot.middlewares.logging import LoggingMiddleware
 from app.bot.middlewares.security import SecurityMiddleware
 
@@ -40,3 +41,9 @@ def test_dispatcher_has_security_middleware() -> None:
     dispatcher = create_dispatcher()
     middlewares = dispatcher.update.__dict__["middleware"]._middlewares
     assert any(isinstance(item, SecurityMiddleware) for item in middlewares)
+
+
+def test_dispatcher_has_backpressure_middleware() -> None:
+    dispatcher = create_dispatcher()
+    middlewares = dispatcher.update.__dict__["middleware"]._middlewares
+    assert any(isinstance(item, BackpressureMiddleware) for item in middlewares)

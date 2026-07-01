@@ -60,6 +60,7 @@ def test_models_importable() -> None:
     assert models.QuizCatalog is not None
     assert models.QuizCatalogItem is not None
     assert models.QuizCatalogImportRun is not None
+    assert models.OutboxEvent is not None
     assert models.QuestionReference is not None
     assert models.TrainingSessionItem is not None
     assert models.UserAnswer is not None
@@ -80,6 +81,7 @@ def test_metadata_contains_expected_tables() -> None:
         "quiz_catalogs",
         "quiz_catalog_items",
         "quiz_catalog_import_runs",
+        "outbox_events",
         "quiz_sessions",
         "question_references",
         "training_session_items",
@@ -161,6 +163,11 @@ def test_quiz_catalog_items_columns_present() -> None:
         "theme_id",
         "theme",
         "theme_slug",
+        "prompt",
+        "stem_text",
+        "options",
+        "answer_key",
+        "explanation",
         "status",
         "source",
         "checksum",
@@ -264,6 +271,31 @@ def test_user_answers_columns_present() -> None:
     }
     assert expected.issubset(table.columns.keys())
     assert _has_index("user_answers", ("user_id", "level", "theme", "external_quiz_id"))
+
+
+def test_outbox_events_columns_present() -> None:
+    table = Base.metadata.tables["outbox_events"]
+    expected = {
+        "event_type",
+        "aggregate_type",
+        "aggregate_id",
+        "idempotency_key",
+        "status",
+        "payload",
+        "retry_count",
+        "max_retries",
+        "next_attempt_at",
+        "locked_at",
+        "locked_by",
+        "processed_at",
+        "failed_at",
+        "dead_at",
+        "last_error",
+    }
+    assert expected.issubset(table.columns.keys())
+    assert _has_unique_constraint("outbox_events", {"idempotency_key"})
+    assert _has_check_constraint("outbox_events", "ck_outbox_events_status")
+    assert _has_index("outbox_events", ("status", "next_attempt_at", "id"))
 
 
 def test_progress_columns_present() -> None:
