@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import re
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AnalyticsEvent
@@ -66,6 +66,54 @@ class AnalyticsEventRepository:
         )
         db.add(event)
         return event
+
+    async def record_many(
+        self,
+        db: AsyncSession,
+        events: list[dict[str, Any]],
+    ) -> list[AnalyticsEvent]:
+        if not events:
+            return []
+
+        sanitized_events = [self._sanitized_event(values) for values in events]
+        if db.get_bind().dialect.name == "postgresql":
+            rows = await db.execute(insert(AnalyticsEvent).returning(*AnalyticsEvent.__table__.c), sanitized_events)
+            return [AnalyticsEvent(**dict(row)) for row in rows.mappings().all()]
+
+        models = []
+        for values in sanitized_events:
+            models.append(
+                AnalyticsEvent(
+                    id=await next_sqlite_id_if_needed(db, AnalyticsEvent),
+                    **values,
+                ),
+            )
+        db.add_all(models)
+        return models
+
+    def _sanitized_event(self, values: dict[str, Any]) -> dict[str, Any]:
+        event_name = str(values["event_name"])
+        source = str(values.get("source", "bot"))
+        event_metadata = values.get("event_metadata")
+        session_id = values.get("session_id")
+        reason_code = _rejection_reason(event_name=event_name, source=source, event_metadata=event_metadata)
+        if reason_code is not None:
+            event_metadata = {
+                "rejected_event_name": _safe_text(event_name, max_length=128),
+                "reason_code": reason_code,
+            }
+            event_name = "analytics_event_rejected"
+            source = "analytics"
+            session_id = None
+
+        return {
+            "user_id": values.get("user_id"),
+            "event_name": event_name,
+            "event_time": datetime.now(UTC),
+            "event_metadata": event_metadata,
+            "session_id": session_id,
+            "source": source,
+        }
 
 
 async def has_user_event_since(

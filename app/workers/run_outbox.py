@@ -12,7 +12,11 @@ from app.workers.outbox import OutboxWorker
 async def _run(args: argparse.Namespace) -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    worker = OutboxWorker(batch_size=args.batch_size, stale_after_seconds=args.stale_after_seconds)
+    worker = OutboxWorker(
+        batch_size=args.batch_size,
+        max_parallelism=args.parallelism,
+        stale_after_seconds=args.stale_after_seconds,
+    )
     try:
         if args.once:
             processed = await worker.process_once()
@@ -27,7 +31,8 @@ async def _run(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Deutsch Trainer Bot outbox worker.")
     parser.add_argument("--once", action="store_true", help="Process one batch and exit.")
-    parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=200)
+    parser.add_argument("--parallelism", type=int, default=5)
     parser.add_argument("--stale-after-seconds", type=int, default=300)
     parser.add_argument("--idle-sleep-seconds", type=float, default=1.0)
     asyncio.run(_run(parser.parse_args()))

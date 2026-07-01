@@ -296,6 +296,8 @@ def test_outbox_events_columns_present() -> None:
     assert _has_unique_constraint("outbox_events", {"idempotency_key"})
     assert _has_check_constraint("outbox_events", "ck_outbox_events_status")
     assert _has_index("outbox_events", ("status", "next_attempt_at", "id"))
+    assert _has_index("outbox_events", ("status", "next_attempt_at", "created_at", "id"))
+    assert _has_index("outbox_events", ("status", "locked_at"))
 
 
 def test_progress_columns_present() -> None:

@@ -55,6 +55,40 @@ class ProgressRepository:
         db.add(progress)
         return progress
 
+    async def create_from_answer(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        level: str,
+        theme: str | None,
+        theme_key: str | None,
+        is_correct: bool,
+        now: datetime,
+    ) -> Progress:
+        progress_id = await next_sqlite_id_if_needed(db, Progress)
+        total_correct = 1 if is_correct else 0
+        wrong_count = 0 if is_correct else 1
+        progress = Progress(
+            id=progress_id,
+            user_id=user_id,
+            level=level,
+            theme=theme,
+            theme_key=theme_key,
+            total_answered=1,
+            total_correct=total_correct,
+            wrong_count=wrong_count,
+            accuracy=Decimal("100.00") if is_correct else Decimal("0.00"),
+            stability_score=Decimal("0.00"),
+            weakness_score=Decimal("0.00"),
+            streak=1 if is_correct else 0,
+            last_answered_at=now,
+            last_wrong_at=None if is_correct else now,
+            last_recalculated_at=now,
+        )
+        db.add(progress)
+        return progress
+
     async def get_or_create(
         self,
         db: AsyncSession,

@@ -80,8 +80,9 @@ class ProgressService:
     async def record_answer_result(
         self,
         db,
-        telegram_user_id: int,
+        telegram_user_id: int | None,
         *,
+        user_id: int | None = None,
         level: str,
         theme: str | None,
         is_correct: bool,
@@ -96,23 +97,47 @@ class ProgressService:
         reason_code: str = "answer_accepted",
     ):
         now = answered_at or datetime.now(UTC)
-        user = await self._user_repo.create_if_missing(db, telegram_user_id)
-        progress = await self._progress_repo.get_or_create(
+        target_user_id = await self._resolve_user_id(
             db,
-            user_id=user.id,
+            telegram_user_id=telegram_user_id,
+            user_id=user_id,
+        )
+        progress = await self._progress_repo.get_by_user_level_theme(
+            db,
+            user_id=target_user_id,
             level=level,
             theme=theme,
         )
+        totals_already_applied = False
+        if progress is None:
+            if is_duplicate:
+                progress = await self._progress_repo.create(
+                    db,
+                    user_id=target_user_id,
+                    level=level,
+                    theme=theme,
+                )
+            else:
+                progress = await self._progress_repo.create_from_answer(
+                    db,
+                    user_id=target_user_id,
+                    level=level,
+                    theme=theme,
+                    theme_key=theme_key,
+                    is_correct=is_correct,
+                    now=now,
+                )
+                totals_already_applied = True
         await db.flush()
 
-        if theme_key:
+        if theme_key and not totals_already_applied:
             progress.theme_key = theme_key
 
         if is_duplicate:
             return progress
 
         answer_update = _ProgressAnswerUpdate(
-            user_id=user.id,
+            user_id=target_user_id,
             level=level,
             theme=theme,
             is_correct=is_correct,
@@ -129,7 +154,22 @@ class ProgressService:
             db,
             progress=progress,
             answer_update=answer_update,
+            totals_already_applied=totals_already_applied,
         )
+
+    async def _resolve_user_id(
+        self,
+        db,
+        *,
+        telegram_user_id: int | None,
+        user_id: int | None,
+    ) -> int:
+        if user_id is not None:
+            return int(user_id)
+        if telegram_user_id is None:
+            raise ValueError("telegram_user_id is required when user_id is not provided")
+        user = await self._user_repo.create_if_missing(db, telegram_user_id)
+        return int(user.id)
 
     async def _record_new_answer(
         self,
@@ -137,17 +177,19 @@ class ProgressService:
         *,
         progress,
         answer_update: _ProgressAnswerUpdate,
+        totals_already_applied: bool = False,
     ):
         previous_status = progress.topic_status
-        previous_scores = self._progress_history_repo.snapshot_scores(progress)
-        await self._progress_repo.update_totals(
-            db,
-            progress,
-            answered_delta=1,
-            correct_delta=1 if answer_update.is_correct else 0,
-            now=answer_update.answered_at,
-        )
-        await self._progress_repo.update_streak_if_supported(progress, is_correct=answer_update.is_correct)
+        previous_scores = None if totals_already_applied else self._progress_history_repo.snapshot_scores(progress)
+        if not totals_already_applied:
+            await self._progress_repo.update_totals(
+                db,
+                progress,
+                answered_delta=1,
+                correct_delta=1 if answer_update.is_correct else 0,
+                now=answer_update.answered_at,
+            )
+            await self._progress_repo.update_streak_if_supported(progress, is_correct=answer_update.is_correct)
         await self._apply_progress_model(
             db,
             progress=progress,
@@ -176,19 +218,27 @@ class ProgressService:
             metadata_snapshot=answer_update.metadata_snapshot,
             current_value=progress.available_items_count,
         )
-        answer_events = await self._progress_repo.list_recent_topic_answer_events(
-            db,
-            user_id=answer_update.user_id,
-            level=answer_update.level,
-            theme=answer_update.theme,
-            limit=RECENT_TOPIC_EVENTS_LIMIT,
-        )
-        answer_events = _with_current_event(
-            answer_events,
-            item_id=answer_update.item_id,
-            is_correct=answer_update.is_correct,
-            answered_at=answer_update.answered_at,
-        )
+        if int(progress.total_answered or 0) <= 1:
+            answer_events = _with_current_event(
+                [],
+                item_id=answer_update.item_id,
+                is_correct=answer_update.is_correct,
+                answered_at=answer_update.answered_at,
+            )
+        else:
+            answer_events = await self._progress_repo.list_recent_topic_answer_events(
+                db,
+                user_id=answer_update.user_id,
+                level=answer_update.level,
+                theme=answer_update.theme,
+                limit=RECENT_TOPIC_EVENTS_LIMIT,
+            )
+            answer_events = _with_current_event(
+                answer_events,
+                item_id=answer_update.item_id,
+                is_correct=answer_update.is_correct,
+                answered_at=answer_update.answered_at,
+            )
         mistake_signals = await self._progress_repo.get_topic_mistake_signals(
             db,
             user_id=answer_update.user_id,
@@ -231,6 +281,8 @@ class ProgressService:
     ) -> int:
         current_value = int(getattr(progress, "unique_items_seen", 0) or 0)
         recent_unique = len({event.item_id for event in answer_events})
+        if int(progress.total_answered or 0) <= 1:
+            return max(1 if answer_update.item_id is not None else 0, recent_unique)
         if answer_update.item_id is None or answer_update.user_answer_id is None:
             return max(current_value, recent_unique)
 

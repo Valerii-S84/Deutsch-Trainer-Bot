@@ -42,6 +42,8 @@ class OutboxEvent(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_outbox_events_idempotency_key"),
         Index("ix_outbox_events_status_next_attempt", "status", "next_attempt_at", "id"),
+        Index("ix_outbox_events_status_next_attempt_created", "status", "next_attempt_at", "created_at", "id"),
+        Index("ix_outbox_events_status_locked_at", "status", "locked_at"),
         Index("ix_outbox_events_type_status", "event_type", "status"),
         Index("ix_outbox_events_aggregate", "aggregate_type", "aggregate_id"),
         CheckConstraint(

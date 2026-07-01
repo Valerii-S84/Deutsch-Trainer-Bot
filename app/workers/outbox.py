@@ -78,6 +78,7 @@ class OutboxEventProcessor:
         await self._progress_service.record_answer_result(
             db,
             payload.telegram_user_id,
+            user_id=payload.user_id,
             level=payload.level,
             theme=payload.theme,
             is_correct=payload.is_correct,
@@ -96,6 +97,7 @@ class OutboxEventProcessor:
             await self._mistakes_service.record_review_success(
                 db,
                 payload.telegram_user_id,
+                user_id=payload.user_id,
                 external_quiz_id=payload.item_id,
                 question_level=payload.level,
                 question_theme=payload.theme,
@@ -110,6 +112,7 @@ class OutboxEventProcessor:
         await self._mistakes_service.record_wrong_answer(
             db,
             payload.telegram_user_id,
+            user_id=payload.user_id,
             external_quiz_id=payload.item_id,
             level=payload.level,
             theme=payload.theme,
@@ -134,15 +137,17 @@ class OutboxEventProcessor:
             "is_correct": payload.is_correct,
             "position": payload.position,
         }
-        await self._analytics_tracker.record(
-            db,
-            event_name="question_answered",
-            user_id=payload.user_id,
-            session_id=payload.session_id,
-            event_metadata=answer_metadata,
-            source="training",
-        )
+        events = [
+            {
+                "event_name": "question_answered",
+                "user_id": payload.user_id,
+                "session_id": payload.session_id,
+                "event_metadata": answer_metadata,
+                "source": "training",
+            },
+        ]
         if not payload.session_completed:
+            await self._analytics_tracker.record_many(db, events)
             return
         completion_metadata = {
             "session_type": payload.session_type,
@@ -152,22 +157,25 @@ class OutboxEventProcessor:
             "correct_answers": payload.correct_answers,
             "planned_question_count": payload.total_questions,
         }
-        await self._analytics_tracker.record(
-            db,
-            event_name="training_completed",
-            user_id=payload.user_id,
-            session_id=payload.session_id,
-            event_metadata=completion_metadata,
-            source="training",
+        events.extend(
+            [
+                {
+                    "event_name": "training_completed",
+                    "user_id": payload.user_id,
+                    "session_id": payload.session_id,
+                    "event_metadata": completion_metadata,
+                    "source": "training",
+                },
+                {
+                    "event_name": "result_shown",
+                    "user_id": payload.user_id,
+                    "session_id": payload.session_id,
+                    "event_metadata": completion_metadata,
+                    "source": "training",
+                },
+            ],
         )
-        await self._analytics_tracker.record(
-            db,
-            event_name="result_shown",
-            user_id=payload.user_id,
-            session_id=payload.session_id,
-            event_metadata=completion_metadata,
-            source="training",
-        )
+        await self._analytics_tracker.record_many(db, events)
 
 
 class OutboxWorker:
@@ -180,7 +188,8 @@ class OutboxWorker:
         outbox_repo: OutboxRepository | None = None,
         processor: OutboxEventProcessor | None = None,
         worker_id: str | None = None,
-        batch_size: int = 100,
+        batch_size: int = 200,
+        max_parallelism: int = 5,
         stale_after_seconds: int = 300,
     ) -> None:
         self._session_factory = session_factory
@@ -188,15 +197,27 @@ class OutboxWorker:
         self._processor = processor or OutboxEventProcessor()
         self._worker_id = worker_id or f"{gethostname()}:{uuid4().hex[:12]}"
         self._batch_size = batch_size
+        self._max_parallelism = max(1, max_parallelism)
         self._stale_after_seconds = stale_after_seconds
 
     async def process_once(self) -> int:
         events = await self._claim_events()
-        processed = 0
-        for event in events:
-            await self._process_event(event.id)
-            processed += 1
-        return processed
+        if not events:
+            return 0
+
+        if self._max_parallelism <= 1 or len(events) <= 1:
+            for event in events:
+                await self._process_event(event)
+            return len(events)
+
+        semaphore = asyncio.Semaphore(self._max_parallelism)
+
+        async def _bounded_process(event: OutboxEvent) -> None:
+            async with semaphore:
+                await self._process_event(event)
+
+        await asyncio.gather(*(_bounded_process(event) for event in events))
+        return len(events)
 
     async def run_forever(self, *, idle_sleep_seconds: float = 1.0) -> None:
         while True:
@@ -222,25 +243,19 @@ class OutboxWorker:
             await db.commit()
             return events
 
-    async def _process_event(self, event_id: int) -> None:
+    async def _process_event(self, event: OutboxEvent) -> None:
         try:
             async with self._session_factory() as db:
-                event = await db.get(OutboxEvent, event_id)
-                if event is None or event.status != OUTBOX_PROCESSING:
-                    return
                 await self._processor.process(db, event)
-                await self._outbox_repo.mark_done(db, event)
+                await self._outbox_repo.mark_done_by_id(db, event.id)
                 await db.commit()
         except Exception as exc:
-            logger.exception("outbox event processing failed: event_id=%s", event_id)
-            await self._mark_failed(event_id, str(exc))
+            logger.exception("outbox event processing failed: event_id=%s", event.id)
+            await self._mark_failed(event.id, str(exc))
 
     async def _mark_failed(self, event_id: int, error_message: str) -> None:
         async with self._session_factory() as db:
-            event = await db.get(OutboxEvent, event_id)
-            if event is None:
-                return
-            await self._outbox_repo.mark_failed(db, event, error_message=error_message)
+            await self._outbox_repo.mark_failed_by_id(db, event_id, error_message=error_message)
             await db.commit()
 
 
