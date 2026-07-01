@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.answers import AnswerWriteResult
 from app.runtime.idempotency_locks import answer_attempt_lock
 from app.runtime.timing import timing_span
+from app.services.training_answer_fast_path import accept_answer_fast_path
 from app.services.training_answer_persistence import create_answer_or_duplicate
 from app.services.training_answer_state import AnswerContext, AnswerSnapshot
 from app.services.training_payloads import (
@@ -59,6 +60,18 @@ class TrainingAnswerProcessor:
         telegram_update_id: int | None,
     ) -> AnswerResult:
         with timing_span("answer.total_request_ms"):
+            fast_path_result = await accept_answer_fast_path(
+                self._service,
+                db,
+                telegram_user_id,
+                session_id,
+                question_token,
+                selected_option_id,
+                telegram_update_id,
+            )
+            if fast_path_result is not None:
+                return fast_path_result
+
             context, snapshot = await self._validated_context_and_snapshot(
                 db,
                 telegram_user_id,
