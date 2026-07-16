@@ -7,7 +7,6 @@ import contextvars
 import json
 import math
 import os
-import resource
 import subprocess
 import sys
 import threading
@@ -20,6 +19,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+try:
+    import resource as _resource
+except ModuleNotFoundError:
+    _resource = None
 import asyncpg
 from redis.asyncio import Redis
 from sqlalchemy import insert
@@ -62,6 +65,9 @@ QUESTION_OPTIONS = (
     {"option_id": "a1", "text": "Antwort A"},
     {"option_id": "a2", "text": "Antwort B"},
 )
+
+def current_max_rss_mb() -> float:
+    return 0.0 if _resource is None else float(_resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss) / 1024.0
 
 
 @dataclass
@@ -280,10 +286,7 @@ class CpuStackSampler:
         return " | ".join(cls._frame_label(frame) for frame in stack[-8:])
 
 
-CURRENT_REQUEST: contextvars.ContextVar[RequestMetrics | None] = contextvars.ContextVar(
-    "CURRENT_REQUEST",
-    default=None,
-)
+CURRENT_REQUEST: contextvars.ContextVar[RequestMetrics | None] = contextvars.ContextVar("CURRENT_REQUEST", default=None)
 
 
 def percentile(values: list[float | int], p: float) -> float:
@@ -816,10 +819,7 @@ async def run_scenario(args: argparse.Namespace) -> None:
                 elapsed_cpu = max(time.process_time() - started_cpu, 0.0)
                 cpu_percent = (elapsed_cpu / elapsed_wall) * 100.0
                 runtime_stats.max_cpu_percent = max(runtime_stats.max_cpu_percent, cpu_percent)
-                runtime_stats.max_rss_mb = max(
-                    runtime_stats.max_rss_mb,
-                    float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0,
-                )
+                runtime_stats.max_rss_mb = max(runtime_stats.max_rss_mb, current_max_rss_mb())
                 await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             raise

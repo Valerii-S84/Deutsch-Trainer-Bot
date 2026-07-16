@@ -5,12 +5,16 @@ import asyncio
 import contextlib
 import json
 import os
-import resource
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+
+try:
+    import resource as _resource
+except ModuleNotFoundError:
+    _resource = None
 
 import asyncpg
 from sqlalchemy import event, text
@@ -31,6 +35,12 @@ DEFAULT_OPERATIONS = (
 )
 DEFAULT_POOL_CONFIGS = ("5:5", "10:10", "20:20", "40:20")
 DEFAULT_POOL_TIMEOUTS = (2.0, 5.0, 10.0)
+
+
+def current_max_rss_mb() -> float:
+    if _resource is None:
+        return 0.0
+    return float(_resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss) / 1024.0
 
 
 @dataclass
@@ -148,10 +158,7 @@ class Sampler:
                 elapsed_wall = max(time.perf_counter() - started_wall, 0.001)
                 elapsed_cpu = max(time.process_time() - started_cpu, 0.0)
                 self.max_cpu_percent = max(self.max_cpu_percent, (elapsed_cpu / elapsed_wall) * 100.0)
-                self.max_rss_mb = max(
-                    self.max_rss_mb,
-                    float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0,
-                )
+                self.max_rss_mb = max(self.max_rss_mb, current_max_rss_mb())
                 await asyncio.sleep(0.05)
         except asyncio.CancelledError:
             raise

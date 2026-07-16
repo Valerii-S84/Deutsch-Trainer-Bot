@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -127,6 +128,22 @@ def test_sample_pool_state_handles_null_pool_without_queue_methods() -> None:
     assert sample["checked_in"] == 0
     assert sample["overflow"] == 0
     assert sample["status"] == "null ok"
+
+
+def test_current_max_rss_mb_returns_zero_when_resource_module_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(script, "_resource", None)
+
+    assert script.current_max_rss_mb() == 0.0
+
+
+def test_current_max_rss_mb_uses_resource_module_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_resource = SimpleNamespace(
+        RUSAGE_SELF=1,
+        getrusage=lambda _target: SimpleNamespace(ru_maxrss=2048),
+    )
+    monkeypatch.setattr(script, "_resource", fake_resource)
+
+    assert script.current_max_rss_mb() == 2.0
 
 
 def test_measurement_update_id_is_unique_per_run_base() -> None:
