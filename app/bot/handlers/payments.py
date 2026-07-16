@@ -5,6 +5,7 @@ from __future__ import annotations
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, LabeledPrice, Message, PreCheckoutQuery
 
+from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.subscription import (
     build_invoice_payment_keyboard,
     build_payment_failure_keyboard,
@@ -20,7 +21,6 @@ from app.bot.texts import (
     PAYMENT_SUCCESS_PLUS_TEXT,
     PAYMENT_SUCCESS_PRO_TEXT,
 )
-from app.db.session import get_session as _get_session
 from app.services.entitlements import PLAN_PRO
 from app.services.payments import (
     PaymentConfigurationError,
@@ -33,10 +33,6 @@ from app.services.subscription_credits import PaymentPlanChangeError
 router = Router(name="payments")
 
 _payment_service = PaymentService()
-
-
-def _session_factory():
-    return _get_session()
 
 
 def _extract_plan(callback_data: str | None) -> str | None:

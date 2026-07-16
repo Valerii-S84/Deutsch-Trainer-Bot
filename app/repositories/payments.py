@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Payment
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 
 class PaymentRepository:
@@ -24,7 +25,7 @@ class PaymentRepository:
         audit_metadata: dict[str, object] | None = None,
     ) -> Payment:
         payment = Payment(
-            id=await self._next_id_if_needed(db),
+            id=await next_sqlite_id_if_needed(db, Payment),
             user_id=user_id,
             plan=plan,
             amount_stars=amount_stars,
@@ -115,12 +116,6 @@ class PaymentRepository:
         payment.cancelled_at = cancelled_at or datetime.now(UTC)
         payment.audit_metadata = _merge_metadata(payment.audit_metadata, {"cancel_reason": reason_code})
         return payment
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(Payment.id)))
-        return (max_id or 0) + 1
 
 
 def _merge_metadata(existing: dict[str, Any] | None, update: dict[str, object]) -> dict[str, object]:

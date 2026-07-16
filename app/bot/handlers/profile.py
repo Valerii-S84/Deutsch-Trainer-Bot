@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.texts import (
     CALLBACK_PROFILE,
     PROFILE_DETAILS_HEADER,
@@ -21,7 +22,6 @@ from app.bot.texts import (
 )
 from app.bot.keyboards.main_menu import build_back_to_main_menu_button, build_progress_navigation_keyboard
 from app.bot.keyboards.subscription import build_paywall_keyboard
-from app.db.session import get_session as _get_session
 from app.services.analytics import AnalyticsTracker
 from app.services.entitlements import EntitlementService, FEATURE_FULL_PROGRESS_MAP
 from app.services.progress import ProgressService
@@ -32,10 +32,6 @@ router = Router(name="profile")
 _progress_service = ProgressService()
 _entitlement_service = EntitlementService()
 _analytics_tracker = AnalyticsTracker()
-
-
-def _session_factory():
-    return _get_session()
 
 
 def _format_progress_text(progress_records: list[object], *, recommendation_text: str | None = None) -> str:

@@ -7,20 +7,16 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from app.bot.formatting import escape_markdown_text
+from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
 from app.bot.texts import MENU_PROMPT, TRAINING_PROMPT, WELCOME_TEXT
-from app.db.session import get_session as _get_session
 from app.services.analytics import AnalyticsTracker
 from app.repositories.users import UserRepository
 
 router = Router(name="start")
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
-
-
-def _session_factory():
-    return _get_session()
 
 
 async def _remember_user(message: Message):

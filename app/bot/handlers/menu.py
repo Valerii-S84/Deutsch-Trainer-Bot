@@ -7,17 +7,13 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from aiogram import F
 
+from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
 from app.bot.texts import CALLBACK_HOME, HOME_TEXT, MENU_PROMPT
-from app.db.session import get_session as _get_session
 from app.services.training_session import TrainingSessionService
 
 router = Router(name="menu")
 _training_service = TrainingSessionService()
-
-
-def _session_factory():
-    return _get_session()
 
 
 @router.message(Command("menu"))

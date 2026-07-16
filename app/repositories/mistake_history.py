@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Mistake, MistakeHistory
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 
 class MistakeHistoryRepository:
@@ -25,7 +25,7 @@ class MistakeHistoryRepository:
         metadata_snapshot: dict[str, Any] | None = None,
     ) -> MistakeHistory:
         history = MistakeHistory(
-            id=await self._next_id_if_needed(db),
+            id=await next_sqlite_id_if_needed(db, MistakeHistory),
             mistake_id=mistake.id,
             user_id=mistake.user_id,
             user_answer_id=user_answer_id,
@@ -40,9 +40,3 @@ class MistakeHistoryRepository:
         )
         db.add(history)
         return history
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(MistakeHistory.id)))
-        return (max_id or 0) + 1

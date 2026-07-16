@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.bot.handlers import common as handler_common
 from app.bot.handlers import fallback, menu
 from app.bot.handlers import level as level_handlers
 from app.bot.handlers import profile, start, subscription, theme
@@ -14,10 +15,20 @@ from app.bot.texts import (
     LEVEL_CALLBACK_FALLBACK_TEXT,
     PROFILE_TEXT,
     SUBSCRIPTION_STATUS_FREE_TEXT,
+    TRAINING_QUIZBANK_AUTH_ERROR_TEXT,
+    TRAINING_QUIZBANK_RATE_LIMIT_TEXT,
+    TRAINING_QUIZBANK_UNAVAILABLE_TEXT,
+    TRAINING_QUIZBANK_VALIDATION_TEXT,
     UNKNOWN_CALLBACK_TEXT,
     UNKNOWN_MESSAGE_TEXT,
     WELCOME_TEXT,
     TRAINING_PROMPT,
+)
+from app.quiz_bank.errors import (
+    QuizBankAuthError,
+    QuizBankRateLimitError,
+    QuizBankUnavailableError,
+    QuizBankValidationError,
 )
 
 
@@ -71,6 +82,27 @@ class _CallbackQuery:
 class _TrainingService:
     def __init__(self) -> None:
         self.cancel_active_session = AsyncMock(return_value=True)
+
+
+def test_common_extract_user_id_reads_nested_from_user() -> None:
+    event = SimpleNamespace(from_user=SimpleNamespace(id=111))
+
+    assert handler_common.extract_user_id(event) == 111
+
+
+def test_common_extract_user_id_handles_missing_user() -> None:
+    assert handler_common.extract_user_id(SimpleNamespace(from_user=None)) is None
+
+
+def test_common_quizbank_error_mapping_preserves_german_copy() -> None:
+    assert handler_common.map_quizbank_error(QuizBankAuthError("auth")) == TRAINING_QUIZBANK_AUTH_ERROR_TEXT
+    assert handler_common.map_quizbank_error(QuizBankRateLimitError("rate")) == TRAINING_QUIZBANK_RATE_LIMIT_TEXT
+    assert handler_common.map_quizbank_error(QuizBankUnavailableError("down")) == TRAINING_QUIZBANK_UNAVAILABLE_TEXT
+    assert handler_common.map_quizbank_error(QuizBankValidationError("bad")) == TRAINING_QUIZBANK_VALIDATION_TEXT
+
+
+def test_common_quizbank_error_mapping_uses_configured_default() -> None:
+    assert handler_common.map_quizbank_error(RuntimeError("unknown"), default_text="fallback") == "fallback"
 
 
 @pytest.mark.asyncio

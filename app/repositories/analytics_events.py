@@ -4,10 +4,11 @@ from datetime import UTC, datetime
 import re
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AnalyticsEvent
+from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 
 _EVENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,127}$")
 _SOURCE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -55,7 +56,7 @@ class AnalyticsEventRepository:
             session_id = None
 
         event = AnalyticsEvent(
-            id=await self._next_id_if_needed(db),
+            id=await next_sqlite_id_if_needed(db, AnalyticsEvent),
             user_id=user_id,
             event_name=event_name,
             event_time=datetime.now(UTC),
@@ -65,12 +66,6 @@ class AnalyticsEventRepository:
         )
         db.add(event)
         return event
-
-    async def _next_id_if_needed(self, db: AsyncSession) -> int | None:
-        if db.get_bind().dialect.name != "sqlite":
-            return None
-        max_id = await db.scalar(select(func.max(AnalyticsEvent.id)))
-        return (max_id or 0) + 1
 
 
 async def has_user_event_since(
