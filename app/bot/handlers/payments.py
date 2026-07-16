@@ -47,6 +47,16 @@ def _extract_plan(callback_data: str | None) -> str | None:
     return None
 
 
+def _log_payment_unexpected_failure(event_name: str, exc: Exception, **context: object) -> None:
+    context_parts = [f"{key}={value}" for key, value in context.items() if value is not None]
+    logger.error(
+        "%s %s error_type=%s",
+        event_name,
+        " ".join(context_parts),
+        exc.__class__.__name__,
+    )
+
+
 @router.callback_query(F.data.startswith(CALLBACK_PAYMENT_PLAN_PREFIX))
 async def handle_payment_plan_callback(callback_query: CallbackQuery) -> None:
     await callback_query.answer()
@@ -79,12 +89,13 @@ async def handle_payment_plan_callback(callback_query: CallbackQuery) -> None:
                 reply_markup=build_subscription_keyboard(),
             )
             return
-        except Exception:
+        except Exception as exc:
             # Payment start must fail closed without exposing provider or config details.
-            logger.exception(
-                "payment_invoice_create_unexpected_failed telegram_user_id=%s plan=%s",
-                callback_query.from_user.id,
-                plan,
+            _log_payment_unexpected_failure(
+                "payment_invoice_create_unexpected_failed",
+                exc,
+                telegram_user_id=callback_query.from_user.id,
+                plan=plan,
             )
             await db.rollback()
             await callback_query.message.answer(
@@ -120,11 +131,12 @@ async def handle_pre_checkout_query(pre_checkout_query: PreCheckoutQuery) -> Non
             await db.rollback()
             await pre_checkout_query.answer(ok=False, error_message=PAYMENT_PRECHECKOUT_ERROR_TEXT)
             return
-        except Exception:
+        except Exception as exc:
             # Provider validation must fail closed with a generic German error.
-            logger.exception(
-                "payment_pre_checkout_unexpected_failed telegram_user_id=%s",
-                pre_checkout_query.from_user.id,
+            _log_payment_unexpected_failure(
+                "payment_pre_checkout_unexpected_failed",
+                exc,
+                telegram_user_id=pre_checkout_query.from_user.id,
             )
             await db.rollback()
             await pre_checkout_query.answer(ok=False, error_message=PAYMENT_PRECHECKOUT_ERROR_TEXT)
@@ -158,11 +170,12 @@ async def handle_successful_payment(message: Message) -> None:
             await db.rollback()
             await message.answer(PAYMENT_FAILURE_TEXT, reply_markup=build_payment_failure_keyboard())
             return
-        except Exception:
+        except Exception as exc:
             # SuccessfulPayment handling must never unlock access after an unexpected failure.
-            logger.exception(
-                "payment_confirmation_unexpected_failed telegram_user_id=%s",
-                message.from_user.id,
+            _log_payment_unexpected_failure(
+                "payment_confirmation_unexpected_failed",
+                exc,
+                telegram_user_id=message.from_user.id,
             )
             await db.rollback()
             await message.answer(PAYMENT_FAILURE_TEXT, reply_markup=build_payment_failure_keyboard())

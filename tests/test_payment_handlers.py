@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -227,3 +228,37 @@ async def test_successful_payment_failure_shows_safe_copy(monkeypatch) -> None:
     text = message.answer.await_args.args[0]
     assert db.rolled_back == 1
     assert PAYMENT_FAILURE_TEXT == text
+
+
+@pytest.mark.asyncio
+async def test_successful_payment_unexpected_failure_logs_redacted_summary(monkeypatch, caplog) -> None:
+    db = FakeDb()
+    service = FakePaymentService(
+        should_raise=RuntimeError(
+            "invoice_payload=dtbpay:1:secret "
+            "telegram_payment_charge_id=tg-secret "
+            "provider_payment_charge_id=provider-secret",
+        ),
+    )
+    monkeypatch.setattr(payments, "_session_factory", lambda: db)
+    monkeypatch.setattr(payments, "_payment_service", service)
+
+    successful_payment = SimpleNamespace(
+        invoice_payload="dtbpay:1:secret",
+        currency="XTR",
+        total_amount=10,
+        telegram_payment_charge_id="tg-secret",
+        provider_payment_charge_id="provider-secret",
+    )
+
+    with caplog.at_level(logging.ERROR, logger=payments.logger.name):
+        await payments.handle_successful_payment(FakeMessage(successful_payment=successful_payment))
+
+    output = caplog.text
+    assert "payment_confirmation_unexpected_failed" in output
+    assert "error_type=RuntimeError" in output
+    assert "Traceback" not in output
+    assert "dtbpay:1:secret" not in output
+    assert "tg-secret" not in output
+    assert "provider-secret" not in output
+    assert db.rolled_back == 1
