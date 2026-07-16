@@ -22,6 +22,7 @@ from app.bot.texts import (
 from app.bot.handlers.common import extract_user_id as _extract_user_id
 from app.bot.handlers.common import map_quizbank_error
 from app.bot.handlers.common import session_factory as _session_factory
+from app.logging_config import log_exception_summary
 from app.quiz_bank.errors import QuizBankError
 from app.quiz_bank.service import QuizBankService
 from app.repositories.users import UserRepository
@@ -67,11 +68,13 @@ async def level_selected(callback_query: CallbackQuery) -> None:
                     source="onboarding",
                 )
                 await db.commit()
-            except Exception:
-                logger.exception(
-                    "level_selection_persist_failed telegram_user_id=%s level=%s",
-                    user_id,
-                    level,
+            except Exception as exc:
+                log_exception_summary(
+                    logger,
+                    "level_selection_persist_failed",
+                    exc,
+                    telegram_user_id=user_id,
+                    level=level,
                 )
                 await db.rollback()
 

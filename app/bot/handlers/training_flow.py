@@ -34,6 +34,7 @@ from app.bot.texts import (
     TRAINING_SESSION_COMPLETED_TEXT,
     TRAINING_SESSION_ERROR_TEXT,
 )
+from app.logging_config import log_exception_summary
 from app.quiz_bank.errors import (
     QuizBankAuthError,
     QuizBankError,
@@ -163,12 +164,14 @@ async def persist_quiz_bank_error(
                 source="training",
             )
             await db.commit()
-        except Exception:
-            logger.exception(
-                "quiz_bank_error_persist_failed telegram_user_id=%s endpoint=%s category=%s",
-                telegram_user_id,
-                error.endpoint or "unknown",
-                quiz_bank_error_category(error),
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "quiz_bank_error_persist_failed",
+                exc,
+                telegram_user_id=telegram_user_id,
+                endpoint=error.endpoint or "unknown",
+                category=quiz_bank_error_category(error),
             )
             await db.rollback()
 

@@ -78,6 +78,28 @@ def test_logging_redacts_sensitive_values_for_child_loggers() -> None:
     assert "database_url=***" in output
 
 
+def test_exception_summary_log_omits_traceback_and_exception_message(caplog: pytest.LogCaptureFixture) -> None:
+    from app.logging_config import log_exception_summary
+
+    logger = logging.getLogger("app.test.safe_summary")
+    error = RuntimeError(
+        "invoice_payload=dtbpay:1:secret "
+        "telegram_payment_charge_id=tg-secret "
+        "first_name=Anna"
+    )
+
+    with caplog.at_level(logging.ERROR, logger=logger.name):
+        log_exception_summary(logger, "payment_confirmation_unexpected_failed", error, telegram_user_id=111)
+
+    assert "payment_confirmation_unexpected_failed" in caplog.text
+    assert "telegram_user_id=111" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert "Traceback" not in caplog.text
+    assert "dtbpay:1:secret" not in caplog.text
+    assert "tg-secret" not in caplog.text
+    assert "Anna" not in caplog.text
+
+
 def test_no_obvious_secret_placeholders_in_code() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     targets = [

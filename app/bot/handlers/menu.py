@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
 from app.bot.texts import CALLBACK_HOME, HOME_TEXT, MENU_PROMPT
+from app.logging_config import log_exception_summary
 from app.services.training_session import TrainingSessionService
 
 router = Router(name="menu")
@@ -32,11 +33,13 @@ async def _abandon_active_training(callback_query: CallbackQuery) -> None:
         try:
             await _training_service.cancel_active_session(db, callback_query.from_user.id)
             await db.commit()
-        except Exception:
+        except Exception as exc:
             # Home must remain a safe escape hatch even if persistence is unavailable.
-            logger.exception(
-                "home_abandon_active_training_failed telegram_user_id=%s",
-                callback_query.from_user.id,
+            log_exception_summary(
+                logger,
+                "home_abandon_active_training_failed",
+                exc,
+                telegram_user_id=callback_query.from_user.id,
             )
             await db.rollback()
 

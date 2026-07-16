@@ -23,6 +23,7 @@ from app.bot.texts import (
     PAYMENT_SUCCESS_PLUS_TEXT,
     PAYMENT_SUCCESS_PRO_TEXT,
 )
+from app.logging_config import log_exception_summary
 from app.services.entitlements import PLAN_PRO
 from app.services.payments import (
     PaymentConfigurationError,
@@ -45,16 +46,6 @@ def _extract_plan(callback_data: str | None) -> str | None:
     if plan in {"plus", "pro"}:
         return plan
     return None
-
-
-def _log_payment_unexpected_failure(event_name: str, exc: Exception, **context: object) -> None:
-    context_parts = [f"{key}={value}" for key, value in context.items() if value is not None]
-    logger.error(
-        "%s %s error_type=%s",
-        event_name,
-        " ".join(context_parts),
-        exc.__class__.__name__,
-    )
 
 
 @router.callback_query(F.data.startswith(CALLBACK_PAYMENT_PLAN_PREFIX))
@@ -91,7 +82,8 @@ async def handle_payment_plan_callback(callback_query: CallbackQuery) -> None:
             return
         except Exception as exc:
             # Payment start must fail closed without exposing provider or config details.
-            _log_payment_unexpected_failure(
+            log_exception_summary(
+                logger,
                 "payment_invoice_create_unexpected_failed",
                 exc,
                 telegram_user_id=callback_query.from_user.id,
@@ -133,7 +125,8 @@ async def handle_pre_checkout_query(pre_checkout_query: PreCheckoutQuery) -> Non
             return
         except Exception as exc:
             # Provider validation must fail closed with a generic German error.
-            _log_payment_unexpected_failure(
+            log_exception_summary(
+                logger,
                 "payment_pre_checkout_unexpected_failed",
                 exc,
                 telegram_user_id=pre_checkout_query.from_user.id,
@@ -172,7 +165,8 @@ async def handle_successful_payment(message: Message) -> None:
             return
         except Exception as exc:
             # SuccessfulPayment handling must never unlock access after an unexpected failure.
-            _log_payment_unexpected_failure(
+            log_exception_summary(
+                logger,
                 "payment_confirmation_unexpected_failed",
                 exc,
                 telegram_user_id=message.from_user.id,

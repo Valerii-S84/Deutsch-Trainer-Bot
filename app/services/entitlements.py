@@ -7,6 +7,7 @@ from typing import Final
 
 from app.config import Settings, get_settings
 from app.db.models import DailyLimit, Subscription
+from app.logging_config import log_exception_summary
 from app.repositories.analytics_events import AnalyticsEventRepository, has_user_event_since
 from app.repositories.daily_limits import DailyLimitRepository
 from app.repositories.subscriptions import SubscriptionRepository
@@ -324,11 +325,14 @@ class EntitlementService:
                 event_name="subscription_expired",
                 since=expires_at,
             )
-        except Exception:
-            logger.exception(
-                "subscription_expired_event_lookup_failed subscription_id=%s user_id=%s",
-                subscription.id,
-                subscription.user_id,
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "subscription_expired_event_lookup_failed",
+                exc,
+                level=logging.WARNING,
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
             )
             return
         if already_recorded:

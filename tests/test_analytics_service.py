@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import logging
 
 import pytest
 import pytest_asyncio
@@ -90,6 +91,28 @@ async def test_analytics_tracker_does_not_raise_when_repository_fails() -> None:
     event = await tracker.record(None, event_name="bot_started", user_id=1)
 
     assert event is None
+
+
+@pytest.mark.asyncio
+async def test_analytics_tracker_failure_logs_warning_summary(caplog: pytest.LogCaptureFixture) -> None:
+    class FailingRepository:
+        async def record(self, *args, **kwargs):
+            raise RuntimeError("first_name=Anna source_payload=secret")
+
+    tracker = AnalyticsTracker(FailingRepository())  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.WARNING, logger="app.services.analytics"):
+        event = await tracker.record(None, event_name="bot_started", user_id=1, source="onboarding")
+
+    assert event is None
+    assert "analytics_write_failed" in caplog.text
+    assert "event_name=bot_started" in caplog.text
+    assert "source=onboarding" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert "Traceback" not in caplog.text
+    assert "Anna" not in caplog.text
+    assert "source_payload=secret" not in caplog.text
+    assert all(record.levelno == logging.WARNING for record in caplog.records)
 
 
 @pytest.mark.asyncio

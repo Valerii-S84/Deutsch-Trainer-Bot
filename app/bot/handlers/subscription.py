@@ -22,6 +22,7 @@ from app.bot.texts import (
     SUBSCRIPTION_STATUS_PENDING_TEXT,
     SUBSCRIPTION_TEXT,
 )
+from app.logging_config import log_exception_summary
 from app.services.analytics import AnalyticsTracker
 from app.services.entitlements import EntitlementService
 
@@ -97,10 +98,12 @@ async def handle_subscription_message(message: Message) -> None:
             text = await _subscription_text(db, telegram_user_id)
             if hasattr(db, "commit"):
                 await db.commit()
-    except Exception:
-        logger.exception(
-            "subscription_status_message_failed telegram_user_id=%s",
-            telegram_user_id,
+    except Exception as exc:
+        log_exception_summary(
+            logger,
+            "subscription_status_message_failed",
+            exc,
+            telegram_user_id=telegram_user_id,
         )
         text = _format_subscription_text(
             access_plan=SUBSCRIPTION_STATUS_FREE_TEXT,
@@ -119,10 +122,12 @@ async def handle_subscription_callback(callback_query: CallbackQuery) -> None:
                 text = await _subscription_text(db, telegram_user_id)
                 if hasattr(db, "commit"):
                     await db.commit()
-        except Exception:
-            logger.exception(
-                "subscription_status_callback_failed telegram_user_id=%s",
-                telegram_user_id,
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "subscription_status_callback_failed",
+                exc,
+                telegram_user_id=telegram_user_id,
             )
             text = _format_subscription_text(
                 access_plan=SUBSCRIPTION_STATUS_FREE_TEXT,

@@ -26,6 +26,7 @@ from app.bot.handlers.training_flow import (
     send_daily_limit_paywall as _send_daily_limit_paywall,
     send_question as _send_question,
 )
+from app.logging_config import log_exception_summary
 from app.bot.texts import (
     CALLBACK_TRAIN_ANSWER_PREFIX,
     CALLBACK_TRAIN_CANCEL_PREFIX,
@@ -199,12 +200,14 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
             await db.rollback()
             await _handle_theme_open_error(callback_query.message, user_id, exc, level=level, theme=theme)
             return
-        except Exception:
-            logger.exception(
-                "theme_training_open_unexpected_failed telegram_user_id=%s level=%s theme=%s",
-                user_id,
-                level,
-                theme,
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "theme_training_open_unexpected_failed",
+                exc,
+                telegram_user_id=user_id,
+                level=level,
+                theme=theme,
             )
             await db.rollback()
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
@@ -328,8 +331,14 @@ async def handle_start_new_training(callback_query: CallbackQuery) -> None:
                     )
                 await callback_query.message.answer(_map_quizbank_error(exc))
             return
-        except Exception:
-            logger.exception("new_training_start_failed telegram_user_id=%s session_id=%s", user_id, session_id)
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "new_training_start_failed",
+                exc,
+                telegram_user_id=user_id,
+                session_id=session_id,
+            )
             await db.rollback()
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
             return
@@ -361,11 +370,13 @@ async def handle_cancel_training(callback_query: CallbackQuery) -> None:
                 return
             cancelled = await training_service.cancel_active_session(db, user_id)
             await db.commit()
-        except Exception:
-            logger.exception(
-                "training_cancel_unexpected_failed telegram_user_id=%s session_id=%s",
-                user_id,
-                session_id,
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "training_cancel_unexpected_failed",
+                exc,
+                telegram_user_id=user_id,
+                session_id=session_id,
             )
             await db.rollback()
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
