@@ -130,7 +130,7 @@ class QuizCatalogSourceReader:
     def _manifest_entry(self, row: dict[str, str]) -> CatalogManifestEntry:
         return CatalogManifestEntry(
             production_file=Path(row["production_file"]),
-            theme_id=row["theme_id"],
+            theme_id=self._required_text_value(row, field="theme_id", subject="Catalog manifest"),
             theme_slug=row["theme_slug"],
             cefr_level=row["cefr_level"],
             item_count=self._int_field(row, "item_count"),
@@ -153,6 +153,7 @@ class QuizCatalogSourceReader:
         selection_key: int,
     ) -> CatalogSourceItem:
         self._validate_item_scope(row, entry=entry)
+        language = self._language(row)
         options = self._options(row)
         answer_key = self._int_field(row, "answer_key")
         if answer_key < 0 or answer_key >= len(options):
@@ -161,10 +162,10 @@ class QuizCatalogSourceReader:
         return CatalogSourceItem(
             item_id=row["item_id"].strip(),
             item_version=row["version"].strip(),
-            language=row["language"],
+            language=language,
             level=entry.cefr_level,
             sublevel=self._optional(row, "sublevel"),
-            theme_id=row["theme_id"],
+            theme_id=row["theme_id"].strip(),
             theme_slug=entry.theme_slug,
             objective_id=self._optional(row, "objective_id"),
             pattern_id=self._optional(row, "pattern_id"),
@@ -179,21 +180,36 @@ class QuizCatalogSourceReader:
         )
 
     def _validate_item_scope(self, row: dict[str, str], *, entry: CatalogManifestEntry) -> None:
-        if row["theme_id"] != entry.theme_id:
+        self._require_text(row, field="item_id")
+        row_theme_id = self._required_text_value(
+            row,
+            field="theme_id",
+            subject=f"Catalog item {row.get('item_id') or '<unknown>'}",
+        )
+        if row_theme_id != entry.theme_id:
             raise CatalogSourceError(
-                f"Theme mismatch for {row['item_id']}: manifest={entry.theme_id}, row={row['theme_id']}",
+                f"Theme mismatch for {row['item_id']}: manifest={entry.theme_id}, row={row_theme_id}",
             )
         sublevel = self._optional(row, "sublevel")
         if sublevel is not None and sublevel != entry.cefr_level:
             raise CatalogSourceError(
                 f"Level mismatch for {row['item_id']}: manifest={entry.cefr_level}, row={sublevel}",
             )
-        self._require_text(row, field="item_id")
         self._require_text(row, field="version")
         self._require_text(row, field="prompt")
         self._require_text(row, field="stem_text")
         self._require_text(row, field="explanation")
         self._require_text(row, field="status")
+
+    @staticmethod
+    def _language(row: dict[str, str]) -> str:
+        language = (row.get("language") or "").strip()
+        if language != "de":
+            raise CatalogSourceError(
+                f"Catalog item {row.get('item_id') or '<unknown>'} has unsupported language: "
+                f"{language or '<blank>'}",
+            )
+        return language
 
     def _options(self, row: dict[str, str]) -> list[str]:
         try:
@@ -241,6 +257,13 @@ class QuizCatalogSourceReader:
             raise CatalogSourceError(f"Catalog item {row.get('item_id') or '<unknown>'} is missing {field}")
 
     @staticmethod
+    def _required_text_value(row: dict[str, str], *, field: str, subject: str) -> str:
+        value = (row.get(field) or "").strip()
+        if not value:
+            raise CatalogSourceError(f"{subject} is missing {field}")
+        return value
+
+    @staticmethod
     def _row_checksum(row: dict[str, str]) -> str:
         payload = json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -258,4 +281,32 @@ class QuizCatalogSourceReader:
             missing = required_columns - set(reader.fieldnames or [])
             if missing:
                 raise CatalogSourceError(f"CSV file {path} is missing columns: {sorted(missing)}")
-            return [dict(row) for row in reader]
+            return [
+                QuizCatalogSourceReader._validated_csv_row(path, row, line_number=line_number)
+                for line_number, row in enumerate(reader, start=2)
+            ]
+
+    @staticmethod
+    def _validated_csv_row(
+        path: Path,
+        row: dict[str | None, str | list[str] | None],
+        *,
+        line_number: int,
+    ) -> dict[str, str]:
+        if None in row:
+            raise CatalogSourceError(f"Malformed CSV row in {path} at line {line_number}: extra cells")
+        missing_cells = [field for field, value in row.items() if value is None]
+        if missing_cells:
+            raise CatalogSourceError(
+                f"Malformed CSV row in {path} at line {line_number}: missing cells for {sorted(missing_cells)}",
+            )
+        clean_row: dict[str, str] = {}
+        for field, value in row.items():
+            if field is None:
+                raise CatalogSourceError(f"Malformed CSV row in {path} at line {line_number}: extra cells")
+            if not isinstance(value, str):
+                raise CatalogSourceError(
+                    f"Malformed CSV row in {path} at line {line_number}: invalid cell for {field}",
+                )
+            clean_row[field] = value
+        return clean_row
