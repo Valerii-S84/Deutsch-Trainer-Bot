@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
@@ -26,6 +27,7 @@ from app.bot.texts import (
     PAYWALL_MISTAKE_REPEAT_TEXT,
     PAYWALL_DAILY_LIMIT_TEXT,
 )
+from app.logging_config import log_exception_summary
 from app.quiz_bank.errors import (
     QuizBankAuthError,
     QuizBankError,
@@ -52,6 +54,7 @@ from app.services.training_session import (
 
 
 router = Router(name="review")
+logger = logging.getLogger(__name__)
 
 review_service = TrainingSessionService(
     mistakes_service=MistakeService(),
@@ -81,7 +84,8 @@ async def _session_context():
     else:
         try:
             yield db
-        except Exception:
+        except Exception as exc:
+            log_exception_summary(logger, "review_session_context_unexpected_failed", exc)
             if hasattr(db, "rollback"):
                 await db.rollback()
             raise
@@ -125,7 +129,15 @@ async def _persist_quiz_bank_error(telegram_user_id: int | None, error: QuizBank
                 source="review",
             )
             await db.commit()
-        except Exception:
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "review_quiz_bank_error_persist_failed",
+                exc,
+                telegram_user_id=telegram_user_id,
+                endpoint=error.endpoint or "unknown",
+                category=_quiz_bank_error_category(error),
+            )
             await db.rollback()
 
 
@@ -260,12 +272,7 @@ async def handle_review_start(callback_query: CallbackQuery) -> None:
                 reply_markup=build_back_to_main_menu_button(),
             )
             return
-        except (
-            QuizBankAuthError,
-            QuizBankRateLimitError,
-            QuizBankUnavailableError,
-            QuizBankValidationError,
-        ) as exc:
+        except (QuizBankAuthError, QuizBankRateLimitError, QuizBankUnavailableError, QuizBankValidationError) as exc:
             await db.rollback()
             await _persist_quiz_bank_error(user_id, exc)
             await callback_query.message.answer(
@@ -273,7 +280,8 @@ async def handle_review_start(callback_query: CallbackQuery) -> None:
                 reply_markup=build_back_to_main_menu_button(),
             )
             return
-        except Exception:
+        except Exception as exc:
+            log_exception_summary(logger, "review_start_unexpected_failed", exc, telegram_user_id=user_id)
             await db.rollback()
             await callback_query.message.answer(
                 TRAINING_SESSION_ERROR_TEXT,

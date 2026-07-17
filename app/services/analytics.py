@@ -17,6 +17,7 @@ from app.db.models import (
     User,
     UserAnswer,
 )
+from app.logging_config import log_exception_summary
 from app.repositories.analytics_events import AnalyticsEventRepository
 
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
@@ -104,12 +105,14 @@ class AnalyticsTracker:
                 event_metadata=event_metadata,
                 source=source,
             )
-        except Exception:
-            logger.warning(
-                "analytics_write_failed event_name=%s source=%s",
-                event_name,
-                source,
-                exc_info=True,
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "analytics_write_failed",
+                exc,
+                log_level=logging.WARNING,
+                event_name=event_name,
+                source=source,
             )
             return None
 

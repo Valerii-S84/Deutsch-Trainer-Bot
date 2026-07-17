@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from aiogram import F, Router
@@ -25,6 +26,7 @@ from app.bot.handlers.training_flow import (
     send_daily_limit_paywall as _send_daily_limit_paywall,
     send_question as _send_question,
 )
+from app.logging_config import log_exception_summary
 from app.bot.texts import (
     CALLBACK_TRAIN_ANSWER_PREFIX,
     CALLBACK_TRAIN_CANCEL_PREFIX,
@@ -62,6 +64,8 @@ from app.services.entitlements import DailyLimitExceededError, EntitlementServic
 from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
 
+logger = logging.getLogger(__name__)
+
 router = Router(name="training")
 
 
@@ -73,6 +77,14 @@ training_service = TrainingSessionService(
 _api_error_log_repo = ApiErrorLogRepository()
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
+_NEW_TRAINING_RECOVERABLE_ERRORS = (
+    QuizBankAuthError,
+    QuizBankRateLimitError,
+    QuizBankUnavailableError,
+    QuizBankValidationError,
+    NoMoreQuestionsError,
+    DailyLimitExceededError,
+)
 
 
 async def _persist_quiz_bank_error(
@@ -157,6 +169,24 @@ async def _handle_theme_open_error(message: Any, user_id: int, error: Exception,
     await message.answer(_map_quizbank_error(error))
 
 
+async def _answer_new_training_unexpected_error(
+    db: Any,
+    message: Any,
+    user_id: int,
+    session_id: int,
+    error: Exception,
+) -> None:
+    log_exception_summary(
+        logger,
+        "new_training_start_failed",
+        error,
+        telegram_user_id=user_id,
+        session_id=session_id,
+    )
+    await db.rollback()
+    await message.answer(TRAINING_SESSION_ERROR_TEXT)
+
+
 @router.callback_query(F.data.startswith(CALLBACK_THEME_PREFIX))
 async def handle_theme_selected(callback_query: CallbackQuery) -> None:
     await callback_query.answer()
@@ -196,7 +226,15 @@ async def handle_theme_selected(callback_query: CallbackQuery) -> None:
             await db.rollback()
             await _handle_theme_open_error(callback_query.message, user_id, exc, level=level, theme=theme)
             return
-        except Exception:
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "theme_training_open_unexpected_failed",
+                exc,
+                telegram_user_id=user_id,
+                level=level,
+                theme=theme,
+            )
             await db.rollback()
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
             return
@@ -298,14 +336,7 @@ async def handle_start_new_training(callback_query: CallbackQuery) -> None:
             )
             question = await training_service.get_or_create_current_question(db, user_id, force_refresh=True)
             await db.commit()
-        except (
-            QuizBankAuthError,
-            QuizBankRateLimitError,
-            QuizBankUnavailableError,
-            QuizBankValidationError,
-            NoMoreQuestionsError,
-            DailyLimitExceededError,
-        ) as exc:
+        except _NEW_TRAINING_RECOVERABLE_ERRORS as exc:
             await db.rollback()
             if isinstance(exc, DailyLimitExceededError):
                 await _send_daily_limit_paywall(callback_query.message)
@@ -319,9 +350,14 @@ async def handle_start_new_training(callback_query: CallbackQuery) -> None:
                     )
                 await callback_query.message.answer(_map_quizbank_error(exc))
             return
-        except Exception:
-            await db.rollback()
-            await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
+        except Exception as exc:
+            await _answer_new_training_unexpected_error(
+                db,
+                callback_query.message,
+                user_id,
+                session_id,
+                exc,
+            )
             return
 
     await _send_question(callback_query.message, question)
@@ -351,7 +387,14 @@ async def handle_cancel_training(callback_query: CallbackQuery) -> None:
                 return
             cancelled = await training_service.cancel_active_session(db, user_id)
             await db.commit()
-        except Exception:
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "training_cancel_unexpected_failed",
+                exc,
+                telegram_user_id=user_id,
+                session_id=session_id,
+            )
             await db.rollback()
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
             return

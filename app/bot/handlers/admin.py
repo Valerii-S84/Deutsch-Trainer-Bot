@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -10,9 +12,11 @@ from app.bot.handlers.common import extract_user_id as _extract_user_id
 from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.texts import ADMIN_METRICS_UNAUTHORIZED_TEXT, ADMIN_METRICS_UNAVAILABLE_TEXT
 from app.config import Settings, get_settings
+from app.logging_config import log_exception_summary
 from app.services.analytics import AnalyticsMetricsService, format_admin_metrics
 
 router = Router(name="admin")
+logger = logging.getLogger(__name__)
 
 _metrics_service = AnalyticsMetricsService()
 
@@ -36,7 +40,13 @@ async def handle_admin_metrics(message: Message) -> None:
     try:
         async with _session_factory() as db:
             snapshot = await _metrics_service.get_admin_metrics(db)
-    except Exception:
+    except Exception as exc:
+        log_exception_summary(
+            logger,
+            "admin_metrics_unexpected_failed",
+            exc,
+            telegram_user_id=_extract_user_id(message),
+        )
         await message.answer(ADMIN_METRICS_UNAVAILABLE_TEXT)
         return
 

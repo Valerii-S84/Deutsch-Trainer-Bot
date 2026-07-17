@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from aiogram.types import CallbackQuery, Message, Update
@@ -33,6 +34,7 @@ from app.bot.texts import (
     TRAINING_SESSION_COMPLETED_TEXT,
     TRAINING_SESSION_ERROR_TEXT,
 )
+from app.logging_config import log_exception_summary
 from app.quiz_bank.errors import (
     QuizBankAuthError,
     QuizBankError,
@@ -47,6 +49,8 @@ from app.services.training_payloads import (
     NoMoreQuestionsError,
     QuestionStateError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def extract_update_id(event_update: Update | None) -> int | None:
@@ -160,7 +164,15 @@ async def persist_quiz_bank_error(
                 source="training",
             )
             await db.commit()
-        except Exception:
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "quiz_bank_error_persist_failed",
+                exc,
+                telegram_user_id=telegram_user_id,
+                endpoint=error.endpoint or "unknown",
+                category=quiz_bank_error_category(error),
+            )
             await db.rollback()
 
 

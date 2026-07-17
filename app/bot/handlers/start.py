@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message
@@ -11,10 +13,12 @@ from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
 from app.bot.texts import MENU_PROMPT, TRAINING_PROMPT, WELCOME_TEXT
+from app.logging_config import log_exception_summary
 from app.services.analytics import AnalyticsTracker
 from app.repositories.users import UserRepository
 
 router = Router(name="start")
+logger = logging.getLogger(__name__)
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
 
@@ -51,8 +55,14 @@ async def _remember_user(message: Message):
                     )
             await db.commit()
             return user
-        except Exception:
+        except Exception as exc:
             # /start should still return a safe onboarding screen if persistence is temporarily unavailable.
+            log_exception_summary(
+                logger,
+                "start_user_persist_failed",
+                exc,
+                telegram_user_id=message.from_user.id,
+            )
             await db.rollback()
     return None
 

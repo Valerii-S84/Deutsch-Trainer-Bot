@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
@@ -22,12 +24,14 @@ from app.bot.texts import (
 )
 from app.bot.keyboards.main_menu import build_back_to_main_menu_button, build_progress_navigation_keyboard
 from app.bot.keyboards.subscription import build_paywall_keyboard
+from app.logging_config import log_exception_summary
 from app.services.analytics import AnalyticsTracker
 from app.services.entitlements import EntitlementService, FEATURE_FULL_PROGRESS_MAP
 from app.services.progress import ProgressService
 
 
 router = Router(name="profile")
+logger = logging.getLogger(__name__)
 
 _progress_service = ProgressService()
 _entitlement_service = EntitlementService()
@@ -70,7 +74,13 @@ async def _build_profile_text(db, telegram_user_id: int) -> str:
             telegram_user_id,
             feature=FEATURE_FULL_PROGRESS_MAP,
         )
-    except Exception:
+    except Exception as exc:
+        log_exception_summary(
+            logger,
+            "profile_progress_build_failed",
+            exc,
+            telegram_user_id=telegram_user_id,
+        )
         progress_records = []
         recommendation_text = None
         entitlement = None
@@ -241,7 +251,13 @@ async def handle_profile_message(message: Message) -> None:
             text = await _build_profile_text(db, telegram_user_id)
             if hasattr(db, "commit"):
                 await db.commit()
-    except Exception:
+    except Exception as exc:
+        log_exception_summary(
+            logger,
+            "profile_message_failed",
+            exc,
+            telegram_user_id=telegram_user_id,
+        )
         text = f"{PROFILE_TEXT}\n\n{PROFILE_EMPTY_STATE_TEXT}"
     await message.answer(text, reply_markup=_profile_keyboard(text))
 
@@ -270,6 +286,12 @@ async def handle_profile_callback(callback_query: CallbackQuery) -> None:
                 text = await _build_profile_text(db, telegram_user_id)
                 if hasattr(db, "commit"):
                     await db.commit()
-        except Exception:
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "profile_callback_failed",
+                exc,
+                telegram_user_id=telegram_user_id,
+            )
             text = f"{PROFILE_TEXT}\n\n{PROFILE_EMPTY_STATE_TEXT}"
         await callback_query.message.answer(text, reply_markup=_profile_keyboard(text))

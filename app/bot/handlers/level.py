@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
@@ -20,12 +22,14 @@ from app.bot.texts import (
 from app.bot.handlers.common import extract_user_id as _extract_user_id
 from app.bot.handlers.common import map_quizbank_error
 from app.bot.handlers.common import session_factory as _session_factory
+from app.logging_config import log_exception_summary
 from app.quiz_bank.errors import QuizBankError
 from app.quiz_bank.service import QuizBankService
 from app.repositories.users import UserRepository
 from app.services.analytics import AnalyticsTracker
 
 router = Router(name="level")
+logger = logging.getLogger(__name__)
 _quiz_service = QuizBankService
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
@@ -64,7 +68,14 @@ async def level_selected(callback_query: CallbackQuery) -> None:
                     source="onboarding",
                 )
                 await db.commit()
-            except Exception:
+            except Exception as exc:
+                log_exception_summary(
+                    logger,
+                    "level_selection_persist_failed",
+                    exc,
+                    telegram_user_id=user_id,
+                    level=level,
+                )
                 await db.rollback()
 
     try:

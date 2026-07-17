@@ -28,6 +28,29 @@ def _redact(text: str) -> str:
     return SENSITIVE_VALUE_PATTERN.sub(lambda match: f"{match.group(1)}=***", redacted)
 
 
+def log_exception_summary(
+    logger: logging.Logger,
+    log_event: str,
+    exc: Exception,
+    *,
+    log_level: int = logging.ERROR,
+    **context: object,
+) -> None:
+    context_parts = [
+        f"{key}={_single_line(value)}"
+        for key, value in context.items()
+        if value is not None
+    ]
+    if context_parts:
+        logger.log(log_level, "%s %s error_type=%s", log_event, " ".join(context_parts), exc.__class__.__name__)
+        return
+    logger.log(log_level, "%s error_type=%s", log_event, exc.__class__.__name__)
+
+
+def _single_line(value: object) -> str:
+    return str(value).replace("\r", " ").replace("\n", " ")
+
+
 class SecretRedactionFilter(logging.Filter):
     """Filter that redacts obvious sensitive fields from log messages."""
 
