@@ -8,8 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.quiz_bank.schemas import SUPPORTED_LEVELS
+
 
 MANIFEST_PATH = Path("_registry") / "production_manifest.csv"
+SUPPORTED_CEFR_LEVELS = frozenset(SUPPORTED_LEVELS)
 REQUIRED_MANIFEST_COLUMNS = {
     "production_file",
     "theme_id",
@@ -89,9 +92,20 @@ class QuizCatalogSourceReader:
         return entries
 
     def read_items(self, entry: CatalogManifestEntry) -> list[CatalogSourceItem]:
+        self._validate_entry_level(entry)
         item_path = self._resolve_production_file(entry.production_file)
         rows = self._read_csv(item_path, required_columns=REQUIRED_ITEM_COLUMNS)
-        items = [self._source_item(row, entry=entry, selection_key=index) for index, row in enumerate(rows, start=1)]
+        seen_versions: set[tuple[str, str]] = set()
+        items: list[CatalogSourceItem] = []
+        for index, row in enumerate(rows, start=1):
+            item = self._source_item(row, entry=entry, selection_key=index)
+            version_key = (item.item_id, item.item_version)
+            if version_key in seen_versions:
+                raise CatalogSourceError(
+                    f"Duplicate catalog item version in {entry.production_file}: {item.item_id}@{item.item_version}",
+                )
+            seen_versions.add(version_key)
+            items.append(item)
         return items
 
     def manifest_checksum(self) -> str:
@@ -124,6 +138,13 @@ class QuizCatalogSourceReader:
             source_row_count=self._int_field(row, "source_row_count"),
         )
 
+    @staticmethod
+    def _validate_entry_level(entry: CatalogManifestEntry) -> None:
+        if entry.cefr_level not in SUPPORTED_CEFR_LEVELS:
+            raise CatalogSourceError(
+                f"Unsupported CEFR level in {entry.production_file}: {entry.cefr_level}",
+            )
+
     def _source_item(
         self,
         row: dict[str, str],
@@ -138,8 +159,8 @@ class QuizCatalogSourceReader:
             raise CatalogSourceError(f"Invalid answer_key for {row['item_id']}: {answer_key}")
 
         return CatalogSourceItem(
-            item_id=row["item_id"],
-            item_version=row["version"],
+            item_id=row["item_id"].strip(),
+            item_version=row["version"].strip(),
             language=row["language"],
             level=entry.cefr_level,
             sublevel=self._optional(row, "sublevel"),
@@ -150,7 +171,7 @@ class QuizCatalogSourceReader:
             difficulty_band=self._optional(row, "difficulty_band"),
             register=self._optional(row, "register"),
             tags=self._tags(row),
-            status=row["status"],
+            status=row["status"].strip(),
             source=row["source_type"],
             source_path=entry.production_file.as_posix(),
             checksum=self._row_checksum(row),
@@ -167,25 +188,25 @@ class QuizCatalogSourceReader:
             raise CatalogSourceError(
                 f"Level mismatch for {row['item_id']}: manifest={entry.cefr_level}, row={sublevel}",
             )
-        if not row["item_id"]:
-            raise CatalogSourceError("Catalog item row is missing item_id")
-        if not row["version"]:
-            raise CatalogSourceError(f"Catalog item {row['item_id']} is missing version")
+        self._require_text(row, field="item_id")
+        self._require_text(row, field="version")
         self._require_text(row, field="prompt")
         self._require_text(row, field="stem_text")
         self._require_text(row, field="explanation")
+        self._require_text(row, field="status")
 
-    def _options(self, row: dict[str, str]) -> list[Any]:
+    def _options(self, row: dict[str, str]) -> list[str]:
         try:
             options = json.loads(row["options"])
         except json.JSONDecodeError:
             options = self._legacy_options(row)
         if not isinstance(options, list):
             raise CatalogSourceError(f"Options must be a list for {row['item_id']}")
-        usable_options = [option for option in options if isinstance(option, str) and option.strip()]
-        if len(usable_options) < 2:
+        if len(options) < 2:
             raise CatalogSourceError(f"At least two usable options are required for {row['item_id']}")
-        return options
+        if not all(isinstance(option, str) and option.strip() for option in options):
+            raise CatalogSourceError(f"Options must contain only non-empty strings for {row['item_id']}")
+        return [option.strip() for option in options]
 
     @staticmethod
     def _legacy_options(row: dict[str, str]) -> Any:

@@ -89,6 +89,52 @@ def test_source_reader_rejects_answer_key_outside_options(tmp_path: Path) -> Non
         reader.read_items(manifest[0])
 
 
+def test_source_reader_rejects_unusable_answer_option_targets(tmp_path: Path) -> None:
+    source_root = _write_source(
+        tmp_path,
+        manifest_count=1,
+        rows=[_item_row("item-1", options='["der", "die", ""]', answer_key="2")],
+    )
+
+    reader = QuizCatalogSourceReader(source_root)
+    manifest = reader.read_manifest()
+
+    with pytest.raises(CatalogSourceError, match="Options must contain only non-empty strings"):
+        reader.read_items(manifest[0])
+
+
+def test_source_reader_rejects_duplicate_item_versions(tmp_path: Path) -> None:
+    source_root = _write_source(
+        tmp_path,
+        manifest_count=2,
+        rows=[
+            _item_row("item-1", overrides={"version": "1.0"}),
+            _item_row("item-1", overrides={"version": "1.0"}),
+        ],
+    )
+
+    reader = QuizCatalogSourceReader(source_root)
+    manifest = reader.read_manifest()
+
+    with pytest.raises(CatalogSourceError, match="Duplicate catalog item version"):
+        reader.read_items(manifest[0])
+
+
+def test_source_reader_rejects_unsupported_manifest_level(tmp_path: Path) -> None:
+    source_root = _write_source(
+        tmp_path,
+        manifest_count=1,
+        rows=[_item_row("item-1", sublevel="C2")],
+        level="C2",
+    )
+
+    reader = QuizCatalogSourceReader(source_root)
+    manifest = reader.read_manifest()
+
+    with pytest.raises(CatalogSourceError, match="Unsupported CEFR level"):
+        reader.read_items(manifest[0])
+
+
 def test_source_reader_rejects_theme_mismatch(tmp_path: Path) -> None:
     source_root = _write_source(tmp_path, manifest_count=1, rows=[_item_row("item-1", theme_id="T05")])
 
@@ -153,24 +199,45 @@ def test_source_reader_requires_content_columns(tmp_path: Path) -> None:
         reader.read_items(manifest[0])
 
 
-def _write_source(tmp_path: Path, *, manifest_count: int, rows: list[dict[str, str]]) -> Path:
+def test_source_reader_rejects_blank_status(tmp_path: Path) -> None:
+    source_root = _write_source(tmp_path, manifest_count=1, rows=[_item_row("item-1", overrides={"status": ""})])
+
+    reader = QuizCatalogSourceReader(source_root)
+    manifest = reader.read_manifest()
+
+    with pytest.raises(CatalogSourceError, match="missing status"):
+        reader.read_items(manifest[0])
+
+
+def _write_source(
+    tmp_path: Path,
+    *,
+    manifest_count: int,
+    rows: list[dict[str, str]],
+    level: str = "A1",
+) -> Path:
     source_root = tmp_path / "ProductionQuizBank"
     registry = source_root / "_registry"
     registry.mkdir(parents=True)
     item_dir = source_root / "T04"
     item_dir.mkdir()
-    _write_manifest(source_root, production_file="ProductionQuizBank/T04/T04_A1.csv", manifest_count=manifest_count)
+    _write_manifest(
+        source_root,
+        production_file="ProductionQuizBank/T04/T04_A1.csv",
+        manifest_count=manifest_count,
+        level=level,
+    )
     item_file = item_dir / "T04_A1.csv"
     item_file.write_text(_csv(rows), encoding="utf-8")
     return source_root
 
 
-def _write_manifest(source_root: Path, *, production_file: str, manifest_count: int) -> None:
+def _write_manifest(source_root: Path, *, production_file: str, manifest_count: int, level: str = "A1") -> None:
     (source_root / "_registry" / "production_manifest.csv").write_text(
         "\n".join(
             [
                 "production_file,theme_id,theme_slug,cefr_level,item_count,source_file_count,source_row_count",
-                f"{production_file},T04,einkaufen_geld_konsum,A1,{manifest_count},1,{manifest_count}",
+                f"{production_file},T04,einkaufen_geld_konsum,{level},{manifest_count},1,{manifest_count}",
             ],
         )
         + "\n",
@@ -199,8 +266,9 @@ def _item_row(
     options: str = '["der", "die"]',
     answer_key: str = "0",
     tags: str = "legacy_file:test",
+    overrides: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    return {
+    row = {
         "item_id": item_id,
         "language": "de",
         "level_band": "A1-A2",
@@ -228,3 +296,6 @@ def _item_row(
         "level_locked": "false",
         "locked_at": "",
     }
+    if overrides is not None:
+        row.update(overrides)
+    return row
