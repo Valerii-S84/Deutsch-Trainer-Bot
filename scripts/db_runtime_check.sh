@@ -163,6 +163,7 @@ REQUIRED_FOREIGN_KEYS = {
 
 REQUIRED_CHECK_CONSTRAINTS = {
     "question_references": {"ck_question_references_supported_level"},
+    "training_session_items": {"ck_training_session_items_catalog_scope_complete"},
     "payments": {"ck_payments_confirmed_telegram_charge_id"},
 }
 

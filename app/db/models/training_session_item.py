@@ -73,4 +73,9 @@ class TrainingSessionItem(Base, TimestampMixin):
         Index("ix_training_session_items_question_reference_id", "question_reference_id"),
         Index("ix_training_session_items_daily_limit_id", "daily_limit_id"),
         CheckConstraint("position > 0", name="ck_training_session_items_position_positive"),
+        CheckConstraint(
+            "(catalog_id IS NULL AND item_version IS NULL) "
+            "OR (catalog_id IS NOT NULL AND item_version IS NOT NULL)",
+            name="ck_training_session_items_catalog_scope_complete",
+        ),
     )
