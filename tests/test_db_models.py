@@ -43,10 +43,23 @@ def _has_index(table_name: str, expected_columns: tuple[str, ...], unique: bool 
     return False
 
 
+def _has_named_index(table_name: str, expected_name: str, unique: bool | None = None) -> bool:
+    table = Base.metadata.tables[table_name]
+    for index in table.indexes:
+        if index.name == expected_name:
+            if unique is None:
+                return True
+            return index.unique == unique
+    return False
+
+
 def test_models_importable() -> None:
     assert models.ApiErrorLog is not None
     assert models.User is not None
     assert models.QuizSession is not None
+    assert models.QuizCatalog is not None
+    assert models.QuizCatalogItem is not None
+    assert models.QuizCatalogImportRun is not None
     assert models.QuestionReference is not None
     assert models.TrainingSessionItem is not None
     assert models.UserAnswer is not None
@@ -64,6 +77,9 @@ def test_models_importable() -> None:
 def test_metadata_contains_expected_tables() -> None:
     expected = {
         "users",
+        "quiz_catalogs",
+        "quiz_catalog_items",
+        "quiz_catalog_import_runs",
         "quiz_sessions",
         "question_references",
         "training_session_items",
@@ -105,15 +121,93 @@ def test_quiz_sessions_columns_present() -> None:
         "shown_questions_count",
         "answered_count",
         "correct_answers",
+        "catalog_id",
+        "catalog_version",
         "source",
     }
     assert expected.issubset(table.columns.keys())
+    assert str(table.columns["source"].server_default.arg) == "'quiz_bank_api'"
+
+
+def test_quiz_catalog_columns_present() -> None:
+    table = Base.metadata.tables["quiz_catalogs"]
+    expected = {
+        "catalog_id",
+        "catalog_version",
+        "source",
+        "checksum",
+        "manifest_checksum",
+        "source_path",
+        "item_count",
+        "imported_at",
+        "is_active",
+        "metadata",
+    }
+    assert expected.issubset(table.columns.keys())
+    assert _has_unique_constraint("quiz_catalogs", {"catalog_id", "catalog_version"})
+    assert _has_index("quiz_catalogs", ("is_active",))
+
+
+def test_quiz_catalog_items_columns_present() -> None:
+    table = Base.metadata.tables["quiz_catalog_items"]
+    expected = {
+        "catalog_id",
+        "catalog_version",
+        "item_id",
+        "item_version",
+        "language",
+        "level",
+        "sublevel",
+        "theme_id",
+        "theme",
+        "theme_slug",
+        "status",
+        "source",
+        "checksum",
+        "selection_key",
+        "imported_at",
+        "is_active",
+    }
+    assert expected.issubset(table.columns.keys())
+    assert _has_unique_constraint("quiz_catalog_items", {"catalog_id", "catalog_version", "item_id", "item_version"})
+    assert _has_index(
+        "quiz_catalog_items",
+        ("catalog_id", "catalog_version", "language", "level", "theme_id", "status", "is_active", "selection_key"),
+    )
+    assert _has_index(
+        "quiz_catalog_items",
+        ("catalog_id", "catalog_version", "language", "sublevel", "theme_id", "status", "is_active", "selection_key"),
+    )
+
+
+def test_quiz_catalog_import_runs_columns_present() -> None:
+    table = Base.metadata.tables["quiz_catalog_import_runs"]
+    expected = {
+        "catalog_id",
+        "catalog_version",
+        "source_path",
+        "manifest_checksum",
+        "dry_run",
+        "started_at",
+        "finished_at",
+        "status",
+        "added_count",
+        "updated_count",
+        "skipped_count",
+        "failed_count",
+        "error_summary",
+    }
+    assert expected.issubset(table.columns.keys())
+    assert _has_index("quiz_catalog_import_runs", ("catalog_id", "started_at"))
+    assert _has_index("quiz_catalog_import_runs", ("status",))
 
 
 def test_question_references_columns_present() -> None:
     table = Base.metadata.tables["question_references"]
     expected = {
+        "catalog_id",
         "item_id",
+        "item_version",
         "level",
         "theme",
         "theme_key",
@@ -123,6 +217,9 @@ def test_question_references_columns_present() -> None:
         "fetched_at",
     }
     assert expected.issubset(table.columns.keys())
+    assert _has_check_constraint("question_references", "ck_question_references_supported_level")
+    assert str(table.columns["source"].server_default.arg) == "'quiz_bank_api'"
+    assert _has_index("question_references", ("item_id",))
 
 
 def test_training_session_items_columns_present() -> None:
@@ -131,7 +228,9 @@ def test_training_session_items_columns_present() -> None:
         "session_id",
         "user_id",
         "question_reference_id",
+        "catalog_id",
         "item_id",
+        "item_version",
         "position",
         "status",
         "shown_at",
@@ -149,6 +248,9 @@ def test_user_answers_columns_present() -> None:
         "user_id",
         "training_session_item_id",
         "question_reference_id",
+        "catalog_id",
+        "item_id",
+        "item_version",
         "external_quiz_id",
         "level",
         "theme",
@@ -161,6 +263,7 @@ def test_user_answers_columns_present() -> None:
         "telegram_update_id",
     }
     assert expected.issubset(table.columns.keys())
+    assert _has_index("user_answers", ("user_id", "level", "theme", "external_quiz_id"))
 
 
 def test_progress_columns_present() -> None:
@@ -340,9 +443,16 @@ def test_api_error_log_columns_present() -> None:
 
 def test_required_indexes_and_constraints() -> None:
     assert _has_unique_constraint("users", {"telegram_user_id"})
-    assert _has_unique_constraint("question_references", {"item_id"})
+    assert _has_unique_constraint("question_references", {"catalog_id", "item_id", "item_version"})
+    assert _has_unique_constraint("user_answers", {"user_id", "session_id", "catalog_id", "item_id", "item_version"})
+    assert _has_named_index("question_references", "uq_question_references_api_item_id", unique=True)
     assert _has_unique_constraint("training_session_items", {"session_id", "position"})
-    assert _has_unique_constraint("training_session_items", {"session_id", "item_id"})
+    assert _has_unique_constraint(
+        "training_session_items",
+        {"session_id", "catalog_id", "item_id", "item_version"},
+    )
+    assert _has_named_index("training_session_items", "uq_training_session_items_session_item", unique=True)
+    assert _has_check_constraint("training_session_items", "ck_training_session_items_catalog_scope_complete")
     assert _has_unique_constraint("daily_limits", {"user_id", "limit_date", "plan"})
     assert _has_unique_constraint("user_answers", {"telegram_update_id"})
     assert _has_unique_constraint("payments", {"idempotency_key"})
@@ -354,6 +464,7 @@ def test_required_indexes_and_constraints() -> None:
 
     assert _has_index("users", ("telegram_user_id",), unique=True)
     assert _has_index("quiz_sessions", ("user_id", "status"))
+    assert _has_index("question_references", ("item_id",))
     assert _has_index("question_references", ("level", "theme"))
     assert _has_index("training_session_items", ("session_id", "status"))
     assert _has_index("daily_limits", ("user_id", "limit_date"))

@@ -36,6 +36,7 @@ class AnswerRepository:
             session_id=session_id,
             user_id=user_id,
             external_quiz_id=external_quiz_id,
+            item_id=external_quiz_id,
             training_session_item_id=training_session_item_id,
             question_reference_id=question_reference_id,
             level=level,

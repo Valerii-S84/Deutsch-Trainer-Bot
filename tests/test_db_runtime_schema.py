@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 
 EXPECTED_TABLES = {
     "users",
+    "quiz_catalogs",
+    "quiz_catalog_items",
+    "quiz_catalog_import_runs",
     "quiz_sessions",
     "question_references",
     "training_session_items",
@@ -28,12 +31,27 @@ EXPECTED_TABLES = {
 
 EXPECTED_INDEXES = {
     "users": {"ix_users_telegram_user_id", "ix_users_language_code"},
-    "quiz_sessions": {"ix_quiz_sessions_user_id", "ix_quiz_sessions_user_status"},
+    "quiz_sessions": {"ix_quiz_sessions_user_id", "ix_quiz_sessions_user_status", "ix_quiz_sessions_catalog_id"},
+    "quiz_catalogs": {"ix_quiz_catalogs_is_active"},
+    "quiz_catalog_items": {
+        "ix_qci_catalog_language_level_theme_status_active",
+        "ix_qci_catalog_language_sublevel_theme_status_active",
+        "ix_quiz_catalog_items_catalog_status_active",
+        "ix_quiz_catalog_items_catalog_item",
+    },
+    "quiz_catalog_import_runs": {
+        "ix_quiz_catalog_import_runs_catalog_started",
+        "ix_quiz_catalog_import_runs_status",
+    },
     "question_references": {
+        "uq_question_references_api_item_id",
+        "ix_question_references_item_id",
+        "ix_question_references_catalog_item",
         "ix_question_references_level_theme",
         "ix_question_references_theme_key",
     },
     "training_session_items": {
+        "uq_training_session_items_session_item",
         "ix_training_session_items_user_id",
         "ix_training_session_items_session_status",
         "ix_training_session_items_question_reference_id",
@@ -42,9 +60,11 @@ EXPECTED_INDEXES = {
     "user_answers": {
         "ix_user_answers_user_id",
         "ix_user_answers_session_id",
+        "ix_user_answers_catalog_item",
         "ix_user_answers_external_quiz_id",
         "ix_user_answers_training_session_item_id",
         "ix_user_answers_question_reference_id",
+        "ix_user_answers_user_topic_item",
     },
     "progress": {"ix_progress_user_id", "ix_progress_level_theme"},
     "progress_history": {
@@ -82,12 +102,18 @@ EXPECTED_INDEXES = {
 
 EXPECTED_UNIQUE_CONSTRAINTS = {
     "users": {"uq_users_telegram_user_id"},
-    "question_references": {"uq_question_references_item_id"},
+    "quiz_catalogs": {"uq_quiz_catalogs_catalog_version"},
+    "quiz_catalog_items": {"uq_quiz_catalog_items_catalog_item_version"},
+    "question_references": {"uq_question_references_catalog_item_version"},
     "training_session_items": {
         "uq_training_session_items_session_position",
-        "uq_training_session_items_session_item",
+        "uq_training_session_items_session_catalog_item",
     },
-    "user_answers": {"uq_user_answers_user_session_external_quiz", "uq_user_answers_telegram_update_id"},
+    "user_answers": {
+        "uq_user_answers_user_session_external_quiz",
+        "uq_user_answers_telegram_update_id",
+        "uq_user_answers_user_session_catalog_item",
+    },
     "progress": {"uq_progress_user_level_theme"},
     "daily_limits": {"uq_daily_limits_user_date_plan"},
     "payments": {
@@ -99,10 +125,14 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
 }
 
 EXPECTED_FOREIGN_KEYS = {
+    "quiz_catalog_items": {"fk_quiz_catalog_items_catalog_id"},
+    "quiz_catalog_import_runs": {"fk_quiz_catalog_import_runs_catalog_id"},
     "subscriptions": {"fk_subscriptions_payment_id_payments"},
 }
 
 EXPECTED_CHECK_CONSTRAINTS = {
+    "question_references": {"ck_question_references_supported_level"},
+    "training_session_items": {"ck_training_session_items_catalog_scope_complete"},
     "payments": {"ck_payments_confirmed_telegram_charge_id"},
 }
 
@@ -111,6 +141,9 @@ EXPECTED_NOT_NULL_COLUMNS = {
 }
 
 EXPECTED_JSONB = {
+    "quiz_catalogs": {"metadata"},
+    "quiz_catalog_items": {"tags", "metadata"},
+    "quiz_catalog_import_runs": {"error_summary"},
     "quiz_sessions": {"source_metadata", "api_metadata"},
     "question_references": {"metadata_snapshot"},
     "user_answers": {"metadata_snapshot"},
@@ -269,6 +302,46 @@ async def test_postgres_partial_unique_index_for_active_mistakes(db_connection: 
     normalized = " ".join(index_def.lower().split())
     assert "create unique index" in normalized, "Index ix_mistakes_active_user_external must be unique"
     assert "resolved_at is null" in normalized, "Index ix_mistakes_active_user_external must filter unresolved rows"
+
+
+@pytest.mark.asyncio
+async def test_postgres_partial_unique_index_for_api_question_references(db_connection: AsyncConnection) -> None:
+    index_def = await db_connection.scalar(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname='public'
+              AND tablename='question_references'
+              AND indexname='uq_question_references_api_item_id'
+            """,
+        ),
+    )
+    assert index_def is not None, "Partial unique index for API question references is missing"
+    normalized = " ".join(index_def.lower().split())
+    assert "create unique index" in normalized, "Index uq_question_references_api_item_id must be unique"
+    assert "catalog_id is null" in normalized, "Index uq_question_references_api_item_id must filter catalog_id IS NULL"
+    assert "item_version is null" in normalized, "Index uq_question_references_api_item_id must filter item_version IS NULL"
+
+
+@pytest.mark.asyncio
+async def test_postgres_partial_unique_index_for_api_training_session_items(db_connection: AsyncConnection) -> None:
+    index_def = await db_connection.scalar(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname='public'
+              AND tablename='training_session_items'
+              AND indexname='uq_training_session_items_session_item'
+            """,
+        ),
+    )
+    assert index_def is not None, "Partial unique index for API training session items is missing"
+    normalized = " ".join(index_def.lower().split())
+    assert "create unique index" in normalized, "Index uq_training_session_items_session_item must be unique"
+    assert "catalog_id is null" in normalized, "Index uq_training_session_items_session_item must filter catalog_id IS NULL"
+    assert "item_version is null" in normalized, "Index uq_training_session_items_session_item must filter item_version IS NULL"
 
 
 @pytest.mark.asyncio

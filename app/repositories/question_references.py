@@ -14,7 +14,13 @@ class QuestionReferenceRepository:
     """Persistence for minimal Quiz Bank item references."""
 
     async def get_by_item_id(self, db: AsyncSession, item_id: str) -> QuestionReference | None:
-        return await db.scalar(select(QuestionReference).where(QuestionReference.item_id == item_id))
+        return await db.scalar(
+            select(QuestionReference).where(
+                QuestionReference.item_id == item_id,
+                QuestionReference.catalog_id.is_(None),
+                QuestionReference.item_version.is_(None),
+            ),
+        )
 
     async def upsert_snapshot(
         self,
