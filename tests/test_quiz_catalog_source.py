@@ -55,6 +55,16 @@ def test_source_reader_rejects_invalid_options_json(tmp_path: Path) -> None:
         reader.read_items(manifest[0])
 
 
+def test_source_reader_rejects_single_option_rows(tmp_path: Path) -> None:
+    source_root = _write_source(tmp_path, manifest_count=1, rows=[_item_row("item-1", options='["only one"]')])
+
+    reader = QuizCatalogSourceReader(source_root)
+    manifest = reader.read_manifest()
+
+    with pytest.raises(CatalogSourceError, match="At least two usable options"):
+        reader.read_items(manifest[0])
+
+
 def test_source_reader_accepts_legacy_python_list_options(tmp_path: Path) -> None:
     source_root = _write_source(
         tmp_path,
@@ -89,29 +99,87 @@ def test_source_reader_rejects_theme_mismatch(tmp_path: Path) -> None:
         reader.read_items(manifest[0])
 
 
+def test_source_reader_rejects_level_mismatch(tmp_path: Path) -> None:
+    source_root = _write_source(tmp_path, manifest_count=1, rows=[_item_row("item-1", sublevel="B1")])
+
+    reader = QuizCatalogSourceReader(source_root)
+    manifest = reader.read_manifest()
+
+    with pytest.raises(CatalogSourceError, match="Level mismatch"):
+        reader.read_items(manifest[0])
+
+
+def test_source_reader_rejects_manifest_path_traversal(tmp_path: Path) -> None:
+    source_root = _write_source(tmp_path, manifest_count=1, rows=[_item_row("item-1")])
+    _write_manifest(source_root, production_file="../outside.csv", manifest_count=1)
+
+    reader = QuizCatalogSourceReader(source_root)
+    manifest = reader.read_manifest()
+
+    with pytest.raises(CatalogSourceError, match="escapes catalog root"):
+        reader.read_items(manifest[0])
+
+
+def test_source_reader_wraps_missing_numeric_cells(tmp_path: Path) -> None:
+    source_root = tmp_path / "ProductionQuizBank"
+    registry = source_root / "_registry"
+    registry.mkdir(parents=True)
+    (registry / "production_manifest.csv").write_text(
+        "\n".join(
+            [
+                "production_file,theme_id,theme_slug,cefr_level,item_count,source_file_count,source_row_count",
+                "ProductionQuizBank/T04/T04_A1.csv,T04,einkaufen_geld_konsum,A1,1,1",
+            ],
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CatalogSourceError, match="Missing integer field source_row_count"):
+        QuizCatalogSourceReader(source_root).read_manifest()
+
+
+def test_source_reader_requires_content_columns(tmp_path: Path) -> None:
+    source_root = _write_source(tmp_path, manifest_count=1, rows=[_item_row("item-1")])
+    item_file = source_root / "T04" / "T04_A1.csv"
+    rows = [_item_row("item-1")]
+    header = [column for column in rows[0] if column != "explanation"]
+    item_file.write_text(_csv(rows, header=header), encoding="utf-8")
+
+    reader = QuizCatalogSourceReader(source_root)
+    manifest = reader.read_manifest()
+
+    with pytest.raises(CatalogSourceError, match="missing columns"):
+        reader.read_items(manifest[0])
+
+
 def _write_source(tmp_path: Path, *, manifest_count: int, rows: list[dict[str, str]]) -> Path:
     source_root = tmp_path / "ProductionQuizBank"
     registry = source_root / "_registry"
     registry.mkdir(parents=True)
     item_dir = source_root / "T04"
     item_dir.mkdir()
-    (registry / "production_manifest.csv").write_text(
-        "\n".join(
-            [
-                "production_file,theme_id,theme_slug,cefr_level,item_count,source_file_count,source_row_count",
-                f"ProductionQuizBank/T04/T04_A1.csv,T04,einkaufen_geld_konsum,A1,{manifest_count},1,{manifest_count}",
-            ],
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    _write_manifest(source_root, production_file="ProductionQuizBank/T04/T04_A1.csv", manifest_count=manifest_count)
     item_file = item_dir / "T04_A1.csv"
     item_file.write_text(_csv(rows), encoding="utf-8")
     return source_root
 
 
-def _csv(rows: list[dict[str, str]]) -> str:
-    header = list(_item_row("header").keys())
+def _write_manifest(source_root: Path, *, production_file: str, manifest_count: int) -> None:
+    (source_root / "_registry" / "production_manifest.csv").write_text(
+        "\n".join(
+            [
+                "production_file,theme_id,theme_slug,cefr_level,item_count,source_file_count,source_row_count",
+                f"{production_file},T04,einkaufen_geld_konsum,A1,{manifest_count},1,{manifest_count}",
+            ],
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _csv(rows: list[dict[str, str]], *, header: list[str] | None = None) -> str:
+    header = header or list(_item_row("header").keys())
     lines = [",".join(header)]
     for row in rows:
         lines.append(",".join(_csv_value(row[column]) for column in header))
@@ -127,6 +195,7 @@ def _item_row(
     item_id: str,
     *,
     theme_id: str = "T04",
+    sublevel: str = "A1",
     options: str = '["der", "die"]',
     answer_key: str = "0",
     tags: str = "legacy_file:test",
@@ -135,7 +204,7 @@ def _item_row(
         "item_id": item_id,
         "language": "de",
         "level_band": "A1-A2",
-        "sublevel": "A1",
+        "sublevel": sublevel,
         "theme_id": theme_id,
         "subtheme_id": "einkauf",
         "objective_id": "O03",

@@ -22,6 +22,8 @@ REQUIRED_MANIFEST_COLUMNS = {
 REQUIRED_ITEM_COLUMNS = {
     "item_id",
     "language",
+    "prompt",
+    "stem_text",
     "sublevel",
     "theme_id",
     "objective_id",
@@ -30,6 +32,7 @@ REQUIRED_ITEM_COLUMNS = {
     "register",
     "options",
     "answer_key",
+    "explanation",
     "tags",
     "status",
     "version",
@@ -78,6 +81,7 @@ class QuizCatalogSourceReader:
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
+        self._root_resolved = self.root.resolve()
 
     def read_manifest(self) -> list[CatalogManifestEntry]:
         rows = self._read_csv(self.root / MANIFEST_PATH, required_columns=REQUIRED_MANIFEST_COLUMNS)
@@ -97,10 +101,17 @@ class QuizCatalogSourceReader:
         return self._file_checksum(self._resolve_production_file(production_file))
 
     def _resolve_production_file(self, production_file: Path) -> Path:
+        if production_file.is_absolute():
+            raise CatalogSourceError(f"Manifest path must be relative: {production_file}")
         parts = production_file.parts
         if parts and parts[0] == self.root.name:
-            return self.root.joinpath(*parts[1:])
-        return self.root / production_file
+            candidate = self.root.joinpath(*parts[1:])
+        else:
+            candidate = self.root / production_file
+        resolved = candidate.resolve()
+        if not resolved.is_relative_to(self._root_resolved):
+            raise CatalogSourceError(f"Manifest path escapes catalog root: {production_file}")
+        return resolved
 
     def _manifest_entry(self, row: dict[str, str]) -> CatalogManifestEntry:
         return CatalogManifestEntry(
@@ -151,18 +162,29 @@ class QuizCatalogSourceReader:
             raise CatalogSourceError(
                 f"Theme mismatch for {row['item_id']}: manifest={entry.theme_id}, row={row['theme_id']}",
             )
+        sublevel = self._optional(row, "sublevel")
+        if sublevel is not None and sublevel != entry.cefr_level:
+            raise CatalogSourceError(
+                f"Level mismatch for {row['item_id']}: manifest={entry.cefr_level}, row={sublevel}",
+            )
         if not row["item_id"]:
             raise CatalogSourceError("Catalog item row is missing item_id")
         if not row["version"]:
             raise CatalogSourceError(f"Catalog item {row['item_id']} is missing version")
+        self._require_text(row, field="prompt")
+        self._require_text(row, field="stem_text")
+        self._require_text(row, field="explanation")
 
     def _options(self, row: dict[str, str]) -> list[Any]:
         try:
             options = json.loads(row["options"])
         except json.JSONDecodeError:
             options = self._legacy_options(row)
-        if not isinstance(options, list) or not options:
-            raise CatalogSourceError(f"Options must be a non-empty list for {row['item_id']}")
+        if not isinstance(options, list):
+            raise CatalogSourceError(f"Options must be a list for {row['item_id']}")
+        usable_options = [option for option in options if isinstance(option, str) and option.strip()]
+        if len(usable_options) < 2:
+            raise CatalogSourceError(f"At least two usable options are required for {row['item_id']}")
         return options
 
     @staticmethod
@@ -179,15 +201,23 @@ class QuizCatalogSourceReader:
 
     @staticmethod
     def _optional(row: dict[str, str], field: str) -> str | None:
-        value = row.get(field, "").strip()
+        value = (row.get(field) or "").strip()
         return value or None
 
     @staticmethod
     def _int_field(row: dict[str, str], field: str) -> int:
+        value = row.get(field)
+        if value is None:
+            raise CatalogSourceError(f"Missing integer field {field}")
         try:
-            return int(row[field])
+            return int(value)
         except ValueError as exc:
-            raise CatalogSourceError(f"Invalid integer field {field}: {row[field]!r}") from exc
+            raise CatalogSourceError(f"Invalid integer field {field}: {value!r}") from exc
+
+    @staticmethod
+    def _require_text(row: dict[str, str], *, field: str) -> None:
+        if not (row.get(field) or "").strip():
+            raise CatalogSourceError(f"Catalog item {row.get('item_id') or '<unknown>'} is missing {field}")
 
     @staticmethod
     def _row_checksum(row: dict[str, str]) -> str:
