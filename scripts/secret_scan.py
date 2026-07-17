@@ -54,11 +54,12 @@ def scan_file(path: Path, *, allowlist: set[str] | None = None) -> list[str]:
     allowed_findings = allowlist or set()
     for line_number, line in enumerate(lines, start=1):
         for rule_name, pattern in PATTERNS:
-            if pattern.search(line):
-                finding_key = f"{path.as_posix()}:{line_number}:{rule_name}"
-                if finding_key in allowed_findings:
-                    continue
-                findings.append(f"{path}:{line_number}: possible secret ({rule_name})")
+            if not pattern.search(line):
+                continue
+            finding_key = f"{path.as_posix()}:{line_number}:{rule_name}"
+            if finding_key in allowed_findings:
+                continue
+            findings.append(f"{path}:{line_number}: possible secret ({rule_name})")
     return findings
 
 
