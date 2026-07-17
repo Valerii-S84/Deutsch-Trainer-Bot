@@ -33,7 +33,7 @@ def log_exception_summary(
     log_event: str,
     exc: Exception,
     *,
-    level: int = logging.ERROR,
+    log_level: int = logging.ERROR,
     **context: object,
 ) -> None:
     context_parts = [
@@ -42,9 +42,9 @@ def log_exception_summary(
         if value is not None
     ]
     if context_parts:
-        logger.log(level, "%s %s error_type=%s", log_event, " ".join(context_parts), exc.__class__.__name__)
+        logger.log(log_level, "%s %s error_type=%s", log_event, " ".join(context_parts), exc.__class__.__name__)
         return
-    logger.log(level, "%s error_type=%s", log_event, exc.__class__.__name__)
+    logger.log(log_level, "%s error_type=%s", log_event, exc.__class__.__name__)
 
 
 def _single_line(value: object) -> str:

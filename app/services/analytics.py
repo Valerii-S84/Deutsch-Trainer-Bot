@@ -110,7 +110,7 @@ class AnalyticsTracker:
                 logger,
                 "analytics_write_failed",
                 exc,
-                level=logging.WARNING,
+                log_level=logging.WARNING,
                 event_name=event_name,
                 source=source,
             )

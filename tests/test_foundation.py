@@ -100,6 +100,20 @@ def test_exception_summary_log_omits_traceback_and_exception_message(caplog: pyt
     assert "Anna" not in caplog.text
 
 
+def test_exception_summary_allows_level_context_key(caplog: pytest.LogCaptureFixture) -> None:
+    from app.logging_config import log_exception_summary
+
+    logger = logging.getLogger("app.test.safe_summary_context")
+
+    with caplog.at_level(logging.ERROR, logger=logger.name):
+        log_exception_summary(logger, "theme_training_open_unexpected_failed", RuntimeError("boom"), level="A1")
+
+    assert "theme_training_open_unexpected_failed" in caplog.text
+    assert "level=A1" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert caplog.records[0].levelno == logging.ERROR
+
+
 def test_no_obvious_secret_placeholders_in_code() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     targets = [

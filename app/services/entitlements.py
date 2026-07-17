@@ -330,7 +330,7 @@ class EntitlementService:
                 logger,
                 "subscription_expired_event_lookup_failed",
                 exc,
-                level=logging.WARNING,
+                log_level=logging.WARNING,
                 subscription_id=subscription.id,
                 user_id=subscription.user_id,
             )
