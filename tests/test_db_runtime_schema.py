@@ -51,6 +51,7 @@ EXPECTED_INDEXES = {
         "ix_question_references_theme_key",
     },
     "training_session_items": {
+        "uq_training_session_items_session_item",
         "ix_training_session_items_user_id",
         "ix_training_session_items_session_status",
         "ix_training_session_items_question_reference_id",
@@ -106,7 +107,6 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "question_references": {"uq_question_references_catalog_item_version"},
     "training_session_items": {
         "uq_training_session_items_session_position",
-        "uq_training_session_items_session_item",
         "uq_training_session_items_session_catalog_item",
     },
     "user_answers": {
@@ -321,6 +321,26 @@ async def test_postgres_partial_unique_index_for_api_question_references(db_conn
     assert "create unique index" in normalized, "Index uq_question_references_api_item_id must be unique"
     assert "catalog_id is null" in normalized, "Index uq_question_references_api_item_id must filter catalog_id IS NULL"
     assert "item_version is null" in normalized, "Index uq_question_references_api_item_id must filter item_version IS NULL"
+
+
+@pytest.mark.asyncio
+async def test_postgres_partial_unique_index_for_api_training_session_items(db_connection: AsyncConnection) -> None:
+    index_def = await db_connection.scalar(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname='public'
+              AND tablename='training_session_items'
+              AND indexname='uq_training_session_items_session_item'
+            """,
+        ),
+    )
+    assert index_def is not None, "Partial unique index for API training session items is missing"
+    normalized = " ".join(index_def.lower().split())
+    assert "create unique index" in normalized, "Index uq_training_session_items_session_item must be unique"
+    assert "catalog_id is null" in normalized, "Index uq_training_session_items_session_item must filter catalog_id IS NULL"
+    assert "item_version is null" in normalized, "Index uq_training_session_items_session_item must filter item_version IS NULL"
 
 
 @pytest.mark.asyncio

@@ -157,10 +157,19 @@ def upgrade() -> None:
 
     op.add_column("training_session_items", sa.Column("catalog_id", sa.String(length=128), nullable=True))
     op.add_column("training_session_items", sa.Column("item_version", sa.String(length=128), nullable=True))
+    op.drop_constraint("uq_training_session_items_session_item", "training_session_items", type_="unique")
+    op.create_index(
+        "uq_training_session_items_session_item",
+        "training_session_items",
+        ["session_id", "item_id"],
+        unique=True,
+        postgresql_where=sa.text("catalog_id IS NULL AND item_version IS NULL"),
+        sqlite_where=sa.text("catalog_id IS NULL AND item_version IS NULL"),
+    )
     op.create_unique_constraint(
         "uq_training_session_items_session_catalog_item",
         "training_session_items",
-        ["session_id", "catalog_id", "item_id"],
+        ["session_id", "catalog_id", "item_id", "item_version"],
     )
     op.create_index("ix_training_session_items_catalog_item", "training_session_items", ["catalog_id", "item_id"])
 
@@ -189,8 +198,15 @@ def downgrade() -> None:
     op.drop_column("user_answers", "item_id")
     op.drop_column("user_answers", "catalog_id")
 
+    op.execute("DELETE FROM training_session_items WHERE catalog_id IS NOT NULL OR item_version IS NOT NULL")
     op.drop_index("ix_training_session_items_catalog_item", table_name="training_session_items")
     op.drop_constraint("uq_training_session_items_session_catalog_item", "training_session_items", type_="unique")
+    op.drop_index("uq_training_session_items_session_item", table_name="training_session_items")
+    op.create_unique_constraint(
+        "uq_training_session_items_session_item",
+        "training_session_items",
+        ["session_id", "item_id"],
+    )
     op.drop_column("training_session_items", "item_version")
     op.drop_column("training_session_items", "catalog_id")
 

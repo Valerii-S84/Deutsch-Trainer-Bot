@@ -52,8 +52,21 @@ class TrainingSessionItem(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("session_id", "position", name="uq_training_session_items_session_position"),
-        UniqueConstraint("session_id", "item_id", name="uq_training_session_items_session_item"),
-        UniqueConstraint("session_id", "catalog_id", "item_id", name="uq_training_session_items_session_catalog_item"),
+        UniqueConstraint(
+            "session_id",
+            "catalog_id",
+            "item_id",
+            "item_version",
+            name="uq_training_session_items_session_catalog_item",
+        ),
+        Index(
+            "uq_training_session_items_session_item",
+            "session_id",
+            "item_id",
+            unique=True,
+            postgresql_where=sa.text("catalog_id IS NULL AND item_version IS NULL"),
+            sqlite_where=sa.text("catalog_id IS NULL AND item_version IS NULL"),
+        ),
         Index("ix_training_session_items_user_id", "user_id"),
         Index("ix_training_session_items_catalog_item", "catalog_id", "item_id"),
         Index("ix_training_session_items_session_status", "session_id", "status"),

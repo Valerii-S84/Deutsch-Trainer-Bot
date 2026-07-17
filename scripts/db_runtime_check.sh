@@ -82,6 +82,7 @@ REQUIRED_INDEXES = {
         "ix_question_references_theme_key",
     },
     "training_session_items": {
+        "uq_training_session_items_session_item",
         "ix_training_session_items_user_id",
         "ix_training_session_items_session_status",
         "ix_training_session_items_question_reference_id",
@@ -137,7 +138,6 @@ REQUIRED_UNIQUE_CONSTRAINTS = {
     "question_references": {"uq_question_references_catalog_item_version"},
     "training_session_items": {
         "uq_training_session_items_session_position",
-        "uq_training_session_items_session_item",
         "uq_training_session_items_session_catalog_item",
     },
     "user_answers": {
@@ -308,6 +308,23 @@ async def assert_runtime_schema(database_url: str) -> None:
             assert "create unique index" in api_reference_lower, "API reference partial index must be unique"
             assert "catalog_id is null" in api_reference_lower, "API reference partial index must filter catalog_id"
             assert "item_version is null" in api_reference_lower, "API reference partial index must filter item_version"
+
+            api_session_item = await connection.scalar(
+                text(
+                    """
+                    SELECT indexdef
+                    FROM pg_indexes
+                    WHERE schemaname='public'
+                      AND tablename='training_session_items'
+                      AND indexname='uq_training_session_items_session_item'
+                    """,
+                ),
+            )
+            assert api_session_item is not None, "Partial unique index for API training session items missing"
+            api_session_item_lower = " ".join(api_session_item.lower().split())
+            assert "create unique index" in api_session_item_lower, "API session item partial index must be unique"
+            assert "catalog_id is null" in api_session_item_lower, "API session item partial index must filter catalog_id"
+            assert "item_version is null" in api_session_item_lower, "API session item partial index must filter item_version"
 
             for table, columns in REQUIRED_JSONB.items():
                 for column in columns:
