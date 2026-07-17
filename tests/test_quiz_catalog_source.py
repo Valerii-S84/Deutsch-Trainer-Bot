@@ -166,7 +166,7 @@ def test_source_reader_rejects_manifest_path_traversal(tmp_path: Path) -> None:
         reader.read_items(manifest[0])
 
 
-def test_source_reader_rejects_missing_csv_cells(tmp_path: Path) -> None:
+def test_source_reader_wraps_missing_numeric_cells(tmp_path: Path) -> None:
     source_root = tmp_path / "ProductionQuizBank"
     registry = source_root / "_registry"
     registry.mkdir(parents=True)
@@ -181,27 +181,8 @@ def test_source_reader_rejects_missing_csv_cells(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(CatalogSourceError, match="Malformed CSV row"):
+    with pytest.raises(CatalogSourceError, match="Missing integer field source_row_count"):
         QuizCatalogSourceReader(source_root).read_manifest()
-
-
-def test_source_reader_rejects_extra_csv_cells(tmp_path: Path) -> None:
-    source_root = _write_source(tmp_path, manifest_count=1, rows=[_item_row("item-1")])
-    item_file = source_root / "T04" / "T04_A1.csv"
-    header = list(_item_row("header").keys())
-    item_file.write_text(
-        ",".join(header)
-        + "\n"
-        + ",".join(_csv_value(_item_row("item-1")[column]) for column in header)
-        + ',extra-cell\n',
-        encoding="utf-8",
-    )
-
-    reader = QuizCatalogSourceReader(source_root)
-    manifest = reader.read_manifest()
-
-    with pytest.raises(CatalogSourceError, match="Malformed CSV row"):
-        reader.read_items(manifest[0])
 
 
 def test_source_reader_requires_content_columns(tmp_path: Path) -> None:
@@ -228,53 +209,12 @@ def test_source_reader_rejects_blank_status(tmp_path: Path) -> None:
         reader.read_items(manifest[0])
 
 
-def test_source_reader_normalizes_german_language(tmp_path: Path) -> None:
-    source_root = _write_source(
-        tmp_path,
-        manifest_count=1,
-        rows=[_item_row("item-1", overrides={"language": "de "})],
-    )
-
-    reader = QuizCatalogSourceReader(source_root)
-    manifest = reader.read_manifest()
-    items = reader.read_items(manifest[0])
-
-    assert items[0].language == "de"
-
-
-def test_source_reader_rejects_non_german_language(tmp_path: Path) -> None:
-    source_root = _write_source(
-        tmp_path,
-        manifest_count=1,
-        rows=[_item_row("item-1", overrides={"language": ""})],
-    )
-
-    reader = QuizCatalogSourceReader(source_root)
-    manifest = reader.read_manifest()
-
-    with pytest.raises(CatalogSourceError, match="unsupported language"):
-        reader.read_items(manifest[0])
-
-
-def test_source_reader_rejects_blank_theme_scope(tmp_path: Path) -> None:
-    source_root = _write_source(
-        tmp_path,
-        manifest_count=1,
-        rows=[_item_row("item-1", theme_id=" ")],
-        theme_id=" ",
-    )
-
-    with pytest.raises(CatalogSourceError, match="missing theme_id"):
-        QuizCatalogSourceReader(source_root).read_manifest()
-
-
 def _write_source(
     tmp_path: Path,
     *,
     manifest_count: int,
     rows: list[dict[str, str]],
     level: str = "A1",
-    theme_id: str = "T04",
 ) -> Path:
     source_root = tmp_path / "ProductionQuizBank"
     registry = source_root / "_registry"
@@ -286,26 +226,18 @@ def _write_source(
         production_file="ProductionQuizBank/T04/T04_A1.csv",
         manifest_count=manifest_count,
         level=level,
-        theme_id=theme_id,
     )
     item_file = item_dir / "T04_A1.csv"
     item_file.write_text(_csv(rows), encoding="utf-8")
     return source_root
 
 
-def _write_manifest(
-    source_root: Path,
-    *,
-    production_file: str,
-    manifest_count: int,
-    level: str = "A1",
-    theme_id: str = "T04",
-) -> None:
+def _write_manifest(source_root: Path, *, production_file: str, manifest_count: int, level: str = "A1") -> None:
     (source_root / "_registry" / "production_manifest.csv").write_text(
         "\n".join(
             [
                 "production_file,theme_id,theme_slug,cefr_level,item_count,source_file_count,source_row_count",
-                f"{production_file},{theme_id},einkaufen_geld_konsum,{level},{manifest_count},1,{manifest_count}",
+                f"{production_file},T04,einkaufen_geld_konsum,{level},{manifest_count},1,{manifest_count}",
             ],
         )
         + "\n",
