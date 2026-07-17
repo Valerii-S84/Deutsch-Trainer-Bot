@@ -39,6 +39,9 @@ class UserAnswer(Base, TimestampMixin):
         ForeignKey("question_references.id", ondelete="SET NULL"),
         nullable=True,
     )
+    catalog_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    item_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    item_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     external_quiz_id: Mapped[str] = mapped_column(String(255), nullable=False)
     level: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     theme: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -69,11 +72,21 @@ class UserAnswer(Base, TimestampMixin):
             "external_quiz_id",
             name="uq_user_answers_user_session_external_quiz",
         ),
+        UniqueConstraint(
+            "user_id",
+            "session_id",
+            "catalog_id",
+            "item_id",
+            "item_version",
+            name="uq_user_answers_user_session_catalog_item",
+        ),
         Index("ix_user_answers_user_id", "user_id"),
         Index("ix_user_answers_session_id", "session_id"),
+        Index("ix_user_answers_catalog_item", "catalog_id", "item_id", "item_version"),
         Index("ix_user_answers_training_session_item_id", "training_session_item_id"),
         Index("ix_user_answers_question_reference_id", "question_reference_id"),
         Index("ix_user_answers_external_quiz_id", "external_quiz_id"),
         Index("ix_user_answers_level_theme", "level", "theme"),
+        Index("ix_user_answers_user_topic_item", "user_id", "level", "theme", "external_quiz_id"),
         UniqueConstraint("telegram_update_id", name="uq_user_answers_telegram_update_id"),
     )

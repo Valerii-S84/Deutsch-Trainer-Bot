@@ -31,7 +31,9 @@ class TrainingSessionItem(Base, TimestampMixin):
         ForeignKey("question_references.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    catalog_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     item_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    item_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(
         String(16),
@@ -51,7 +53,9 @@ class TrainingSessionItem(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("session_id", "position", name="uq_training_session_items_session_position"),
         UniqueConstraint("session_id", "item_id", name="uq_training_session_items_session_item"),
+        UniqueConstraint("session_id", "catalog_id", "item_id", name="uq_training_session_items_session_catalog_item"),
         Index("ix_training_session_items_user_id", "user_id"),
+        Index("ix_training_session_items_catalog_item", "catalog_id", "item_id"),
         Index("ix_training_session_items_session_status", "session_id", "status"),
         Index("ix_training_session_items_question_reference_id", "question_reference_id"),
         Index("ix_training_session_items_daily_limit_id", "daily_limit_id"),

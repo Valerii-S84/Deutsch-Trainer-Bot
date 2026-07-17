@@ -67,6 +67,8 @@ class QuizSession(Base, TimestampMixin):
         default=0,
         server_default=sa.text("0"),
     )
+    catalog_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    catalog_version: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     source: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
@@ -82,6 +84,7 @@ class QuizSession(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_quiz_sessions_user_id", "user_id"),
         Index("ix_quiz_sessions_user_status", "user_id", "status"),
+        Index("ix_quiz_sessions_catalog_id", "catalog_id"),
         CheckConstraint("correct_answers >= 0", name="ck_quiz_sessions_correct_answers_non_negative"),
         CheckConstraint("total_questions >= 0", name="ck_quiz_sessions_total_questions_non_negative"),
         CheckConstraint("shown_questions_count >= 0", name="ck_quiz_sessions_shown_count_non_negative"),

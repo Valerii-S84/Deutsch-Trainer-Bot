@@ -135,6 +135,32 @@ async def test_question_reference_upsert_creates_updates_and_keeps_single_row(db
     assert created.metadata_snapshot == {"source": "contract"}
     assert await db_session.scalar(select(func.count(QuestionReference.id))) == 1
 
+
+@pytest.mark.asyncio
+async def test_question_reference_upsert_ignores_catalog_scoped_rows(db_session: AsyncSession) -> None:
+    repository = QuestionReferenceRepository()
+    catalog_reference = QuestionReference(
+        id=1,
+        catalog_id="catalog-de",
+        item_id="item-1",
+        item_version="v1",
+        level="A1",
+        theme="Alltag",
+        source="local_quiz_catalog",
+    )
+    db_session.add(catalog_reference)
+    await db_session.flush()
+
+    api_reference = await _upsert_reference(repository, db_session)
+    await db_session.flush()
+
+    assert api_reference is not catalog_reference
+    assert api_reference.catalog_id is None
+    assert api_reference.item_version is None
+    assert catalog_reference.source == "local_quiz_catalog"
+    assert await db_session.scalar(select(func.count(QuestionReference.id))) == 2
+
+
 @pytest.mark.asyncio
 async def test_progress_history_records_snapshot_and_delta(db_session: AsyncSession) -> None:
     db_session.add(User(id=1, telegram_user_id=1001))
