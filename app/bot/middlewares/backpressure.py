@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
 from app.bot.texts import SATURATION_RETRY_TEXT
+from app.runtime.admission import AdmissionBackendError, AdmissionController, LocalAdmissionController
 from app.runtime.backpressure import BackpressureMonitor, global_backpressure_monitor
 
 logger = logging.getLogger(__name__)
@@ -21,16 +21,26 @@ class BackpressureMiddleware:
         in_flight_limit: int,
         acquire_timeout_seconds: float,
         monitor: BackpressureMonitor = global_backpressure_monitor,
+        admission_controller: AdmissionController | None = None,
     ) -> None:
-        self._semaphore = asyncio.Semaphore(in_flight_limit)
+        self._in_flight_limit = max(1, in_flight_limit)
+        self._admission_controller = admission_controller or LocalAdmissionController(limit=in_flight_limit)
+        self._semaphore = getattr(self._admission_controller, "semaphore", None)
         self._acquire_timeout_seconds = max(0.0, acquire_timeout_seconds)
         self._monitor = monitor
-        self._monitor.configure(limit=in_flight_limit)
+        self._monitor.configure(limit=self._in_flight_limit)
 
     async def __call__(self, handler: Any, event: Any, data: dict[str, Any]) -> Any:
         update = data.get("event_update") or event
-        acquired = await self._try_acquire()
-        if not acquired:
+        try:
+            lease = await self._admission_controller.try_acquire(timeout_seconds=self._acquire_timeout_seconds)
+        except AdmissionBackendError:
+            self._monitor.rejected()
+            logger.exception("telegram update rejected because shared admission backend is unavailable")
+            await _notify_saturation(update)
+            return None
+
+        if lease is None:
             self._monitor.rejected()
             logger.warning("telegram update rejected by global in-flight limit")
             await _notify_saturation(update)
@@ -40,18 +50,20 @@ class BackpressureMiddleware:
             self._monitor.acquired()
             return await handler(event, data)
         finally:
-            self._semaphore.release()
+            await lease.release()
             self._monitor.released()
 
-    async def _try_acquire(self) -> bool:
-        if getattr(self._semaphore, "_value", 0) <= 0:
-            if self._acquire_timeout_seconds == 0:
-                return False
-            await asyncio.sleep(self._acquire_timeout_seconds)
-            if getattr(self._semaphore, "_value", 0) <= 0:
-                return False
-        await self._semaphore.acquire()
-        return True
+    @property
+    def limit(self) -> int:
+        return self._in_flight_limit
+
+    @property
+    def admission_limit(self) -> int:
+        return self._admission_controller.limit
+
+    @property
+    def uses_shared_admission(self) -> bool:
+        return self._admission_controller.is_shared
 
 
 async def _notify_saturation(update: Any) -> None:

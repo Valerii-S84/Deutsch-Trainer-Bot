@@ -224,11 +224,64 @@ def test_hardening_runtime_defaults_are_bounded() -> None:
 
     assert settings.telegram_webhook_max_connections == 40
     assert settings.bot_global_in_flight_limit == 512
+    assert settings.effective_bot_in_flight_limit == 512
     assert settings.db_pool_size == 20
     assert settings.db_max_overflow == 10
     assert settings.db_pool_timeout == 5.0
     assert settings.db_pool_recycle == 1800
     assert settings.db_pool_pre_ping is True
+
+
+def test_pgbouncer_backend_clamps_effective_in_flight_limit_below_client_cap() -> None:
+    settings = Settings(
+        DB_CONNECTION_BACKEND="pgbouncer_transaction",
+        DB_PGBOUNCER_MAX_CLIENT_CONN=200,
+        DB_PGBOUNCER_CLIENT_HEADROOM=32,
+    )
+
+    assert settings.bot_global_in_flight_limit == 512
+    assert settings.shared_bot_in_flight_limit == 168
+    assert settings.effective_bot_in_flight_limit == 168
+
+
+def test_multi_instance_pgbouncer_budget_exposes_shared_and_local_limits() -> None:
+    settings = Settings(
+        DB_CONNECTION_BACKEND="pgbouncer_transaction",
+        DB_PGBOUNCER_MAX_CLIENT_CONN=200,
+        DB_PGBOUNCER_CLIENT_HEADROOM=32,
+        DB_APP_REPLICA_COUNT=4,
+        DB_WORKER_REPLICA_COUNT=2,
+        DB_WORKER_CLIENT_BUDGET_PER_REPLICA=5,
+    )
+
+    assert settings.shared_bot_in_flight_limit == 158
+    assert settings.effective_bot_in_flight_limit == 39
+    assert settings.cluster_app_db_client_budget == 158
+    assert settings.cluster_worker_db_client_budget == 10
+    assert settings.cluster_total_pgbouncer_client_budget == 200
+
+
+def test_pgbouncer_reused_pool_budget_rejects_cluster_overcommit() -> None:
+    with pytest.raises(ValueError, match="PgBouncer client budget exceeds"):
+        Settings(
+            DB_CONNECTION_BACKEND="pgbouncer_transaction",
+            DB_PGBOUNCER_REUSE_APP_CONNECTIONS=True,
+            DB_PGBOUNCER_MAX_CLIENT_CONN=200,
+            DB_PGBOUNCER_CLIENT_HEADROOM=32,
+            DB_APP_REPLICA_COUNT=6,
+            DB_WORKER_REPLICA_COUNT=2,
+        )
+
+
+def test_pgbouncer_worker_budget_must_leave_capacity_for_app_replicas() -> None:
+    with pytest.raises(ValueError, match="worker client budget leaves no capacity"):
+        Settings(
+            DB_CONNECTION_BACKEND="pgbouncer_transaction",
+            DB_PGBOUNCER_MAX_CLIENT_CONN=50,
+            DB_PGBOUNCER_CLIENT_HEADROOM=10,
+            DB_WORKER_REPLICA_COUNT=8,
+            DB_WORKER_CLIENT_BUDGET_PER_REPLICA=5,
+        )
 
 
 def test_production_security_state_cannot_use_process_local_backend() -> None:

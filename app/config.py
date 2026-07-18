@@ -15,6 +15,13 @@ class AppEnvironment(str, Enum):
     development = "development"
 
 
+class DbConnectionBackend(str, Enum):
+    """Database connection strategy for async SQLAlchemy engines."""
+
+    direct = "direct"
+    pgbouncer_transaction = "pgbouncer_transaction"
+
+
 class Settings(BaseSettings):
     """Environment-driven settings for production-ready deployment."""
 
@@ -30,13 +37,31 @@ class Settings(BaseSettings):
     telegram_duplicate_update_ttl_seconds: int = 300
     bot_webhook_enabled: bool = False
     bot_polling_enabled: bool = True
+    bot_fake_api_enabled: bool = False
     bot_max_request_timeout: int = 30
+    telegram_webhook_handle_in_background: bool = True
     bot_global_in_flight_limit: int = 512
     bot_global_in_flight_timeout_seconds: float = 0.05
     security_rate_limit_enabled: bool = True
     security_state_backend: str = Field(default="auto", alias="SECURITY_STATE_BACKEND")
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/deutsch_trainer"
+    db_connection_backend: DbConnectionBackend = Field(
+        default=DbConnectionBackend.direct,
+        alias="DB_CONNECTION_BACKEND",
+    )
+    db_pgbouncer_max_client_conn: int = Field(default=200, alias="DB_PGBOUNCER_MAX_CLIENT_CONN")
+    db_pgbouncer_client_headroom: int = Field(default=32, alias="DB_PGBOUNCER_CLIENT_HEADROOM")
+    db_pgbouncer_reuse_app_connections: bool = Field(
+        default=False,
+        alias="DB_PGBOUNCER_REUSE_APP_CONNECTIONS",
+    )
+    db_app_replica_count: int = Field(default=1, alias="DB_APP_REPLICA_COUNT")
+    db_worker_replica_count: int = Field(default=0, alias="DB_WORKER_REPLICA_COUNT")
+    db_worker_client_budget_per_replica: int = Field(
+        default=5,
+        alias="DB_WORKER_CLIENT_BUDGET_PER_REPLICA",
+    )
     db_pool_size: int = Field(default=20, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=10, alias="DB_MAX_OVERFLOW")
     db_pool_timeout: float = Field(default=5.0, alias="DB_POOL_TIMEOUT")
@@ -62,6 +87,8 @@ class Settings(BaseSettings):
     catalog_source_path: str = Field(default="ProductionQuizBank", alias="CATALOG_SOURCE_PATH")
     catalog_import_dry_run: bool = Field(default=False, alias="CATALOG_IMPORT_DRY_RUN")
     enabled_cefr_levels: tuple[str, ...] = Field(default=("A1", "A2", "B1", "B2", "C1"), alias="ENABLED_CEFR_LEVELS")
+    local_catalog_cache_enabled: bool = Field(default=False, alias="LOCAL_CATALOG_CACHE_ENABLED")
+    local_catalog_cache_ttl_seconds: int = Field(default=15, alias="LOCAL_CATALOG_CACHE_TTL_SECONDS")
 
     log_level: str = "INFO"
 
@@ -96,11 +123,15 @@ class Settings(BaseSettings):
         "telegram_duplicate_update_ttl_seconds",
         "quiz_bank_timeout_seconds",
         "bot_global_in_flight_limit",
+        "db_pgbouncer_max_client_conn",
+        "db_app_replica_count",
+        "db_worker_client_budget_per_replica",
         "db_pool_size",
         "db_pool_timeout",
         "worker_db_pool_size",
         "worker_db_pool_timeout",
         "redis_max_connections",
+        "local_catalog_cache_ttl_seconds",
     )
     @classmethod
     def validate_positive_number(cls, value: int | float, info: ValidationInfo) -> int | float:
@@ -117,6 +148,8 @@ class Settings(BaseSettings):
 
     @field_validator(
         "bot_global_in_flight_timeout_seconds",
+        "db_pgbouncer_client_headroom",
+        "db_worker_replica_count",
         "db_max_overflow",
         "worker_db_max_overflow",
         "quiz_bank_max_retries",
@@ -272,9 +305,75 @@ class Settings(BaseSettings):
             raise ValueError("REDIS_URL is required when production security rate limits are enabled")
         return self
 
+    @model_validator(mode="after")
+    def validate_multi_instance_db_budget(self) -> "Settings":
+        if self.db_connection_backend != DbConnectionBackend.pgbouncer_transaction:
+            return self
+        if self.db_pgbouncer_safe_client_budget < 1:
+            raise ValueError("DB_PGBOUNCER_CLIENT_HEADROOM must leave at least one PgBouncer client slot")
+        if self.cluster_worker_db_client_budget >= self.db_pgbouncer_safe_client_budget:
+            raise ValueError("PgBouncer worker client budget leaves no capacity for app replicas")
+        if self.db_pgbouncer_uses_null_pool:
+            return self
+        if self.cluster_total_pgbouncer_client_budget > self.db_pgbouncer_max_client_conn:
+            raise ValueError("PgBouncer client budget exceeds DB_PGBOUNCER_MAX_CLIENT_CONN")
+        return self
+
     @property
     def webhook_mode_enabled(self) -> bool:
         return bool(self.telegram_webhook_url and self.telegram_webhook_secret and self.bot_webhook_enabled)
+
+    @property
+    def db_pgbouncer_uses_null_pool(self) -> bool:
+        return (
+            self.db_connection_backend == DbConnectionBackend.pgbouncer_transaction
+            and not self.db_pgbouncer_reuse_app_connections
+        )
+
+    @property
+    def db_pgbouncer_safe_client_budget(self) -> int:
+        return self.db_pgbouncer_max_client_conn - self.db_pgbouncer_client_headroom
+
+    @property
+    def effective_worker_db_client_budget_per_replica(self) -> int:
+        if self.db_pgbouncer_uses_null_pool:
+            return self.db_worker_client_budget_per_replica
+        return self.worker_db_pool_size + self.worker_db_max_overflow
+
+    @property
+    def cluster_worker_db_client_budget(self) -> int:
+        return self.db_worker_replica_count * self.effective_worker_db_client_budget_per_replica
+
+    @property
+    def shared_bot_in_flight_limit(self) -> int:
+        if self.db_connection_backend != DbConnectionBackend.pgbouncer_transaction:
+            return self.bot_global_in_flight_limit
+        safe_app_budget = max(1, self.db_pgbouncer_safe_client_budget - self.cluster_worker_db_client_budget)
+        return min(self.bot_global_in_flight_limit, safe_app_budget)
+
+    @property
+    def cluster_app_db_client_budget(self) -> int:
+        if self.db_pgbouncer_uses_null_pool:
+            return self.shared_bot_in_flight_limit
+        return self.db_app_replica_count * (self.db_pool_size + self.db_max_overflow)
+
+    @property
+    def cluster_total_db_client_budget(self) -> int:
+        return self.cluster_app_db_client_budget + self.cluster_worker_db_client_budget
+
+    @property
+    def cluster_total_pgbouncer_client_budget(self) -> int:
+        if self.db_connection_backend != DbConnectionBackend.pgbouncer_transaction:
+            return self.cluster_total_db_client_budget
+        return self.cluster_total_db_client_budget + self.db_pgbouncer_client_headroom
+
+    @property
+    def effective_bot_in_flight_limit(self) -> int:
+        if self.db_connection_backend != DbConnectionBackend.pgbouncer_transaction:
+            return self.bot_global_in_flight_limit
+        if not self.db_pgbouncer_uses_null_pool:
+            return self.shared_bot_in_flight_limit
+        return max(1, self.shared_bot_in_flight_limit // self.db_app_replica_count)
 
     @property
     def quiz_bank_edge_api_key_or_legacy(self) -> Optional[str]:

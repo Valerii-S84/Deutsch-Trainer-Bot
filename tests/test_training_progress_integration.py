@@ -434,6 +434,7 @@ def _question_payload(
                 item_id=item_id,
                 level="A1",
                 theme=theme,
+                theme_key="T01",
                 question_text="Was ist korrekt?",
                 answer_options=[
                     QuizAnswerOption(option_id="a1", text="Antwort A", order=1),
@@ -441,7 +442,12 @@ def _question_payload(
                 ],
                 correct_answer=QuizCorrectAnswerReference(option_id=correct_answer),
                 explanation="Richtig erklärt.",
-                metadata={"progress_theme_key": progress_theme_key},
+                metadata={
+                    "catalog_id": "cat-local",
+                    "theme_id": "T01",
+                    "progress_theme_key": progress_theme_key,
+                },
+                content_version="1.0",
             )
         ],
         requested_count=1,
@@ -494,8 +500,11 @@ async def test_submit_answer_enqueues_progress_work_for_new_answers() -> None:
     assert len(outbox_repo.events) == 1
     payload = outbox_repo.events[0]["payload"]
     assert payload["telegram_user_id"] == telegram_user_id
+    assert payload["catalog_id"] == "cat-local"
+    assert payload["item_version"] == "1.0"
     assert payload["level"] == "A1"
     assert payload["theme"] == "Alltag"
+    assert payload["theme_id"] == "T01"
     assert payload["is_correct"] is True
 
 

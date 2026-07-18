@@ -161,6 +161,35 @@ class OutboxRepository:
             return
         await self.mark_done(db, event, now=completed_at)
 
+    async def mark_done_many_by_id(
+        self,
+        db: AsyncSession,
+        event_ids: list[int],
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        if not event_ids:
+            return
+        completed_at = now or datetime.now(UTC)
+        if _dialect_name(db) == "postgresql":
+            await db.execute(
+                update(OutboxEvent)
+                .where(OutboxEvent.id.in_(event_ids))
+                .values(
+                    status=OUTBOX_DONE,
+                    processed_at=completed_at,
+                    failed_at=None,
+                    dead_at=None,
+                    locked_at=None,
+                    locked_by=None,
+                    last_error=None,
+                ),
+            )
+            return
+
+        for event_id in event_ids:
+            await self.mark_done_by_id(db, event_id, now=completed_at)
+
     async def mark_failed(
         self,
         db: AsyncSession,

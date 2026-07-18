@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
 import logging
+from collections.abc import Sequence
 import signal
 from time import perf_counter
 
@@ -24,6 +26,7 @@ from app.bot.dispatcher import _uses_redis_security_state
 from app.repositories.outbox import OUTBOX_DEAD, OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_PROCESSING, OutboxRepository
 from app.runtime.backpressure import BackpressureMonitor, global_backpressure_monitor
 from app.runtime.redis import close_redis_client, create_redis_client
+from app.runtime.fake_telegram import FakeTelegramSession
 
 logger = logging.getLogger(__name__)
 # Container health and webhook endpoints must be reachable inside Docker.
@@ -32,6 +35,9 @@ WEBHOOK_BIND_PORT = 8080
 READY_DB_POOL_WAIT_UNHEALTHY_MS = 200.0
 READY_REDIS_LATENCY_UNHEALTHY_MS = 50.0
 READY_WORKER_LAG_UNHEALTHY_SECONDS = 120.0
+DEFAULT_RUNTIME_COMMAND = "run"
+SERVE_WEBHOOK_COMMAND = "serve-webhook"
+REGISTER_WEBHOOK_COMMAND = "register-webhook"
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,7 @@ class WebhookRuntimeConfig:
     secret: str
     request_timeout: int
     max_connections: int
+    handle_in_background: bool
 
 
 def create_dispatcher(*, redis_client: Redis | None = None) -> Dispatcher:
@@ -50,7 +57,27 @@ def create_dispatcher(*, redis_client: Redis | None = None) -> Dispatcher:
 
 def create_bot(token: str) -> Bot:
     """Create a bot client from token."""
+    settings = get_settings()
+    if getattr(settings, "bot_fake_api_enabled", False):
+        return Bot(token=token, session=FakeTelegramSession())
     return Bot(token=token)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the bot runtime CLI parser."""
+    parser = argparse.ArgumentParser(description="Run the Deutsch Trainer Bot runtime.")
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser(DEFAULT_RUNTIME_COMMAND, help="Start the configured bot runtime.")
+    subparsers.add_parser(
+        SERVE_WEBHOOK_COMMAND,
+        help="Serve webhook HTTP without mutating Telegram webhook state.",
+    )
+    subparsers.add_parser(
+        REGISTER_WEBHOOK_COMMAND,
+        help="Register the Telegram webhook and exit.",
+    )
+    parser.set_defaults(command=DEFAULT_RUNTIME_COMMAND)
+    return parser
 
 
 async def health_check(_request: web.Request) -> web.Response:
@@ -169,6 +196,7 @@ def create_webhook_app(
     *,
     webhook_path: str,
     webhook_secret: str,
+    handle_in_background: bool,
     redis_client: Redis | None = None,
 ) -> web.Application:
     """Create an aiohttp app that forwards Telegram webhook updates to aiogram."""
@@ -181,10 +209,43 @@ def create_webhook_app(
     SimpleRequestHandler(
         dispatcher=dispatcher,
         bot=bot,
+        handle_in_background=handle_in_background,
         secret_token=webhook_secret,
     ).register(app, path=webhook_path)
     setup_application(app, dispatcher, bot=bot)
     return app
+
+
+def create_webhook_config(settings) -> WebhookRuntimeConfig:
+    """Build validated webhook runtime config from settings."""
+    if not settings.webhook_mode_enabled:
+        raise RuntimeError("Webhook mode must be fully configured for this command")
+    return WebhookRuntimeConfig(
+        url=settings.telegram_webhook_url or "",
+        path=settings.telegram_webhook_path,
+        secret=settings.telegram_webhook_secret.get_secret_value()
+        if settings.telegram_webhook_secret
+        else "",
+        request_timeout=settings.bot_max_request_timeout,
+        max_connections=settings.telegram_webhook_max_connections,
+        handle_in_background=getattr(settings, "telegram_webhook_handle_in_background", True),
+    )
+
+
+async def register_webhook(
+    bot: Bot,
+    *,
+    config: WebhookRuntimeConfig,
+) -> None:
+    """Register the Telegram webhook and reset pending updates."""
+    logger.info("Registering webhook for path=%s", config.path)
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(
+        url=f"{config.url}{config.path}",
+        secret_token=config.secret,
+        request_timeout=config.request_timeout,
+        max_connections=config.max_connections,
+    )
 
 
 async def run_webhook(
@@ -195,19 +256,12 @@ async def run_webhook(
     redis_client: Redis | None,
 ) -> None:
     """Run Telegram webhook receiver on the container HTTP port."""
-    await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(
-        url=f"{config.url}{config.path}",
-        secret_token=config.secret,
-        request_timeout=config.request_timeout,
-        max_connections=config.max_connections,
-    )
-
     app = create_webhook_app(
         dispatcher,
         bot,
         webhook_path=config.path,
         webhook_secret=config.secret,
+        handle_in_background=config.handle_in_background,
         redis_client=redis_client,
     )
     runner = web.AppRunner(app)
@@ -221,7 +275,7 @@ async def run_webhook(
         await runner.cleanup()
 
 
-async def run_bot() -> None:
+async def run_bot(command: str = DEFAULT_RUNTIME_COMMAND) -> None:
     """Run minimal bot runtime scaffold."""
     settings = get_settings()
     settings.require_production_secrets()
@@ -230,25 +284,34 @@ async def run_bot() -> None:
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN must be set for runtime execution")
 
-    redis_client = create_redis_client(settings) if _uses_redis_security_state(settings) else None
+    redis_client = None
     bot = create_bot(settings.bot_token.get_secret_value())
-    dp = create_dispatcher(redis_client=redis_client)
 
     try:
-        if settings.webhook_mode_enabled:
+        if command == REGISTER_WEBHOOK_COMMAND:
+            await register_webhook(
+                bot,
+                config=create_webhook_config(settings),
+            )
+            return
+
+        redis_client = create_redis_client(settings) if _uses_redis_security_state(settings) else None
+        dp = create_dispatcher(redis_client=redis_client)
+
+        if command == SERVE_WEBHOOK_COMMAND:
+            logger.info("Starting webhook server mode with path=%s", settings.telegram_webhook_path)
+            await run_webhook(
+                bot=bot,
+                dispatcher=dp,
+                config=create_webhook_config(settings),
+                redis_client=redis_client,
+            )
+        elif settings.webhook_mode_enabled:
             logger.info("Starting webhook mode with path=%s", settings.telegram_webhook_path)
             await run_webhook(
                 bot=bot,
                 dispatcher=dp,
-                config=WebhookRuntimeConfig(
-                    url=settings.telegram_webhook_url or "",
-                    path=settings.telegram_webhook_path,
-                    secret=settings.telegram_webhook_secret.get_secret_value()
-                    if settings.telegram_webhook_secret
-                    else "",
-                    request_timeout=settings.bot_max_request_timeout,
-                    max_connections=settings.telegram_webhook_max_connections,
-                ),
+                config=create_webhook_config(settings),
                 redis_client=redis_client,
             )
         elif settings.bot_polling_enabled:
@@ -271,9 +334,10 @@ async def _wait_for_shutdown() -> None:
     await stop_event.wait()
 
 
-async def main() -> None:
-    await run_bot()
+def main(argv: Sequence[str] | None = None) -> None:
+    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    asyncio.run(run_bot(args.command))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

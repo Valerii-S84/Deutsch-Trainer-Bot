@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -304,7 +305,7 @@ class TrainingAnswerProcessor:
             idempotency_key=f"{ANSWER_ACCEPTED_EVENT}:{answer_id}",
             payload=self._answer_accepted_payload(
                 snapshot,
-                answer_id=answer_id,
+                answer=answer,
                 is_correct=is_correct,
                 result=result,
             ),
@@ -314,24 +315,30 @@ class TrainingAnswerProcessor:
         self,
         snapshot: AnswerSnapshot,
         *,
-        answer_id: int,
+        answer: Any,
         is_correct: bool,
         result: AnswerResult,
     ) -> dict[str, object]:
+        answer_id = int(getattr(answer, "id"))
         payload: dict[str, object] = {
             "answer_id": answer_id,
             "telegram_user_id": snapshot.telegram_user_id,
             "user_id": snapshot.user_id,
             "session_id": snapshot.session_id,
+            "session_item_id": snapshot.pending.training_session_item_id,
             "question_token": snapshot.pending.question_token,
+            "catalog_id": _catalog_id_from_metadata(snapshot.pending.metadata_snapshot),
             "item_id": snapshot.pending.question_id,
+            "item_version": snapshot.pending.content_version,
             "level": snapshot.pending.level,
             "theme": snapshot.pending.theme,
+            "theme_id": _theme_id_from_snapshot(snapshot),
             "theme_key": snapshot.pending.theme_key,
             "selected_answer": snapshot.selected_option_id,
             "correct_answer": snapshot.pending.correct_answer,
             "is_correct": is_correct,
             "session_type": snapshot.session_type,
+            "answered_at": _answered_at_iso(answer),
             "position": snapshot.pending.position,
             "available_items_count": _available_count_from_metadata(snapshot.pending.metadata_snapshot),
             "metadata_snapshot": snapshot.pending.metadata_snapshot,
@@ -417,6 +424,26 @@ def _available_count_from_metadata(metadata_snapshot: dict[str, object] | None) 
     return None
 
 
+def _catalog_id_from_metadata(metadata_snapshot: dict[str, object] | None) -> str | None:
+    value = (metadata_snapshot or {}).get("catalog_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _theme_id_from_snapshot(snapshot: AnswerSnapshot) -> str | None:
+    metadata = snapshot.pending.metadata_snapshot or {}
+    value = metadata.get("theme_id")
+    if isinstance(value, str) and value:
+        return value
+    return snapshot.pending.theme_key
+
+
+def _answered_at_iso(answer: Any) -> str | None:
+    value = getattr(answer, "answered_at", None)
+    if value is None:
+        return datetime.now(UTC).isoformat()
+    return value.isoformat()
+
+
 def _answered_count(session: Any) -> int:
     value = getattr(session, "answered_count", None)
     if isinstance(value, int) and value >= 0:
@@ -433,5 +460,6 @@ def _answer_record(answer: Any) -> AnswerWriteResult:
         selected_answer=str(answer.selected_answer),
         correct_answer=str(answer.correct_answer),
         is_correct=bool(answer.is_correct),
+        answered_at=getattr(answer, "answered_at", None),
         created=False,
     )

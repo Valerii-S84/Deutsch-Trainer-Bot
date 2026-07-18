@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from socket import gethostname
 from uuid import uuid4
 
@@ -11,40 +10,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.models import OutboxEvent
 from app.db.session import WorkerSessionLocal
 from app.repositories.analytics_events import AnalyticsEventRepository
-from app.repositories.outbox import OUTBOX_PROCESSING, OutboxRepository
+from app.repositories.outbox import OutboxRepository
 from app.runtime.timing import timing_span
 from app.services.analytics import AnalyticsTracker
 from app.services.mistakes import MistakeService
 from app.services.progress import ProgressService
 from app.services.user_identity import ResolvedUserId
+from app.workers.outbox_batch import PostgresOutboxBatchProcessor
+from app.workers.outbox_payloads import AnswerAcceptedPayload, parse_answer_accepted_payload
 
 logger = logging.getLogger(__name__)
 
 ANSWER_ACCEPTED_EVENT = "answer.accepted"
-
-
-@dataclass(frozen=True)
-class AnswerAcceptedPayload:
-    telegram_user_id: int
-    user_id: int
-    session_id: int
-    answer_id: int
-    level: str
-    theme: str | None
-    item_id: str
-    selected_answer: str
-    correct_answer: str
-    is_correct: bool
-    session_type: str
-    metadata_snapshot: dict[str, object] | None
-    theme_key: str | None
-    available_items_count: int | None
-    question_token: str | None
-    position: int | None
-    session_completed: bool
-    answered_count: int | None
-    correct_answers: int | None
-    total_questions: int | None
 
 
 class OutboxEventProcessor:
@@ -63,7 +40,7 @@ class OutboxEventProcessor:
 
     async def process(self, db: AsyncSession, event: OutboxEvent) -> None:
         if event.event_type == ANSWER_ACCEPTED_EVENT:
-            await self._process_answer_accepted(db, _parse_answer_accepted_payload(event.payload))
+            await self._process_answer_accepted(db, parse_answer_accepted_payload(event.payload))
             return
         raise ValueError(f"Unsupported outbox event type: {event.event_type}")
 
@@ -185,6 +162,7 @@ class OutboxWorker:
         session_factory: async_sessionmaker[AsyncSession] = WorkerSessionLocal,
         outbox_repo: OutboxRepository | None = None,
         processor: OutboxEventProcessor | None = None,
+        batch_processor: PostgresOutboxBatchProcessor | None = None,
         worker_id: str | None = None,
         batch_size: int = 200,
         max_parallelism: int = 5,
@@ -193,6 +171,7 @@ class OutboxWorker:
         self._session_factory = session_factory
         self._outbox_repo = outbox_repo or OutboxRepository()
         self._processor = processor or OutboxEventProcessor()
+        self._batch_processor = batch_processor or PostgresOutboxBatchProcessor()
         self._worker_id = worker_id or f"{gethostname()}:{uuid4().hex[:12]}"
         self._batch_size = batch_size
         self._max_parallelism = max(1, max_parallelism)
@@ -202,6 +181,9 @@ class OutboxWorker:
         events = await self._claim_events()
         if not events:
             return 0
+
+        if await self._try_process_batch(events):
+            return len(events)
 
         if self._max_parallelism <= 1 or len(events) <= 1:
             for event in events:
@@ -256,63 +238,24 @@ class OutboxWorker:
             await self._outbox_repo.mark_failed_by_id(db, event_id, error_message=error_message)
             await db.commit()
 
-
-def _required_int(payload: dict[str, object], key: str) -> int:
-    value = payload.get(key)
-    if not isinstance(value, int):
-        raise ValueError(f"Outbox payload field must be int: {key}")
-    return value
-
-
-def _optional_int(payload: dict[str, object], key: str) -> int | None:
-    value = payload.get(key)
-    return value if isinstance(value, int) else None
-
-
-def _required_str(payload: dict[str, object], key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"Outbox payload field must be non-empty string: {key}")
-    return value
+    async def _try_process_batch(self, events: list[OutboxEvent]) -> bool:
+        async with self._session_factory() as db:
+            if _dialect_name(db) != "postgresql":
+                return False
+            try:
+                await self._batch_processor.process(db, events)
+                await self._outbox_repo.mark_done_many_by_id(db, [int(event.id) for event in events])
+                await db.commit()
+                return True
+            except Exception:
+                await db.rollback()
+                logger.exception(
+                    "outbox batch processing failed: event_ids=%s",
+                    [int(event.id) for event in events],
+                )
+                return False
 
 
-def _optional_str(payload: dict[str, object], key: str) -> str | None:
-    value = payload.get(key)
-    return value if isinstance(value, str) and value else None
-
-
-def _required_bool(payload: dict[str, object], key: str) -> bool:
-    value = payload.get(key)
-    if not isinstance(value, bool):
-        raise ValueError(f"Outbox payload field must be bool: {key}")
-    return value
-
-
-def _optional_dict(payload: dict[str, object], key: str) -> dict[str, object] | None:
-    value = payload.get(key)
-    return value if isinstance(value, dict) else None
-
-
-def _parse_answer_accepted_payload(payload: dict[str, object]) -> AnswerAcceptedPayload:
-    return AnswerAcceptedPayload(
-        telegram_user_id=_required_int(payload, "telegram_user_id"),
-        user_id=_required_int(payload, "user_id"),
-        session_id=_required_int(payload, "session_id"),
-        answer_id=_required_int(payload, "answer_id"),
-        level=_required_str(payload, "level"),
-        theme=_optional_str(payload, "theme"),
-        item_id=_required_str(payload, "item_id"),
-        selected_answer=_required_str(payload, "selected_answer"),
-        correct_answer=_required_str(payload, "correct_answer"),
-        is_correct=_required_bool(payload, "is_correct"),
-        session_type=_required_str(payload, "session_type"),
-        metadata_snapshot=_optional_dict(payload, "metadata_snapshot"),
-        theme_key=_optional_str(payload, "theme_key"),
-        available_items_count=_optional_int(payload, "available_items_count"),
-        question_token=_optional_str(payload, "question_token"),
-        position=_optional_int(payload, "position"),
-        session_completed=_required_bool(payload, "session_completed"),
-        answered_count=_optional_int(payload, "answered_count"),
-        correct_answers=_optional_int(payload, "correct_answers"),
-        total_questions=_optional_int(payload, "total_questions"),
-    )
+def _dialect_name(db: AsyncSession) -> str:
+    bind = db.get_bind()
+    return bind.dialect.name if bind is not None else ""

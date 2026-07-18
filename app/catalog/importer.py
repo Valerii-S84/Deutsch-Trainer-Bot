@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.catalog.service import invalidate_local_catalog_cache
 from app.catalog.snapshot import (
     CatalogImportOptions,
     CatalogImportReport,
@@ -36,6 +37,7 @@ class LocalCatalogImporter:
         self._finish_run(run, report)
         catalog.item_count = len(snapshot.items)
         await db.flush()
+        await invalidate_local_catalog_cache(options.catalog_id)
         return report
 
     async def _existing_items(

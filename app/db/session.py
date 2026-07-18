@@ -3,14 +3,18 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from time import perf_counter
+from uuid import uuid4
 
+from sqlalchemy.engine import make_url
+from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
-from app.config import Settings, get_settings
+from app.config import DbConnectionBackend, Settings, get_settings
 from app.db.base import Base
+
 
 def create_engine(
     settings: Settings,
@@ -21,19 +25,56 @@ def create_engine(
 ) -> AsyncEngine:
     """Create the async DB engine with runtime pool settings."""
 
+    database_url = _database_url(settings)
     engine_kwargs = {
         "echo": False,
         "future": True,
     }
-    if not settings.database_url.startswith("sqlite"):
-        engine_kwargs.update(
-            pool_size=pool_size if pool_size is not None else settings.db_pool_size,
-            max_overflow=max_overflow if max_overflow is not None else settings.db_max_overflow,
-            pool_timeout=pool_timeout if pool_timeout is not None else settings.db_pool_timeout,
-            pool_recycle=settings.db_pool_recycle,
-            pool_pre_ping=settings.db_pool_pre_ping,
-        )
-    return create_async_engine(settings.database_url, **engine_kwargs)
+    if not database_url.startswith("sqlite"):
+        if settings.db_connection_backend == DbConnectionBackend.pgbouncer_transaction:
+            engine_kwargs.update(connect_args=_pgbouncer_connect_args())
+            if settings.db_pgbouncer_uses_null_pool:
+                engine_kwargs.update(poolclass=NullPool)
+            else:
+                engine_kwargs.update(
+                    pool_size=pool_size if pool_size is not None else settings.db_pool_size,
+                    max_overflow=max_overflow if max_overflow is not None else settings.db_max_overflow,
+                    pool_timeout=pool_timeout if pool_timeout is not None else settings.db_pool_timeout,
+                    pool_recycle=settings.db_pool_recycle,
+                    pool_pre_ping=settings.db_pool_pre_ping,
+                )
+        else:
+            engine_kwargs.update(
+                pool_size=pool_size if pool_size is not None else settings.db_pool_size,
+                max_overflow=max_overflow if max_overflow is not None else settings.db_max_overflow,
+                pool_timeout=pool_timeout if pool_timeout is not None else settings.db_pool_timeout,
+                pool_recycle=settings.db_pool_recycle,
+                pool_pre_ping=settings.db_pool_pre_ping,
+            )
+    return create_async_engine(database_url, **engine_kwargs)
+
+
+def _database_url(settings: Settings) -> str:
+    if settings.db_connection_backend != DbConnectionBackend.pgbouncer_transaction:
+        return settings.database_url
+    if settings.database_url.startswith("sqlite"):
+        return settings.database_url
+    url = make_url(settings.database_url).update_query_dict(
+        {"prepared_statement_cache_size": "0"},
+        append=False,
+    )
+    return url.render_as_string(hide_password=False)
+
+
+def _pgbouncer_connect_args() -> dict[str, object]:
+    return {
+        "statement_cache_size": 0,
+        "prepared_statement_name_func": _prepared_statement_name,
+    }
+
+
+def _prepared_statement_name() -> str:
+    return f"__asyncpg_{uuid4().hex}__"
 
 
 _settings = get_settings()

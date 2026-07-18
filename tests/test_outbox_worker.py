@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -10,6 +14,7 @@ from app.db.base import Base
 from app.db.models import AnalyticsEvent, Mistake, OutboxEvent, Progress, QuizSession, User, UserAnswer
 from app.repositories.outbox import OUTBOX_DONE, OutboxRepository
 from app.workers.outbox import ANSWER_ACCEPTED_EVENT, OutboxWorker
+from app.workers.outbox_payloads import parse_answer_accepted_payload
 
 
 @pytest_asyncio.fixture
@@ -48,6 +53,31 @@ async def test_outbox_worker_processes_answer_accepted_side_effects_once(session
     assert mistake is not None
     assert mistake.external_quiz_id == "q1"
     assert [item.event_name for item in analytics] == ["question_answered"]
+
+
+@pytest.mark.asyncio
+async def test_outbox_worker_prefers_batch_path_when_available(session_factory) -> None:
+    worker = OutboxWorker(session_factory=session_factory)
+    batch_event = SimpleNamespace(id=1)
+    worker._claim_events = AsyncMock(return_value=[batch_event])  # type: ignore[method-assign]
+    worker._try_process_batch = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    worker._process_event = AsyncMock()  # type: ignore[method-assign]
+
+    processed = await worker.process_once()
+
+    assert processed == 1
+    worker._try_process_batch.assert_awaited_once_with([batch_event])
+    worker._process_event.assert_not_called()
+
+
+def test_parse_answer_payload_reads_v2_metadata_fields() -> None:
+    payload = parse_answer_accepted_payload(_answer_payload())
+
+    assert payload.session_item_id == 11
+    assert payload.catalog_id == "cat"
+    assert payload.item_version == "1.0"
+    assert payload.theme_id == "T01"
+    assert payload.answered_at == datetime.fromisoformat("2026-07-01T10:00:00+00:00")
 
 
 async def _seed_answer_event(db: AsyncSession) -> dict[str, object]:
@@ -95,15 +125,20 @@ def _answer_payload() -> dict[str, object]:
         "telegram_user_id": 700001,
         "user_id": 1,
         "session_id": 1,
+        "session_item_id": 11,
         "question_token": "token-1",
+        "catalog_id": "cat",
         "item_id": "q1",
+        "item_version": "1.0",
         "level": "A1",
         "theme": "Alltag",
+        "theme_id": "T01",
         "theme_key": "alltag",
         "selected_answer": "a1",
         "correct_answer": "a2",
         "is_correct": False,
         "session_type": "regular",
+        "answered_at": "2026-07-01T10:00:00+00:00",
         "position": 1,
         "available_items_count": 10,
         "metadata_snapshot": {"catalog_id": "cat"},
