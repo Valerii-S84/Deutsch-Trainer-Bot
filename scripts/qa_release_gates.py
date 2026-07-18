@@ -375,7 +375,16 @@ def run_gate(gate: Gate) -> GateResult:
     env.setdefault("ALLOW_SYSTEM_PYTHON", "1")
     python_bin_dir = str(Path(sys.executable).resolve().parent)
     env["PATH"] = f"{python_bin_dir}{os.pathsep}{env.get('PATH', '')}"
-    completed = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     duration = time.monotonic() - started
     result = "passed" if completed.returncode == 0 else "failed"
     return GateResult(
