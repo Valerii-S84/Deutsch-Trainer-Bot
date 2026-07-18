@@ -8,11 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.quiz_bank.schemas import SUPPORTED_LEVELS
-
-
 MANIFEST_PATH = Path("_registry") / "production_manifest.csv"
-SUPPORTED_CEFR_LEVELS = frozenset(SUPPORTED_LEVELS)
+SUPPORTED_CEFR_LEVELS = frozenset({"A1", "A2", "B1", "B2", "C1"})
 REQUIRED_MANIFEST_COLUMNS = {
     "production_file",
     "theme_id",

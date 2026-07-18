@@ -17,6 +17,7 @@ dependencies = [
   "pydantic-settings>=2.14.2",
   "pydantic>=2.7.4",
   "msgpack>=1.2.1",
+  "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]

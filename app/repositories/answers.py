@@ -190,7 +190,7 @@ def _answer_values(data: AnswerCreateData) -> dict[str, object]:
         "training_session_item_id": data.training_session_item_id,
         "question_reference_id": data.question_reference_id,
         "catalog_id": content.catalog_id,
-        "item_id": content.item_id,
+        "item_id": content.item_id or data.external_quiz_id,
         "item_version": content.item_version,
         "level": content.level,
         "theme": content.theme,

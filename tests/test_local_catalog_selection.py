@@ -105,6 +105,7 @@ def _item(
 ) -> QuizCatalogItem:
     return QuizCatalogItem(
         catalog_id="cat",
+        catalog_version="v1",
         item_id=item_id,
         item_version="1.0",
         language="de",
