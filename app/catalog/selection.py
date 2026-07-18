@@ -86,12 +86,12 @@ class LocalCatalogSelector:
     ) -> list[LocalCatalogTheme]:
         self._ensure_enabled(level)
         statement = (
-            select(QuizCatalogItem.theme_id, QuizCatalogItem.theme_slug, func.count())
+            select(QuizCatalogItem.theme_id, func.min(QuizCatalogItem.theme_slug), func.count())
             .where(QuizCatalogItem.catalog_id == catalog_id)
             .where(QuizCatalogItem.language == language)
             .where(QuizCatalogItem.status.in_(self.selectable_statuses))
             .where(QuizCatalogItem.is_active.is_(True))
-            .group_by(QuizCatalogItem.theme_id, QuizCatalogItem.theme_slug)
+            .group_by(QuizCatalogItem.theme_id)
             .order_by(QuizCatalogItem.theme_id)
         )
         if level:

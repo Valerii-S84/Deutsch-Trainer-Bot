@@ -77,6 +77,21 @@ def test_selector_lists_active_themes_for_enabled_level() -> None:
     assert asyncio.run(_with_session(scenario)) == [("T01", 1), ("T02", 1)]
 
 
+def test_selector_groups_theme_availability_by_theme_id() -> None:
+    async def scenario(session: AsyncSession) -> list[tuple[str, int]]:
+        await _seed(
+            session,
+            [
+                _item("a", 10, theme_id="T01", theme_slug="slug-a"),
+                _item("b", 20, theme_id="T01", theme_slug="slug-b"),
+            ],
+        )
+        themes = await LocalCatalogSelector().list_themes(session, catalog_id="cat", level="A1")
+        return [(theme.theme_id, theme.item_count) for theme in themes]
+
+    assert asyncio.run(_with_session(scenario)) == [("T01", 2)]
+
+
 async def _with_session(callback):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
@@ -101,6 +116,7 @@ def _item(
     *,
     level: str = "A1",
     theme_id: str = "T01",
+    theme_slug: str | None = None,
     status: str = "reviewed",
 ) -> QuizCatalogItem:
     return QuizCatalogItem(
@@ -112,7 +128,7 @@ def _item(
         level=level,
         sublevel=level,
         theme_id=theme_id,
-        theme_slug=theme_id.lower(),
+        theme_slug=theme_slug or theme_id.lower(),
         stem_text=f"Question {item_id}",
         options=["a", "b"],
         answer_key="0",

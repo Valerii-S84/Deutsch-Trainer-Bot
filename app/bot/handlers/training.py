@@ -207,6 +207,80 @@ async def _answer_new_training_unexpected_error(
     await message.answer(TRAINING_SESSION_ERROR_TEXT)
 
 
+async def continue_active_training_from_message(message: Any, user_id: int) -> bool:
+    async with _session_factory() as db:
+        session = await training_service.get_active_session(db, user_id)
+        if session is None:
+            return False
+
+        try:
+            question = await training_service.get_or_create_current_question(db, user_id, force_refresh=False)
+            await db.commit()
+        except (
+            ActiveSessionNotFoundError,
+            NoMoreQuestionsError,
+            QuestionStateError,
+            QuizBankAuthError,
+            QuizBankRateLimitError,
+            QuizBankUnavailableError,
+            QuizBankValidationError,
+            DailyLimitExceededError,
+        ) as exc:
+            await db.rollback()
+            if isinstance(exc, (QuizBankAuthError, QuizBankRateLimitError, QuizBankUnavailableError, QuizBankValidationError)):
+                await _persist_quiz_bank_error(
+                    user_id,
+                    exc,
+                    level=getattr(session, "level", None),
+                    theme=getattr(session, "theme", None),
+                )
+                await message.answer(_map_quizbank_error(exc))
+            elif isinstance(exc, DailyLimitExceededError):
+                await _send_daily_limit_paywall(message)
+            else:
+                await message.answer(_map_session_error(exc))
+            return True
+
+    await _send_question(message, question)
+    return True
+
+
+async def start_saved_theme_training_from_message(message: Any, user_id: int, *, level: str, theme: str) -> None:
+    async with _session_factory() as db:
+        try:
+            question = await _open_theme_training(db, message, user_id, level=level, theme=theme)
+            if question is None:
+                return
+        except ActiveSessionConflictError:
+            await message.answer(TRAINING_SESSION_RESUME_TEXT)
+            return
+        except (
+            QuizBankAuthError,
+            QuizBankRateLimitError,
+            QuizBankUnavailableError,
+            QuizBankValidationError,
+            NoMoreQuestionsError,
+            DailyLimitExceededError,
+        ) as exc:
+            await db.rollback()
+            await _handle_theme_open_error(message, user_id, exc, level=level, theme=theme)
+            return
+        except Exception as exc:
+            log_exception_summary(
+                logger,
+                "saved_theme_training_open_unexpected_failed",
+                exc,
+                telegram_user_id=user_id,
+                level=level,
+                theme=theme,
+            )
+            await db.rollback()
+            await message.answer(TRAINING_SESSION_ERROR_TEXT)
+            return
+
+    await _send_question(message, question)
+
+
 @router.callback_query(F.data.startswith(CALLBACK_THEME_PREFIX))
 async def handle_theme_selected(callback_query: CallbackQuery) -> None:
     await callback_query.answer()
