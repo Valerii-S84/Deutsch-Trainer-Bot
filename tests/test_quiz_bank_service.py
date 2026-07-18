@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from redis.exceptions import RedisError
 
+import app.quiz_bank.service as quiz_bank_service_module
+from app.config import Settings
 from app.quiz_bank import QuizBankRequestContext, QuizBankService
 from app.quiz_bank.errors import QuizBankError, QuizBankValidationError
 
@@ -78,6 +81,28 @@ class StubQuizBankClient:
         self.calls.append({"endpoint": "resolve_theme_ids", "theme": theme})
         payload = self._pop_payload()
         return list(payload["theme_ids"])
+
+
+class FakeRedis:
+    def __init__(self, *, fail_on_get: bool = False, fail_on_set: bool = False) -> None:
+        self.fail_on_get = fail_on_get
+        self.fail_on_set = fail_on_set
+        self.values: dict[str, str] = {}
+        self.get_calls: list[str] = []
+        self.set_calls: list[tuple[str, str, int]] = []
+
+    async def get(self, key: str) -> str | None:
+        self.get_calls.append(key)
+        if self.fail_on_get:
+            raise RedisError("cache get failed")
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, *, ex: int) -> bool:
+        self.set_calls.append((key, value, ex))
+        if self.fail_on_set:
+            raise RedisError("cache set failed")
+        self.values[key] = value
+        return True
 
 
 @pytest.mark.asyncio
@@ -208,6 +233,45 @@ async def test_service_get_levels_filters_unknown_and_inactive_levels_and_caches
     assert [level.code for level in first.levels] == ["A1", "C2"]
     assert second.levels == first.levels
     assert [call["endpoint"] for call in stub_client.calls] == ["levels"]
+
+
+@pytest.mark.asyncio
+async def test_service_get_levels_reads_through_shared_redis_cache_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = FakeRedis()
+    settings = Settings(SECURITY_STATE_BACKEND="redis", REDIS_URL="redis://cache:6379/0")
+    payload = {
+        "levels": [
+            {"code": "A1", "display_name": "A1", "is_active": True},
+            {"code": "A2", "display_name": "A2", "is_active": True},
+        ],
+        "content_version": "v1",
+    }
+    monkeypatch.setattr(quiz_bank_service_module, "get_shared_redis_client", lambda: redis)
+    source_client = StubQuizBankClient([payload])
+    cached_client = StubQuizBankClient([])
+    source_service = QuizBankService(client=source_client, settings=settings)
+    cached_service = QuizBankService(client=cached_client, settings=settings)
+
+    first = await source_service.get_levels()
+    second = await cached_service.get_levels()
+
+    assert [level.code for level in first.levels] == ["A1", "A2"]
+    assert second.model_dump() == first.model_dump()
+    assert [call["endpoint"] for call in source_client.calls] == ["levels"]
+    assert cached_client.calls == []
+    assert redis.get_calls == [
+        "dtb:quiz_bank:levels",
+        "dtb:quiz_bank:levels",
+    ]
+    assert redis.set_calls == [
+        (
+            "dtb:quiz_bank:levels",
+            first.model_dump_json(),
+            300,
+        ),
+    ]
 
 
 @pytest.mark.asyncio

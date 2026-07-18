@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import QuizSession, TrainingSessionItem, User
 from app.repositories.answers import AnswerContentFields, AnswerCreateData, AnswerWriteResult
-from app.runtime.timing import timing_span
+from app.runtime.timing import record_timing_metric, timing_query, timing_span
 from app.services.training_payloads import (
     ActiveSessionNotFoundError,
     AnswerResult,
@@ -99,7 +99,7 @@ async def accept_answer_fast_path(
             aggregate_type="user_answer",
             aggregate_id=answer.id,
             idempotency_key=f"{ANSWER_ACCEPTED_EVENT}:{answer.id}",
-            payload=_answer_accepted_payload(context, session_state, answer_id=answer.id, is_correct=is_correct, result=result),
+            payload=_answer_accepted_payload(context, session_state, answer=answer, is_correct=is_correct, result=result),
         )
 
     return result
@@ -113,7 +113,33 @@ async def _validate_context(
     question_token: str,
     selected_option_id: str,
 ) -> FastPathContext:
-    row = (
+    with timing_span("answer.validate.db_acquire_ms"):
+        await _ensure_connection_acquired(db)
+
+    record_timing_metric("answer.validate.logical_round_trip_count", 1)
+    with timing_query("answer.validate.sql_1"):
+        with timing_span("answer.validate.sql_1_total_ms"):
+            row = await _fetch_session_answer_context_row(
+                db,
+                telegram_user_id=telegram_user_id,
+                session_id=session_id,
+            )
+
+    with timing_span("answer.validate.business_logic_ms"):
+        return _build_fast_path_context(
+            row,
+            question_token=question_token,
+            selected_option_id=selected_option_id,
+        )
+
+
+async def _fetch_session_answer_context_row(
+    db: AsyncSession,
+    *,
+    telegram_user_id: int,
+    session_id: int,
+) -> Any | None:
+    return (
         await db.execute(
             select(
                 User.id.label("user_id"),
@@ -132,6 +158,14 @@ async def _validate_context(
             .where(QuizSession.id == session_id)
         )
     ).mappings().first()
+
+
+def _build_fast_path_context(
+    row: Any | None,
+    *,
+    question_token: str,
+    selected_option_id: str,
+) -> FastPathContext:
     if row is None:
         raise ActiveSessionNotFoundError("Session is not found")
     if str(row["status"]) != ACTIVE_SESSION_STATUS:
@@ -294,24 +328,30 @@ def _answer_accepted_payload(
     context: FastPathContext,
     session_state: SessionState,
     *,
-    answer_id: int,
+    answer: AnswerWriteResult,
     is_correct: bool,
     result: AnswerResult,
 ) -> dict[str, object]:
+    answer_id = int(answer.id)
     return {
         "answer_id": answer_id,
         "telegram_user_id": context.telegram_user_id,
         "user_id": context.user_id,
         "session_id": context.session_id,
+        "session_item_id": context.pending.training_session_item_id,
         "question_token": context.pending.question_token,
+        "catalog_id": _catalog_id(context.pending.metadata_snapshot),
         "item_id": context.pending.question_id,
+        "item_version": context.pending.content_version,
         "level": context.pending.level,
         "theme": context.pending.theme,
+        "theme_id": _theme_id(context.pending),
         "theme_key": context.pending.theme_key,
         "selected_answer": context.selected_option_id,
         "correct_answer": context.pending.correct_answer,
         "is_correct": is_correct,
         "session_type": context.session_type,
+        "answered_at": _answered_at_iso(answer),
         "position": context.pending.position,
         "available_items_count": _available_count(context.pending.metadata_snapshot),
         "metadata_snapshot": context.pending.metadata_snapshot,
@@ -376,9 +416,28 @@ def _catalog_id(metadata_snapshot: dict[str, object] | None) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _theme_id(pending: QuizQuestionPayload) -> str | None:
+    metadata = pending.metadata_snapshot or {}
+    value = metadata.get("theme_id")
+    if isinstance(value, str) and value:
+        return value
+    return pending.theme_key
+
+
+def _answered_at_iso(answer: AnswerWriteResult) -> str | None:
+    answered_at = answer.answered_at or datetime.now(UTC)
+    return answered_at.isoformat()
+
+
 def _dialect_name(db: AsyncSession) -> str:
     get_bind = getattr(db, "get_bind", None)
     if get_bind is None:
         return ""
     bind = get_bind()
     return bind.dialect.name if bind is not None else ""
+
+
+async def _ensure_connection_acquired(db: AsyncSession) -> None:
+    connection = getattr(db, "connection", None)
+    if connection is not None:
+        await connection()

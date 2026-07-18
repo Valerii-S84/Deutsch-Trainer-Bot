@@ -8,6 +8,8 @@ from redis.asyncio import Redis
 from app.bot.middlewares import BackpressureMiddleware, LoggingMiddleware, SecurityMiddleware
 from app.bot.routers import build_root_router
 from app.config import AppEnvironment, Settings, get_settings
+from app.runtime.admission import LocalAdmissionController, RedisAdmissionController
+from app.runtime.redis import get_or_create_shared_redis_client
 from app.security.rate_limits import (
     DuplicateUpdateGuard,
     InMemoryRateLimiter,
@@ -20,12 +22,17 @@ def create_dispatcher(settings: Settings | None = None, *, redis_client: Redis |
     """Create aiogram dispatcher with middleware and full router graph."""
     settings = settings or get_settings()
     dispatcher = Dispatcher()
-    rate_limiter, duplicate_guard = _security_state(settings, redis_client=redis_client)
+    runtime_redis_client = _runtime_redis_client(settings, redis_client=redis_client)
+    rate_limiter, duplicate_guard = _security_state(settings, redis_client=runtime_redis_client)
     dispatcher.include_router(build_root_router())
     dispatcher.update.middleware(
         BackpressureMiddleware(
-            in_flight_limit=settings.bot_global_in_flight_limit,
+            in_flight_limit=settings.effective_bot_in_flight_limit,
             acquire_timeout_seconds=settings.bot_global_in_flight_timeout_seconds,
+            admission_controller=_admission_controller(
+                settings,
+                redis_client=runtime_redis_client,
+            ),
         ),
     )
     dispatcher.update.middleware(
@@ -46,14 +53,18 @@ def build_dispatcher(settings: Settings | None = None, *, redis_client: Redis | 
 
 def _security_state(settings: Settings, *, redis_client: Redis | None = None):
     if _uses_redis_security_state(settings):
-        redis_client = redis_client or Redis.from_url(settings.redis_url, decode_responses=True)
-        return (
-            RedisRateLimiter(redis_client),
-            RedisDuplicateUpdateGuard(
+        redis_client = redis_client or get_or_create_shared_redis_client(settings)
+        rate_limiter = RedisRateLimiter(redis_client)
+        if settings.db_app_replica_count > 1:
+            duplicate_guard = RedisDuplicateUpdateGuard(
                 redis_client,
                 ttl_seconds=settings.telegram_duplicate_update_ttl_seconds,
-            ),
-        )
+            )
+        else:
+            duplicate_guard = DuplicateUpdateGuard(
+                ttl_seconds=settings.telegram_duplicate_update_ttl_seconds,
+            )
+        return rate_limiter, duplicate_guard
     return (
         InMemoryRateLimiter(),
         DuplicateUpdateGuard(ttl_seconds=settings.telegram_duplicate_update_ttl_seconds),
@@ -66,6 +77,23 @@ def _uses_redis_security_state(settings: Settings) -> bool:
     if settings.security_state_backend == "in_memory":
         return False
     return settings.app_env != AppEnvironment.development
+
+
+def _runtime_redis_client(settings: Settings, *, redis_client: Redis | None = None) -> Redis | None:
+    if redis_client is not None:
+        return redis_client
+    if _uses_redis_security_state(settings):
+        return get_or_create_shared_redis_client(settings)
+    return None
+
+
+def _admission_controller(settings: Settings, *, redis_client: Redis | None = None):
+    if redis_client is not None and settings.db_app_replica_count > 1:
+        return RedisAdmissionController(
+            redis_client,
+            limit=settings.shared_bot_in_flight_limit,
+        )
+    return LocalAdmissionController(limit=settings.effective_bot_in_flight_limit)
 
 
 __all__ = ["create_dispatcher", "build_dispatcher"]

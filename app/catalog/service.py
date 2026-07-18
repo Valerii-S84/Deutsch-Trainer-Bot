@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
+from typing import TypeVar
 
+from pydantic import BaseModel, ValidationError
+from redis.exceptions import RedisError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +24,12 @@ from app.quiz_bank.schemas import (
     QuizTheme,
     QuizThemesResponse,
 )
+from app.runtime.redis import get_shared_redis_client
+
+LOCAL_CATALOG_CACHE_PREFIX = "dtb:local_catalog"
+LOCAL_CATALOG_CACHE_TTL_SECONDS = 15
+_CACHE_MISS = object()
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class LocalCatalogNotConfiguredError(RuntimeError):
@@ -73,8 +83,12 @@ class LocalCatalogQuizService:
         catalog_id: str | None = None,
     ) -> QuizThemesResponse:
         active_catalog_id = self._catalog_id(catalog_id)
+        cache_key = self._cache_key("themes", active_catalog_id, level.upper())
+        cached = await self._read_model_cache(cache_key, QuizThemesResponse)
+        if cached is not None:
+            return cached
         themes = await self._selector.list_themes(db, catalog_id=active_catalog_id, level=level)
-        return QuizThemesResponse(
+        response = QuizThemesResponse(
             level=level,
             themes=[
                 QuizTheme(
@@ -88,6 +102,8 @@ class LocalCatalogQuizService:
             ],
             content_version=await self.catalog_version(db, catalog_id=active_catalog_id),
         )
+        await self._write_model_cache(cache_key, response)
+        return response
 
     async def get_availability(
         self,
@@ -98,8 +114,12 @@ class LocalCatalogQuizService:
         catalog_id: str | None = None,
     ) -> QuizAvailabilityResponse:
         active_catalog_id = self._catalog_id(catalog_id)
+        cache_key = self._cache_key("availability", active_catalog_id, level.upper(), theme)
+        cached = await self._read_model_cache(cache_key, QuizAvailabilityResponse)
+        if cached is not None:
+            return cached
         count = await self._available_count(db, catalog_id=active_catalog_id, level=level, theme=theme)
-        return QuizAvailabilityResponse(
+        response = QuizAvailabilityResponse(
             level=level,
             theme=theme,
             theme_key=theme,
@@ -109,11 +129,19 @@ class LocalCatalogQuizService:
             generated_at=datetime.now(UTC),
             content_version=await self.catalog_version(db, catalog_id=active_catalog_id),
         )
+        await self._write_model_cache(cache_key, response)
+        return response
 
     async def catalog_version(self, db: AsyncSession, *, catalog_id: str | None = None) -> str | None:
         active_catalog_id = self._catalog_id(catalog_id)
+        cache_key = self._cache_key("catalog_version", active_catalog_id)
+        cached = await self._read_catalog_version_cache(cache_key)
+        if cached is not _CACHE_MISS:
+            return cached
         statement = select(QuizCatalog.catalog_version).where(QuizCatalog.catalog_id == active_catalog_id)
-        return await db.scalar(statement)
+        version = await db.scalar(statement)
+        await self._write_catalog_version_cache(cache_key, version)
+        return version
 
     async def _available_count(self, db: AsyncSession, *, catalog_id: str, level: str, theme: str) -> int:
         statement = (
@@ -133,6 +161,71 @@ class LocalCatalogQuizService:
         if not catalog_id:
             raise LocalCatalogNotConfiguredError("ACTIVE_CATALOG_ID is required for Local Catalog gameplay")
         return catalog_id
+
+    def _cache_key(self, scope: str, *parts: str) -> str:
+        return ":".join([LOCAL_CATALOG_CACHE_PREFIX, scope, *parts])
+
+    def _cache_client(self):
+        if not self._settings.local_catalog_cache_enabled:
+            return None
+        return get_shared_redis_client()
+
+    async def _read_model_cache(self, cache_key: str, model_type: type[ModelT]) -> ModelT | None:
+        payload = await self._read_cache_payload(cache_key)
+        if payload is None:
+            return None
+        try:
+            return model_type.model_validate_json(payload)
+        except (TypeError, ValidationError, ValueError):
+            return None
+
+    async def _write_model_cache(self, cache_key: str, model: BaseModel) -> None:
+        await self._write_cache_payload(cache_key, model.model_dump_json())
+
+    async def _read_catalog_version_cache(self, cache_key: str) -> object:
+        payload = await self._read_cache_payload(cache_key)
+        if payload is None:
+            return _CACHE_MISS
+        try:
+            document = json.loads(payload)
+        except ValueError:
+            return _CACHE_MISS
+        if not isinstance(document, dict) or "catalog_version" not in document:
+            return _CACHE_MISS
+        cached_version = document["catalog_version"]
+        if cached_version is None or isinstance(cached_version, str):
+            return cached_version
+        return _CACHE_MISS
+
+    async def _write_catalog_version_cache(self, cache_key: str, catalog_version: str | None) -> None:
+        await self._write_cache_payload(cache_key, json.dumps({"catalog_version": catalog_version}))
+
+    async def _read_cache_payload(self, cache_key: str) -> str | None:
+        redis_client = self._cache_client()
+        if redis_client is None:
+            return None
+        try:
+            payload = await redis_client.get(cache_key)
+        except RedisError:
+            return None
+        if isinstance(payload, bytes):
+            return payload.decode("utf-8")
+        if isinstance(payload, str):
+            return payload
+        return None
+
+    async def _write_cache_payload(self, cache_key: str, payload: str) -> None:
+        redis_client = self._cache_client()
+        if redis_client is None:
+            return
+        try:
+            await redis_client.set(
+                cache_key,
+                payload,
+                ex=self._settings.local_catalog_cache_ttl_seconds or LOCAL_CATALOG_CACHE_TTL_SECONDS,
+            )
+        except RedisError:
+            return
 
     def _to_quiz_item(self, question: LocalCatalogQuestion) -> QuizItem:
         theme_key = question.theme_id
@@ -157,6 +250,26 @@ class LocalCatalogQuizService:
             content_version=question.item_version,
             source_metadata=QuizSourceMetadata(source="local_quiz_catalog", source_metadata=metadata),
         )
+
+
+async def invalidate_local_catalog_cache(catalog_id: str, *, settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
+    if not settings.local_catalog_cache_enabled:
+        return
+    redis_client = get_shared_redis_client()
+    if redis_client is None:
+        return
+    marker = f":{catalog_id}"
+    try:
+        keys = [
+            key
+            async for key in redis_client.scan_iter(match=f"{LOCAL_CATALOG_CACHE_PREFIX}:*")
+            if isinstance(key, str) and (key.endswith(marker) or f"{marker}:" in key)
+        ]
+        if keys:
+            await redis_client.delete(*keys)
+    except RedisError:
+        return
 
 
 def _answer_options(options: list[object]) -> list[QuizAnswerOption]:

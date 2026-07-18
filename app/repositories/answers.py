@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Iterable
 
 from sqlalchemy import and_, func, select
@@ -19,6 +20,7 @@ class AnswerWriteResult:
     selected_answer: str
     correct_answer: str
     is_correct: bool
+    answered_at: datetime | None
     created: bool
 
 
@@ -229,6 +231,7 @@ def _returning_columns() -> tuple:
         UserAnswer.selected_answer,
         UserAnswer.correct_answer,
         UserAnswer.is_correct,
+        UserAnswer.answered_at,
     )
 
 
@@ -241,6 +244,7 @@ def _result_from_mapping(row, *, created: bool) -> AnswerWriteResult:
         selected_answer=str(row["selected_answer"]),
         correct_answer=str(row["correct_answer"]),
         is_correct=bool(row["is_correct"]),
+        answered_at=row["answered_at"],
         created=created,
     )
 
@@ -254,5 +258,6 @@ def _result_from_model(answer: UserAnswer, *, created: bool) -> AnswerWriteResul
         selected_answer=str(answer.selected_answer),
         correct_answer=str(answer.correct_answer),
         is_correct=bool(answer.is_correct),
+        answered_at=answer.answered_at,
         created=created,
     )

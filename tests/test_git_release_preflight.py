@@ -89,9 +89,6 @@ def _bash_candidates() -> tuple[str, ...]:
     env_bash = os.environ.get("BASH")
     if env_bash:
         candidates.append(env_bash)
-    path_bash = shutil.which("bash")
-    if path_bash:
-        candidates.append(path_bash)
     if os.name == "nt":
         candidates.extend(
             (
@@ -99,13 +96,16 @@ def _bash_candidates() -> tuple[str, ...]:
                 r"C:\Program Files\Git\usr\bin\bash.exe",
             ),
         )
+    path_bash = shutil.which("bash")
+    if path_bash:
+        candidates.append(path_bash)
     return tuple(dict.fromkeys(candidates))
 
 
 def _is_usable_bash(candidate: str) -> bool:
     try:
         completed = subprocess.run(
-            (candidate, "--version"),
+            (candidate, "-lc", ":"),
             capture_output=True,
             text=True,
             check=False,

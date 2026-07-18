@@ -3,21 +3,37 @@ from __future__ import annotations
 import inspect
 import io
 import logging
-import os
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import SecretStr
 
 
 def test_config_module_imports() -> None:
-    from app.config import get_settings
+    from app.config import clear_settings_cache, get_settings
 
+    clear_settings_cache()
     settings = get_settings()
     assert settings is not None
+    assert get_settings() is settings
 
 
 def test_app_main_imports() -> None:
     import app.main  # noqa: F401
+
+
+def test_create_bot_uses_fake_session_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.main
+
+    class FakeSettings:
+        bot_fake_api_enabled = True
+
+    monkeypatch.setattr(app.main, "get_settings", lambda: FakeSettings())
+
+    bot = app.main.create_bot("123:ABCDEF")
+
+    assert bot.session.__class__.__name__ == "FakeTelegramSession"
 
 
 def test_db_session_imports() -> None:
@@ -37,6 +53,85 @@ def test_webhook_runtime_does_not_call_removed_aiogram_api() -> None:
 
     assert hasattr(app.main, "create_webhook_app")
     assert "start_webhook" not in inspect.getsource(app.main.run_bot)
+
+
+@pytest.mark.asyncio
+async def test_register_webhook_resets_and_sets_telegram_state() -> None:
+    import app.main
+
+    class FakeBot:
+        def __init__(self) -> None:
+            self.delete_webhook = AsyncMock()
+            self.set_webhook = AsyncMock()
+
+    bot = FakeBot()
+    config = app.main.WebhookRuntimeConfig(
+        url="https://example.test",
+        path="/telegram/webhook",
+        secret="test-secret",
+        request_timeout=30,
+        max_connections=40,
+        handle_in_background=True,
+    )
+
+    await app.main.register_webhook(bot, config=config)
+
+    bot.delete_webhook.assert_awaited_once_with(drop_pending_updates=True)
+    bot.set_webhook.assert_awaited_once_with(
+        url="https://example.test/telegram/webhook",
+        secret_token="test-secret",
+        request_timeout=30,
+        max_connections=40,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_bot_webhook_runtime_serves_without_registering(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.main
+
+    class FakeBot:
+        def __init__(self) -> None:
+            self.session = type("Session", (), {"close": AsyncMock()})()
+
+    class FakeSettings:
+        def __init__(self) -> None:
+            self.log_level = "INFO"
+            self.bot_token = SecretStr("123:ABCDEF")
+            self.telegram_webhook_url = "https://example.test"
+            self.telegram_webhook_path = "/telegram/webhook"
+            self.telegram_webhook_secret = SecretStr("secret-token")
+            self.bot_max_request_timeout = 30
+            self.telegram_webhook_max_connections = 40
+            self.webhook_mode_enabled = True
+            self.bot_polling_enabled = False
+
+        def require_production_secrets(self) -> None:
+            return None
+
+    fake_settings = FakeSettings()
+    fake_bot = FakeBot()
+    run_webhook = AsyncMock()
+    register_webhook = AsyncMock()
+    close_redis = AsyncMock()
+    dispose_engine = AsyncMock()
+
+    monkeypatch.setattr(app.main, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(app.main, "configure_logging", lambda _level: None)
+    monkeypatch.setattr(app.main, "create_bot", lambda _token: fake_bot)
+    monkeypatch.setattr(app.main, "create_dispatcher", lambda **_kwargs: object())
+    monkeypatch.setattr(app.main, "run_webhook", run_webhook)
+    monkeypatch.setattr(app.main, "register_webhook", register_webhook)
+    monkeypatch.setattr(app.main, "_uses_redis_security_state", lambda _settings: False)
+    monkeypatch.setattr(app.main, "close_redis_client", close_redis)
+    monkeypatch.setattr(app.main, "dispose_engine", dispose_engine)
+
+    await app.main.run_bot()
+
+    run_webhook.assert_awaited_once()
+    register_webhook.assert_not_awaited()
+    fake_bot.session.close.assert_awaited_once()
+    close_redis.assert_awaited_once_with(None)
+    dispose_engine.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -169,9 +264,11 @@ def test_config_loads_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
     monkeypatch.setenv("QUIZ_BANK_API_KEY", "quiz-key")
 
-    # force reload of module-level settings
-    import importlib
+    from app import config as config_module
 
-    config_module = importlib.reload(__import__("app.config", fromlist=["get_settings"]))
-    settings = config_module.get_settings()
-    assert settings.app_env.value == "staging"
+    config_module.clear_settings_cache()
+    try:
+        settings = config_module.get_settings()
+        assert settings.app_env.value == "staging"
+    finally:
+        config_module.clear_settings_cache()

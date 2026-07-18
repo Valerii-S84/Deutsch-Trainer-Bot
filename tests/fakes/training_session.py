@@ -452,6 +452,7 @@ def question_payload(item_id: str = "q1", correct_answer: str = "a2") -> QuizQue
                 item_id=item_id,
                 level="A1",
                 theme="Alltag",
+                theme_key="T01",
                 question_text="Was ist korrekt?",
                 answer_options=[
                     QuizAnswerOption(option_id="a1", text="Antwort A", order=1),
@@ -459,7 +460,12 @@ def question_payload(item_id: str = "q1", correct_answer: str = "a2") -> QuizQue
                 ],
                 correct_answer=QuizCorrectAnswerReference(option_id=correct_answer),
                 explanation="Richtig erklärt.",
-                metadata={"progress_theme_key": "alltag"},
+                metadata={
+                    "catalog_id": "cat-local",
+                    "theme_id": "T01",
+                    "progress_theme_key": "alltag",
+                },
+                content_version="1.0",
             )
         ],
         requested_count=1,

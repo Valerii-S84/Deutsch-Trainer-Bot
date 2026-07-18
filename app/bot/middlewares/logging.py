@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.runtime.webhook_profiling import webhook_timing_span
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,23 +14,24 @@ class LoggingMiddleware:
     """Log update metadata without leaking payload details or secrets."""
 
     async def __call__(self, handler: Any, event: Any, data: dict[str, Any]) -> Any:
-        update_obj = data.get("event_update")
-        update_id = getattr(update_obj, "update_id", None)
-        event_type, event_payload = self._event_payload(update_obj, event)
-        user = getattr(event_payload, "from_user", None)
-        user_id = getattr(user, "id", None)
-        chat = self._chat_from_payload(event_payload)
-        chat_id = getattr(chat, "id", None)
-        callback_route = self._callback_route(event_payload)
+        with webhook_timing_span("middleware.logging_ms"):
+            update_obj = data.get("event_update")
+            update_id = getattr(update_obj, "update_id", None)
+            event_type, event_payload = self._event_payload(update_obj, event)
+            user = getattr(event_payload, "from_user", None)
+            user_id = getattr(user, "id", None)
+            chat = self._chat_from_payload(event_payload)
+            chat_id = getattr(chat, "id", None)
+            callback_route = self._callback_route(event_payload)
 
-        logger.info(
-            "incoming update: id=%s type=%s user_id=%s chat_id=%s callback_route=%s",
-            update_id,
-            event_type,
-            user_id,
-            chat_id,
-            callback_route,
-        )
+            logger.info(
+                "incoming update: id=%s type=%s user_id=%s chat_id=%s callback_route=%s",
+                update_id,
+                event_type,
+                user_id,
+                chat_id,
+                callback_route,
+            )
         return await handler(event, data)
 
     @staticmethod

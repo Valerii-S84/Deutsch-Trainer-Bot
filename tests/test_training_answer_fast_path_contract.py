@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -26,7 +27,7 @@ def test_fast_path_result_payload_and_answer_data_preserve_context() -> None:
     payload = _answer_accepted_payload(
         context,
         state,
-        answer_id=123,
+        answer=_answer_result(created=True),
         is_correct=True,
         result=result,
     )
@@ -132,6 +133,7 @@ async def test_fast_path_rejects_duplicate_from_another_session(monkeypatch) -> 
         selected_answer="a2",
         correct_answer="a2",
         is_correct=True,
+        answered_at=datetime(2026, 1, 2, 3, 4, tzinfo=UTC),
         created=False,
     )
 
@@ -250,6 +252,7 @@ def _answer_result(*, created: bool, is_correct: bool = True) -> AnswerWriteResu
         selected_answer="a2",
         correct_answer="a2",
         is_correct=is_correct,
+        answered_at=datetime(2026, 1, 2, 3, 4, tzinfo=UTC),
         created=created,
     )
 

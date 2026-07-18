@@ -62,7 +62,10 @@ async def test_current_question_creates_shown_item_lifecycle() -> None:
 
     assert question.training_session_item_id is not None
     assert question.question_reference_id is not None
-    assert question.metadata_snapshot == {"progress_theme_key": "alltag"}
+    assert question.metadata_snapshot["progress_theme_key"] == "alltag"
+    assert question.metadata_snapshot["catalog_id"] == "cat-local"
+    assert question.metadata_snapshot["theme_id"] == "T01"
+    assert question.metadata_snapshot["content_version"] == "1.0"
     assert active_session is not None
     assert active_session.shown_questions_count == 1
     assert session_item is not None
@@ -109,6 +112,11 @@ async def test_submit_answer_completes_session_and_clears_pending() -> None:
     assert outbox_event["aggregate_type"] == "user_answer"
     payload = outbox_event["payload"]
     assert outbox_event["aggregate_id"] == payload["answer_id"]
+    assert payload["session_item_id"] == question.training_session_item_id
+    assert payload["catalog_id"] == "cat-local"
+    assert payload["item_version"] == "1.0"
+    assert payload["theme_id"] == "T01"
+    assert payload["answered_at"]
     assert payload["session_completed"] is True
     assert payload["is_correct"] is True
     assert payload["correct_answers"] == 1

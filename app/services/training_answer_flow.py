@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.answers import AnswerWriteResult
 from app.runtime.idempotency_locks import answer_attempt_lock
-from app.runtime.timing import timing_span
+from app.runtime.timing import record_timing_metric, timing_query, timing_span
 from app.services.training_answer_fast_path import accept_answer_fast_path
 from app.services.training_answer_persistence import create_answer_or_duplicate
 from app.services.training_answer_state import AnswerContext, AnswerSnapshot
@@ -112,7 +113,9 @@ class TrainingAnswerProcessor:
                 question_token,
                 selected_option_id,
             )
-            return context, self._snapshot(context)
+            with timing_span("answer.validate.snapshot_ms"):
+                snapshot = self._snapshot(context)
+            return context, snapshot
 
     async def _prechecked_duplicate(
         self,
@@ -156,25 +159,37 @@ class TrainingAnswerProcessor:
         selected_option_id: str,
     ) -> AnswerContext:
         service = self._service
-        user = await service.get_user(db, telegram_user_id)
-        session = await service._session_repo.get_by_id_for_user(db, session_id, user.id)
-        if not session:
-            raise ActiveSessionNotFoundError("Session is not found")
-        if session.status != service.ACTIVE_SESSION_STATUS:
-            raise ActiveSessionNotFoundError("Session is not active")
-        pending = self._pending_answer_payload(session)
-        if pending.question_token != question_token or pending.session_id != session.id:
-            raise QuestionStateError("Question token is stale")
-        if selected_option_id not in option_ids(pending):
-            raise QuestionStateError("Selected answer is invalid")
-        correct_answer_text = pending.correct_answer_text or option_text(pending, pending.correct_answer)
-        return AnswerContext(
-            user=user,
-            session=session,
-            pending=pending,
-            selected_option_id=selected_option_id,
-            correct_answer_text=correct_answer_text,
-        )
+        with timing_span("answer.validate.db_acquire_ms"):
+            await _ensure_connection_acquired(db)
+
+        record_timing_metric("answer.validate.logical_round_trip_count", 1)
+        with timing_query("answer.validate.sql_1"):
+            with timing_span("answer.validate.sql_1_total_ms"):
+                user = await service.get_user(db, telegram_user_id)
+
+        record_timing_metric("answer.validate.logical_round_trip_count", 1)
+        with timing_query("answer.validate.sql_2"):
+            with timing_span("answer.validate.sql_2_total_ms"):
+                session = await service._session_repo.get_by_id_for_user(db, session_id, user.id)
+
+        with timing_span("answer.validate.business_logic_ms"):
+            if not session:
+                raise ActiveSessionNotFoundError("Session is not found")
+            if session.status != service.ACTIVE_SESSION_STATUS:
+                raise ActiveSessionNotFoundError("Session is not active")
+            pending = self._pending_answer_payload(session)
+            if pending.question_token != question_token or pending.session_id != session.id:
+                raise QuestionStateError("Question token is stale")
+            if selected_option_id not in option_ids(pending):
+                raise QuestionStateError("Selected answer is invalid")
+            correct_answer_text = pending.correct_answer_text or option_text(pending, pending.correct_answer)
+            return AnswerContext(
+                user=user,
+                session=session,
+                pending=pending,
+                selected_option_id=selected_option_id,
+                correct_answer_text=correct_answer_text,
+            )
 
     @staticmethod
     def _pending_answer_payload(session: Any) -> QuizQuestionPayload:
@@ -304,7 +319,7 @@ class TrainingAnswerProcessor:
             idempotency_key=f"{ANSWER_ACCEPTED_EVENT}:{answer_id}",
             payload=self._answer_accepted_payload(
                 snapshot,
-                answer_id=answer_id,
+                answer=answer,
                 is_correct=is_correct,
                 result=result,
             ),
@@ -314,24 +329,30 @@ class TrainingAnswerProcessor:
         self,
         snapshot: AnswerSnapshot,
         *,
-        answer_id: int,
+        answer: Any,
         is_correct: bool,
         result: AnswerResult,
     ) -> dict[str, object]:
+        answer_id = int(getattr(answer, "id"))
         payload: dict[str, object] = {
             "answer_id": answer_id,
             "telegram_user_id": snapshot.telegram_user_id,
             "user_id": snapshot.user_id,
             "session_id": snapshot.session_id,
+            "session_item_id": snapshot.pending.training_session_item_id,
             "question_token": snapshot.pending.question_token,
+            "catalog_id": _catalog_id_from_metadata(snapshot.pending.metadata_snapshot),
             "item_id": snapshot.pending.question_id,
+            "item_version": snapshot.pending.content_version,
             "level": snapshot.pending.level,
             "theme": snapshot.pending.theme,
+            "theme_id": _theme_id_from_snapshot(snapshot),
             "theme_key": snapshot.pending.theme_key,
             "selected_answer": snapshot.selected_option_id,
             "correct_answer": snapshot.pending.correct_answer,
             "is_correct": is_correct,
             "session_type": snapshot.session_type,
+            "answered_at": _answered_at_iso(answer),
             "position": snapshot.pending.position,
             "available_items_count": _available_count_from_metadata(snapshot.pending.metadata_snapshot),
             "metadata_snapshot": snapshot.pending.metadata_snapshot,
@@ -417,11 +438,37 @@ def _available_count_from_metadata(metadata_snapshot: dict[str, object] | None) 
     return None
 
 
+def _catalog_id_from_metadata(metadata_snapshot: dict[str, object] | None) -> str | None:
+    value = (metadata_snapshot or {}).get("catalog_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _theme_id_from_snapshot(snapshot: AnswerSnapshot) -> str | None:
+    metadata = snapshot.pending.metadata_snapshot or {}
+    value = metadata.get("theme_id")
+    if isinstance(value, str) and value:
+        return value
+    return snapshot.pending.theme_key
+
+
+def _answered_at_iso(answer: Any) -> str | None:
+    value = getattr(answer, "answered_at", None)
+    if value is None:
+        return datetime.now(UTC).isoformat()
+    return value.isoformat()
+
+
 def _answered_count(session: Any) -> int:
     value = getattr(session, "answered_count", None)
     if isinstance(value, int) and value >= 0:
         return value
     return 0
+
+
+async def _ensure_connection_acquired(db: AsyncSession) -> None:
+    connection = getattr(db, "connection", None)
+    if connection is not None:
+        await connection()
 
 
 def _answer_record(answer: Any) -> AnswerWriteResult:
@@ -433,5 +480,6 @@ def _answer_record(answer: Any) -> AnswerWriteResult:
         selected_answer=str(answer.selected_answer),
         correct_answer=str(answer.correct_answer),
         is_correct=bool(answer.is_correct),
+        answered_at=getattr(answer, "answered_at", None),
         created=False,
     )
