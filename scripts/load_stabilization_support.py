@@ -142,6 +142,8 @@ class _DockerRuntimeBase:
         self.pgbouncer_port = pick_free_port() if spec.pgbouncer else None
         self.app_instances: list[ServiceInstance] = []
         self.worker_instances: list[ServiceInstance] = []
+        self.answer_worker_instances: list[ServiceInstance] = []
+        self.outbox_worker_instances: list[ServiceInstance] = []
         self.ingress_instances: list[ServiceInstance] = []
         self.started = False
         self.stack_started = False
@@ -246,6 +248,8 @@ class _DockerRuntimeBase:
         }
         app_urls = [instance.url for instance in self.app_instances if instance.url]
         context.update(app_replica_count=str(len(self.app_instances)), worker_replica_count=str(len(self.worker_instances)))
+        context["answer_worker_replica_count"] = str(len(self.answer_worker_instances))
+        context["outbox_worker_replica_count"] = str(len(self.outbox_worker_instances))
         context["app_replica_urls_csv"] = ",".join(app_urls)
         context["app_replica_urls_json"] = "[" + ",".join(f'"{url}"' for url in app_urls) + "]"
         app_targets = [instance.dial_address for instance in self.app_instances if instance.dial_address]
@@ -315,6 +319,12 @@ class _DockerRuntimeBase:
             "redis": self._container_log_record(self.redis_container),
             "app": [self._service_log_record(instance) for instance in self.app_instances],
             "worker": [self._service_log_record(instance) for instance in self.worker_instances],
+            "answer_worker": [
+                self._service_log_record(instance) for instance in self.answer_worker_instances
+            ],
+            "outbox_worker": [
+                self._service_log_record(instance) for instance in self.outbox_worker_instances
+            ],
             "ingress": [self._service_log_record(instance) for instance in self.ingress_instances],
         }
         if self.pgbouncer_container is not None:
@@ -337,6 +347,8 @@ class _DockerRuntimeBase:
         if self.stack_started or self.spec.stack is None:
             return
         self._start_worker_replicas(self.spec.stack.worker)
+        self._start_optional_worker_replicas("answer-worker", self.spec.stack.answer_worker)
+        self._start_optional_worker_replicas("outbox-worker", self.spec.stack.outbox_worker)
         self._start_app_replicas(self.spec.stack.app)
         self._start_ingress(self.spec.stack.ingress)
         self.stack_started = True
@@ -344,6 +356,8 @@ class _DockerRuntimeBase:
     def stop(self) -> None:
         if self.keep_running:
             return
+        self._stop_service_instances(self.outbox_worker_instances)
+        self._stop_service_instances(self.answer_worker_instances)
         self._stop_service_instances(self.worker_instances)
         self._stop_ingress()
         self._stop_service_instances(self.app_instances)
@@ -368,6 +382,12 @@ class DockerRuntime(_DockerServiceMixin, _DockerInfrastructureMixin, _DockerRunt
             "webhook_path": self.spec.stack.webhook_path,
             "app": [self._instance_description(instance) for instance in self.app_instances],
             "worker": [self._instance_description(instance) for instance in self.worker_instances],
+            "answer_worker": [
+                self._instance_description(instance) for instance in self.answer_worker_instances
+            ],
+            "outbox_worker": [
+                self._instance_description(instance) for instance in self.outbox_worker_instances
+            ],
             "ingress": [self._instance_description(instance) for instance in self.ingress_instances],
         }
 
@@ -405,6 +425,14 @@ class DockerRuntime(_DockerServiceMixin, _DockerInfrastructureMixin, _DockerRunt
         self._ensure_service_spec("worker", spec)
         for replica_index in range(1, spec.replicas + 1):
             self.worker_instances.append(self._start_service_instance("worker", spec, replica_index))
+
+    def _start_optional_worker_replicas(self, role: str, spec: ServiceSpec | None) -> None:
+        if spec is None:
+            return
+        self._ensure_service_spec(role, spec)
+        instances = self.answer_worker_instances if role == "answer-worker" else self.outbox_worker_instances
+        for replica_index in range(1, spec.replicas + 1):
+            instances.append(self._start_service_instance(role, spec, replica_index))
 
     def _start_ingress(self, spec: ServiceSpec | None) -> None:
         if spec is None:

@@ -35,6 +35,7 @@ class CommandSpec:
     compare_paths: list[str] = field(default_factory=list)
     allow_failure: bool = False
     stage: str = "before_stack"
+    timeout_seconds: float | None = None
 
 
 @dataclass(slots=True)
@@ -64,6 +65,8 @@ class WebhookStackSpec:
     webhook_secret: str
     app: ServiceSpec
     worker: ServiceSpec
+    answer_worker: ServiceSpec | None = None
+    outbox_worker: ServiceSpec | None = None
     ingress: ServiceSpec | None = None
 
 
