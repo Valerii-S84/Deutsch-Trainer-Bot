@@ -162,7 +162,6 @@ class OutboxWorker:
         session_factory: async_sessionmaker[AsyncSession] = WorkerSessionLocal,
         outbox_repo: OutboxRepository | None = None,
         processor: OutboxEventProcessor | None = None,
-        batch_processor: PostgresOutboxBatchProcessor | None = None,
         worker_id: str | None = None,
         batch_size: int = 200,
         max_parallelism: int = 5,
@@ -171,7 +170,7 @@ class OutboxWorker:
         self._session_factory = session_factory
         self._outbox_repo = outbox_repo or OutboxRepository()
         self._processor = processor or OutboxEventProcessor()
-        self._batch_processor = batch_processor or PostgresOutboxBatchProcessor()
+        self._batch_processor = PostgresOutboxBatchProcessor()
         self._worker_id = worker_id or f"{gethostname()}:{uuid4().hex[:12]}"
         self._batch_size = batch_size
         self._max_parallelism = max(1, max_parallelism)

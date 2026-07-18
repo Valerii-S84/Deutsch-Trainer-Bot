@@ -8,6 +8,7 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from itertools import product
 from typing import Any
 from uuid import uuid4
 
@@ -49,6 +50,18 @@ class RequestResult:
     query_ms: float
     transaction_hold_ms: float
     error_type: str | None = None
+
+
+@dataclass(frozen=True)
+class PoolCase:
+    dsn: str
+    pool_size: int
+    max_overflow: int
+    pool_timeout: float
+    pre_ping: bool
+    operation: str
+    concurrency: int
+    requests: int
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -221,124 +234,105 @@ async def execute_operation(
     run_id: str,
     request_id: int,
 ) -> RequestResult:
+    operations = {
+        "acquire_only": _execute_acquire_only,
+        "select1": _execute_select1,
+        "select1_tx": _execute_select1_tx,
+        "insert_simple": _execute_insert_simple,
+        "insert_on_conflict": _execute_insert_on_conflict,
+    }
+    handler = operations.get(operation)
+    if handler is None:
+        raise ValueError(f"Unsupported operation: {operation}")
+    return await handler(engine, run_id, request_id)
+
+
+async def _execute_acquire_only(engine: AsyncEngine, _run_id: str, _request_id: int) -> RequestResult:
     acquire_started = time.perf_counter()
-    query_ms = 0.0
-
-    if operation == "acquire_only":
-        async with engine.connect() as conn:
-            acquired_at = time.perf_counter()
-            acquire_wait_ms = (acquired_at - acquire_started) * 1000
-            return RequestResult(
-                acquire_wait_ms=acquire_wait_ms,
-                query_ms=0.0,
-                transaction_hold_ms=(time.perf_counter() - acquired_at) * 1000,
-            )
-
-    if operation == "select1":
-        async with engine.connect() as conn:
-            acquired_at = time.perf_counter()
-            query_started = time.perf_counter()
-            await conn.execute(text("SELECT 1"))
-            query_ms = (time.perf_counter() - query_started) * 1000
-            return RequestResult(
-                acquire_wait_ms=(acquired_at - acquire_started) * 1000,
-                query_ms=query_ms,
-                transaction_hold_ms=(time.perf_counter() - acquired_at) * 1000,
-            )
-
-    if operation == "select1_tx":
-        async with engine.begin() as conn:
-            acquired_at = time.perf_counter()
-            query_started = time.perf_counter()
-            await conn.execute(text("SELECT 1"))
-            query_ms = (time.perf_counter() - query_started) * 1000
-            return RequestResult(
-                acquire_wait_ms=(acquired_at - acquire_started) * 1000,
-                query_ms=query_ms,
-                transaction_hold_ms=(time.perf_counter() - acquired_at) * 1000,
-            )
-
-    if operation == "insert_simple":
-        async with engine.begin() as conn:
-            acquired_at = time.perf_counter()
-            query_started = time.perf_counter()
-            await conn.execute(
-                text(f"INSERT INTO {TABLE_NAME} (bench_key) VALUES (:bench_key)"),
-                {"bench_key": f"{run_id}:insert:{request_id}"},
-            )
-            query_ms = (time.perf_counter() - query_started) * 1000
-            return RequestResult(
-                acquire_wait_ms=(acquired_at - acquire_started) * 1000,
-                query_ms=query_ms,
-                transaction_hold_ms=(time.perf_counter() - acquired_at) * 1000,
-            )
-
-    if operation == "insert_on_conflict":
-        async with engine.begin() as conn:
-            acquired_at = time.perf_counter()
-            query_started = time.perf_counter()
-            await conn.execute(
-                text(
-                    f"""
-                    INSERT INTO {TABLE_NAME} (bench_key)
-                    VALUES (:bench_key)
-                    ON CONFLICT (bench_key) DO NOTHING
-                    """
-                ),
-                {"bench_key": f"{run_id}:conflict"},
-            )
-            query_ms = (time.perf_counter() - query_started) * 1000
-            return RequestResult(
-                acquire_wait_ms=(acquired_at - acquire_started) * 1000,
-                query_ms=query_ms,
-                transaction_hold_ms=(time.perf_counter() - acquired_at) * 1000,
-            )
-
-    raise ValueError(f"Unsupported operation: {operation}")
+    async with engine.connect():
+        acquired_at = time.perf_counter()
+        return _request_result(acquire_started, acquired_at, 0.0)
 
 
-async def run_case(
-    *,
-    dsn: str,
-    pool_size: int,
-    max_overflow: int,
-    pool_timeout: float,
-    pre_ping: bool,
-    operation: str,
-    concurrency: int,
-    requests: int,
-) -> dict[str, Any]:
+async def _execute_select1(engine: AsyncEngine, _run_id: str, _request_id: int) -> RequestResult:
+    return await _execute_select(engine, transactional=False)
+
+
+async def _execute_select1_tx(engine: AsyncEngine, _run_id: str, _request_id: int) -> RequestResult:
+    return await _execute_select(engine, transactional=True)
+
+
+async def _execute_select(engine: AsyncEngine, *, transactional: bool) -> RequestResult:
+    acquire_started = time.perf_counter()
+    context = engine.begin() if transactional else engine.connect()
+    async with context as conn:
+        acquired_at = time.perf_counter()
+        query_started = time.perf_counter()
+        await conn.execute(text("SELECT 1"))
+        return _request_result(acquire_started, acquired_at, (time.perf_counter() - query_started) * 1000)
+
+
+async def _execute_insert_simple(engine: AsyncEngine, run_id: str, request_id: int) -> RequestResult:
+    statement = text(f"INSERT INTO {TABLE_NAME} (bench_key) VALUES (:bench_key)")
+    return await _execute_insert(engine, statement, {"bench_key": f"{run_id}:insert:{request_id}"})
+
+
+async def _execute_insert_on_conflict(engine: AsyncEngine, run_id: str, _request_id: int) -> RequestResult:
+    statement = text(
+        f"INSERT INTO {TABLE_NAME} (bench_key) VALUES (:bench_key) ON CONFLICT (bench_key) DO NOTHING",
+    )
+    return await _execute_insert(engine, statement, {"bench_key": f"{run_id}:conflict"})
+
+
+async def _execute_insert(engine: AsyncEngine, statement, parameters: dict[str, str]) -> RequestResult:
+    acquire_started = time.perf_counter()
+    async with engine.begin() as conn:
+        acquired_at = time.perf_counter()
+        query_started = time.perf_counter()
+        await conn.execute(statement, parameters)
+        return _request_result(acquire_started, acquired_at, (time.perf_counter() - query_started) * 1000)
+
+
+def _request_result(acquire_started: float, acquired_at: float, query_ms: float) -> RequestResult:
+    return RequestResult(
+        acquire_wait_ms=(acquired_at - acquire_started) * 1000,
+        query_ms=query_ms,
+        transaction_hold_ms=(time.perf_counter() - acquired_at) * 1000,
+    )
+
+
+async def run_case(case: PoolCase) -> dict[str, Any]:
     tracker = PoolTracker()
     engine = create_async_engine(
-        dsn,
+        case.dsn,
         future=True,
-        pool_size=pool_size,
-        max_overflow=max_overflow,
-        pool_timeout=pool_timeout,
-        pool_pre_ping=pre_ping,
+        pool_size=case.pool_size,
+        max_overflow=case.max_overflow,
+        pool_timeout=case.pool_timeout,
+        pool_pre_ping=case.pre_ping,
         connect_args={"server_settings": {"application_name": APP_NAME}},
     )
     tracker.bind(engine)
     await ensure_table(engine)
 
     inspector = await asyncpg.connect(
-        dsn.replace("+asyncpg", ""),
+        case.dsn.replace("+asyncpg", ""),
         server_settings={"application_name": INSPECTOR_APP_NAME},
     )
     run_id = uuid4().hex
-    await prepare_operation(engine, operation, run_id)
-    await warm_pool(engine, connections=min(pool_size, concurrency))
+    await prepare_operation(engine, case.operation, run_id)
+    await warm_pool(engine, connections=min(case.pool_size, case.concurrency))
 
     sampler = Sampler(inspector, engine.sync_engine.pool)
     sampler_task = asyncio.create_task(sampler.run())
-    semaphore = asyncio.Semaphore(concurrency)
+    semaphore = asyncio.Semaphore(case.concurrency)
     results: list[RequestResult] = []
     started = time.perf_counter()
 
     async def one_request(request_id: int) -> None:
         async with semaphore:
             try:
-                result = await execute_operation(engine, operation, run_id, request_id)
+                result = await execute_operation(engine, case.operation, run_id, request_id)
             except Exception as exc:
                 result = RequestResult(
                     acquire_wait_ms=0.0,
@@ -349,7 +343,7 @@ async def run_case(
             results.append(result)
 
     try:
-        await asyncio.gather(*(one_request(request_id) for request_id in range(requests)))
+        await asyncio.gather(*(one_request(request_id) for request_id in range(case.requests)))
     finally:
         sampler.stop()
         with contextlib.suppress(asyncio.CancelledError):
@@ -358,20 +352,29 @@ async def run_case(
         await engine.dispose()
         await inspector.close()
 
-    elapsed = max(time.perf_counter() - started, 0.001)
+    return _case_report(case, tracker, sampler, results, max(time.perf_counter() - started, 0.001))
+
+
+def _case_report(
+    case: PoolCase,
+    tracker: PoolTracker,
+    sampler: Sampler,
+    results: list[RequestResult],
+    elapsed: float,
+) -> dict[str, Any]:
     acquire_waits = [result.acquire_wait_ms for result in results if result.error_type is None]
     query_times = [result.query_ms for result in results if result.error_type is None]
     hold_times = [result.transaction_hold_ms for result in results if result.error_type is None]
     errors = [result.error_type for result in results if result.error_type is not None]
 
     return {
-        "operation": operation,
-        "concurrency": concurrency,
-        "requests": requests,
-        "pool_size": pool_size,
-        "max_overflow": max_overflow,
-        "pool_timeout": pool_timeout,
-        "pool_pre_ping": pre_ping,
+        "operation": case.operation,
+        "concurrency": case.concurrency,
+        "requests": case.requests,
+        "pool_size": case.pool_size,
+        "max_overflow": case.max_overflow,
+        "pool_timeout": case.pool_timeout,
+        "pool_pre_ping": case.pre_ping,
         "accepted": len(results) - len(errors),
         "errors": len(errors),
         "error_types": {
@@ -379,7 +382,7 @@ async def run_case(
             for error_type in sorted(set(errors))
             if error_type is not None
         },
-        "throughput_per_sec": round(requests / elapsed, 2),
+        "throughput_per_sec": round(case.requests / elapsed, 2),
         "acquire_wait_ms": stats(acquire_waits),
         "query_time_ms": stats(query_times),
         "transaction_hold_ms": stats(hold_times),
@@ -405,25 +408,27 @@ async def run_matrix(args: argparse.Namespace) -> None:
     pool_configs = parse_str_list(args.pool_configs, DEFAULT_POOL_CONFIGS)
 
     results: list[dict[str, Any]] = []
-    for config in pool_configs:
+    for config, pool_timeout, operation, concurrency in product(
+        pool_configs,
+        pool_timeouts,
+        operations,
+        concurrencies,
+    ):
         pool_size_raw, overflow_raw = config.split(":", 1)
-        pool_size = int(pool_size_raw)
-        max_overflow = int(overflow_raw)
-        for pool_timeout in pool_timeouts:
-            for operation in operations:
-                for concurrency in concurrencies:
-                    results.append(
-                        await run_case(
-                            dsn=dsn,
-                            pool_size=pool_size,
-                            max_overflow=max_overflow,
-                            pool_timeout=pool_timeout,
-                            pre_ping=args.pool_pre_ping,
-                            operation=operation,
-                            concurrency=concurrency,
-                            requests=args.requests,
-                        )
-                    )
+        results.append(
+            await run_case(
+                PoolCase(
+                    dsn=dsn,
+                    pool_size=int(pool_size_raw),
+                    max_overflow=int(overflow_raw),
+                    pool_timeout=pool_timeout,
+                    pre_ping=args.pool_pre_ping,
+                    operation=operation,
+                    concurrency=concurrency,
+                    requests=args.requests,
+                ),
+            ),
+        )
 
     print(
         json.dumps(

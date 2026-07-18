@@ -23,7 +23,7 @@ class DbConnectionBackend(str, Enum):
     pgbouncer_transaction = "pgbouncer_transaction"
 
 
-class Settings(BaseSettings):
+class _SettingsFields(BaseSettings):
     """Environment-driven settings for production-ready deployment."""
 
     app_env: AppEnvironment = AppEnvironment.development
@@ -120,6 +120,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+class _SettingsValidation(_SettingsFields):
     @field_validator(
         "bot_max_request_timeout",
         "telegram_duplicate_update_ttl_seconds",
@@ -267,6 +268,7 @@ class Settings(BaseSettings):
             raise ValueError("Admin Telegram user IDs must be positive integers")
         return admin_ids
 
+class Settings(_SettingsValidation):
     @model_validator(mode="after")
     def validate_limit_hierarchy(self) -> "Settings":
         if not (

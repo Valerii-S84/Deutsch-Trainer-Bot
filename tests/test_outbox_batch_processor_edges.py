@@ -96,8 +96,7 @@ async def test_batch_processor_applies_mistakes_for_new_repeat_reopen_and_review
     existing_review = _mistake_state(
         item_id="q4",
         status=MistakeStatus.improved.value,
-        successful_repeats_count=2,
-        successful_repeat_days_count=1,
+        successful_counts=(2, 1),
         last_successful_repeat_at=now - timedelta(days=1),
         existed=True,
         id=44,
@@ -118,10 +117,14 @@ async def test_batch_processor_applies_mistakes_for_new_repeat_reopen_and_review
         [new_wrong, repeated_wrong, reopened_wrong, review_success],
     )
 
-    assert existing_repeated.mistake_count == 2
-    assert existing_resolved.resolved_at is None
-    assert existing_review.status == MistakeStatus.resolved.value
-    assert existing_review.resolved_at == review_success.answered_at
+    _assert_mistake_batch_results(db, existing_repeated, existing_resolved, existing_review, review_success)
+
+
+def _assert_mistake_batch_results(db, repeated, resolved, review, review_success) -> None:
+    assert repeated.mistake_count == 2
+    assert resolved.resolved_at is None
+    assert review.status == MistakeStatus.resolved.value
+    assert review.resolved_at == review_success.answered_at
     assert any(row["external_quiz_id"] == "q1" for row in db.inserted_rows)
     assert len(db.history_rows) == 4
     assert {row["event_type"] for row in db.history_rows} == {
@@ -139,28 +142,7 @@ async def test_batch_processor_progress_updates_scores_and_history(monkeypatch) 
         _event(1, _payload(item_id="q1", answer_id=1, is_correct=False), now),
         _event(2, _payload(item_id="q2", answer_id=2, is_correct=True), now + timedelta(minutes=1)),
     ]
-    progress = SimpleNamespace(
-        id=10,
-        user_id=1,
-        level="A1",
-        theme="Alltag",
-        theme_key="old-key",
-        total_answered=2,
-        total_correct=1,
-        wrong_count=1,
-        available_items_count=10,
-        last_answered_at=now,
-        last_recalculated_at=now,
-        accuracy=Decimal("50.00"),
-        streak=0,
-        unique_items_seen=1,
-        coverage_score=10.0,
-        coverage_status="low",
-        stability_score=20.0,
-        weakness_score=30.0,
-        recency_score=40.0,
-        topic_status="weak",
-    )
+    progress = _progress_state(now)
     db = _BatchDbSpy()
     processor = PostgresOutboxBatchProcessor()
     upserted: list[dict[tuple[int, str, str | None], outbox_batch.TopicAggregate]] = []
@@ -200,6 +182,31 @@ async def test_batch_processor_progress_updates_scores_and_history(monkeypatch) 
     assert db.progress_update_rows[0]["accuracy"] == Decimal("50.00")
     assert db.progress_history_rows[0]["event_type"] == "answer_recorded"
     assert db.progress_history_rows[0]["delta"]["answered_delta"] == 0
+
+
+def _progress_state(now: datetime) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=10,
+        user_id=1,
+        level="A1",
+        theme="Alltag",
+        theme_key="old-key",
+        total_answered=2,
+        total_correct=1,
+        wrong_count=1,
+        available_items_count=10,
+        last_answered_at=now,
+        last_recalculated_at=now,
+        accuracy=Decimal("50.00"),
+        streak=0,
+        unique_items_seen=1,
+        coverage_score=10.0,
+        coverage_status="low",
+        stability_score=20.0,
+        weakness_score=30.0,
+        recency_score=40.0,
+        topic_status="weak",
+    )
 
 
 @pytest.mark.asyncio
@@ -328,26 +335,29 @@ class _BatchDbSpy:
         self.progress_history_rows: list[dict[str, object]] = []
 
     async def execute(self, _statement, rows=None):
-        if rows:
-            first = rows[0]
-            if "external_quiz_id" in first:
-                self.inserted_rows.extend(rows)
-                return _InsertResult(
-                    [
-                        {
-                            "id": self._inserted_ids[(row["user_id"], row["external_quiz_id"])],
-                            "user_id": row["user_id"],
-                            "external_quiz_id": row["external_quiz_id"],
-                        }
-                        for row in rows
-                    ]
-                )
-            if "event_type" in first and "mistake_id" in first:
-                self.history_rows.extend(rows)
-            elif "reason_code" in first:
-                self.progress_history_rows.extend(rows)
-            elif "progress_id" in first:
-                self.progress_update_rows.extend(rows)
+        if not rows:
+            return _InsertResult([])
+        return self._track_rows(rows)
+
+    def _track_rows(self, rows):
+        first = rows[0]
+        if "external_quiz_id" in first:
+            self.inserted_rows.extend(rows)
+            inserted = [
+                {
+                    "id": self._inserted_ids[(row["user_id"], row["external_quiz_id"])],
+                    "user_id": row["user_id"],
+                    "external_quiz_id": row["external_quiz_id"],
+                }
+                for row in rows
+            ]
+            return _InsertResult(inserted)
+        if "event_type" in first and "mistake_id" in first:
+            self.history_rows.extend(rows)
+        elif "reason_code" in first:
+            self.progress_history_rows.extend(rows)
+        elif "progress_id" in first:
+            self.progress_update_rows.extend(rows)
         return _InsertResult([])
 
 
@@ -383,8 +393,7 @@ def _mistake_state(
     id: int | None = None,
     existed: bool = False,
     resolved_at: datetime | None = None,
-    successful_repeats_count: int = 0,
-    successful_repeat_days_count: int = 0,
+    successful_counts: tuple[int, int] = (0, 0),
     last_successful_repeat_at: datetime | None = None,
 ) -> MistakeState:
     timestamp = datetime(2026, 7, 1, 9, tzinfo=UTC)
@@ -399,8 +408,8 @@ def _mistake_state(
         wrong_answer="a1",
         correct_answer="a2",
         mistake_count=1,
-        successful_repeats_count=successful_repeats_count,
-        successful_repeat_days_count=successful_repeat_days_count,
+        successful_repeats_count=successful_counts[0],
+        successful_repeat_days_count=successful_counts[1],
         last_seen_at=timestamp,
         first_mistake_at=timestamp,
         last_mistake_at=timestamp,
