@@ -40,8 +40,6 @@ LEGACY_BASELINE = {
     ("app/bot/handlers/training.py", "nesting", "handle_resume_training"): 4,
     ("app/bot/handlers/training.py", "nesting", "handle_start_new_training"): 4,
     ("app/bot/handlers/training_flow.py", "parameters", "persist_quiz_bank_error"): 8,
-    ("app/quiz_bank/client.py", "class-lines", "QuizBankAsyncClient"): 547,
-    ("app/quiz_bank/client.py", "function-lines", "QuizBankAsyncClient._normalize_quiz_item_response"): 69,
     ("app/quiz_bank/client.py", "parameters", "QuizBankAsyncClient.__init__"): 10,
     ("app/repositories/answers.py", "parameters", "AnswerRepository.create"): 17,
     ("app/repositories/api_error_logs.py", "parameters", "ApiErrorLogRepository.record"): 10,

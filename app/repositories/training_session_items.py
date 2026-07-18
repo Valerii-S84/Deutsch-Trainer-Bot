@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import TrainingSessionItem
@@ -81,3 +81,18 @@ class TrainingSessionItemRepository:
         session_item.status = TrainingSessionItemStatus.answered
         session_item.answered_at = datetime.now(UTC)
         return session_item
+
+    async def mark_answered_by_session_item(
+        self,
+        db: AsyncSession,
+        *,
+        session_id: int,
+        item_id: str,
+    ) -> int:
+        result = await db.execute(
+            update(TrainingSessionItem)
+            .where(TrainingSessionItem.session_id == session_id)
+            .where(TrainingSessionItem.item_id == item_id)
+            .values(status=TrainingSessionItemStatus.answered, answered_at=datetime.now(UTC)),
+        )
+        return int(result.rowcount or 0)

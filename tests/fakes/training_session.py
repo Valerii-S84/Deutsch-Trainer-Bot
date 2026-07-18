@@ -212,11 +212,7 @@ class FakeAnswerRepository:
         is_correct: bool,
         training_session_item_id: int | None = None,
         question_reference_id: int | None = None,
-        quiz_source: str | None = None,
-        external_ref: str | None = None,
-        level: str | None = None,
-        theme: str | None = None,
-        theme_key: str | None = None,
+        content_fields=None,
         session_type: str = "regular",
         metadata_snapshot: dict[str, object] | None = None,
         telegram_update_id: int | None = None,
@@ -360,6 +356,31 @@ class FakeAnalyticsRepository:
         return event
 
 
+class FakeOutboxRepository:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    async def enqueue(
+        self,
+        db,
+        *,
+        event_type: str,
+        aggregate_type: str,
+        aggregate_id: int | None,
+        idempotency_key: str,
+        payload: dict[str, object],
+    ):
+        event = {
+            "event_type": event_type,
+            "aggregate_type": aggregate_type,
+            "aggregate_id": aggregate_id,
+            "idempotency_key": idempotency_key,
+            "payload": payload,
+        }
+        self.events.append(event)
+        return event
+
+
 class StubQuizBankService:
     def __init__(self, responses: list[object]) -> None:
         self._responses = list(responses)
@@ -456,4 +477,5 @@ def make_training_service(quiz_responses: list[object]) -> TrainingSessionServic
         question_reference_repo=FakeQuestionReferenceRepository(),
         session_item_repo=FakeSessionItemRepository(),
         quiz_service=StubQuizBankService(quiz_responses),
+        outbox_repo=FakeOutboxRepository(),
     )

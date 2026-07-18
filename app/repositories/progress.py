@@ -199,6 +199,66 @@ class ProgressRepository:
             for row in rows
         ]
 
+    async def list_recent_topic_answer_events(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        level: str,
+        theme: str | None,
+        limit: int,
+    ) -> list[TopicAnswerEvent]:
+        query = select(
+            UserAnswer.external_quiz_id,
+            UserAnswer.is_correct,
+            UserAnswer.answered_at,
+            UserAnswer.session_type,
+        ).where(
+            UserAnswer.user_id == user_id,
+            UserAnswer.level == level,
+        )
+        if theme is None:
+            query = query.where(UserAnswer.theme.is_(None))
+        else:
+            query = query.where(UserAnswer.theme == theme)
+
+        query = query.order_by(UserAnswer.answered_at.desc(), UserAnswer.id.desc()).limit(limit)
+        rows = (await db.execute(query)).all()
+        events = [
+            TopicAnswerEvent(
+                item_id=str(row.external_quiz_id),
+                is_correct=bool(row.is_correct),
+                answered_at=row.answered_at,
+                session_type=row.session_type,
+            )
+            for row in rows
+        ]
+        return sorted(events, key=lambda item: item.answered_at)
+
+    async def has_topic_item_answer(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        level: str,
+        theme: str | None,
+        item_id: str,
+        exclude_user_answer_id: int | None = None,
+    ) -> bool:
+        query = select(UserAnswer.id).where(
+            UserAnswer.user_id == user_id,
+            UserAnswer.level == level,
+            UserAnswer.external_quiz_id == item_id,
+        )
+        if theme is None:
+            query = query.where(UserAnswer.theme.is_(None))
+        else:
+            query = query.where(UserAnswer.theme == theme)
+        if exclude_user_answer_id is not None:
+            query = query.where(UserAnswer.id != exclude_user_answer_id)
+        query = query.limit(1)
+        return await db.scalar(query) is not None
+
     async def get_topic_mistake_signals(
         self,
         db: AsyncSession,

@@ -205,7 +205,7 @@ async def test_service_get_levels_filters_unknown_and_inactive_levels_and_caches
     first = await service.get_levels()
     second = await service.get_levels()
 
-    assert [level.code for level in first.levels] == ["A1"]
+    assert [level.code for level in first.levels] == ["A1", "C2"]
     assert second.levels == first.levels
     assert [call["endpoint"] for call in stub_client.calls] == ["levels"]
 

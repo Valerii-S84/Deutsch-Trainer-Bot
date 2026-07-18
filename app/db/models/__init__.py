@@ -6,6 +6,7 @@ from app.db.models.analytics_event import AnalyticsEvent
 from app.db.models.daily_limit import DailyLimit
 from app.db.models.mistake import Mistake, MistakeStatus
 from app.db.models.mistake_history import MistakeHistory
+from app.db.models.outbox_event import OutboxEvent
 from app.db.models.payment import Payment
 from app.db.models.progress import Progress
 from app.db.models.progress_history import ProgressHistory
@@ -24,6 +25,7 @@ __all__ = [
     "Mistake",
     "MistakeHistory",
     "MistakeStatus",
+    "OutboxEvent",
     "Payment",
     "Progress",
     "ProgressHistory",

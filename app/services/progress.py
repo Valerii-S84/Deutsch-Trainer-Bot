@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from app.catalog.service import LocalCatalogNotConfiguredError, LocalCatalogQuizService
+from app.catalog.selection import CatalogLevelDisabledError
+from app.config import get_settings
 from app.quiz_bank.errors import QuizBankError
-from app.quiz_bank.service import QuizBankService
 from app.repositories.progress_history import ProgressHistoryRepository
 from app.repositories.progress import ProgressRepository
 from app.repositories.users import UserRepository
@@ -16,6 +18,8 @@ from app.services.progress_model import (
     coverage_from_counts,
     recency_risk_score,
 )
+
+RECENT_TOPIC_EVENTS_LIMIT = 200
 
 
 @dataclass(frozen=True)
@@ -66,7 +70,7 @@ class ProgressService:
         user_repo: UserRepository | None = None,
         progress_repo: ProgressRepository | None = None,
         progress_history_repo: ProgressHistoryRepository | None = None,
-        quiz_service: QuizBankService | None = None,
+        quiz_service: object | None = None,
     ) -> None:
         self._user_repo = user_repo or UserRepository()
         self._progress_repo = progress_repo or ProgressRepository()
@@ -172,11 +176,12 @@ class ProgressService:
             metadata_snapshot=answer_update.metadata_snapshot,
             current_value=progress.available_items_count,
         )
-        answer_events = await self._progress_repo.list_topic_answer_events(
+        answer_events = await self._progress_repo.list_recent_topic_answer_events(
             db,
             user_id=answer_update.user_id,
             level=answer_update.level,
             theme=answer_update.theme,
+            limit=RECENT_TOPIC_EVENTS_LIMIT,
         )
         answer_events = _with_current_event(
             answer_events,
@@ -190,7 +195,12 @@ class ProgressService:
             level=answer_update.level,
             theme=answer_update.theme,
         )
-        unique_items_seen = len({event.item_id for event in answer_events})
+        unique_items_seen = await self._unique_items_seen(
+            db,
+            progress=progress,
+            answer_update=answer_update,
+            answer_events=answer_events,
+        )
         scores = calculate_topic_scores(
             total_answered=int(progress.total_answered or 0),
             accuracy_score=progress.accuracy,
@@ -211,12 +221,36 @@ class ProgressService:
             now=answer_update.answered_at,
         )
 
+    async def _unique_items_seen(
+        self,
+        db,
+        *,
+        progress,
+        answer_update: _ProgressAnswerUpdate,
+        answer_events: list[TopicAnswerEvent],
+    ) -> int:
+        current_value = int(getattr(progress, "unique_items_seen", 0) or 0)
+        recent_unique = len({event.item_id for event in answer_events})
+        if answer_update.item_id is None or answer_update.user_answer_id is None:
+            return max(current_value, recent_unique)
+
+        already_seen = await self._progress_repo.has_topic_item_answer(
+            db,
+            user_id=answer_update.user_id,
+            level=answer_update.level,
+            theme=answer_update.theme,
+            item_id=answer_update.item_id,
+            exclude_user_answer_id=answer_update.user_answer_id,
+        )
+        increment = 0 if already_seen else 1
+        return max(current_value + increment, recent_unique)
+
     async def get_user_summary(self, db, telegram_user_id: int) -> list:
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
         if user is None:
             return []
         records = await self._progress_repo.get_user_summary(db, user_id=user.id)
-        records = await self._with_available_topic_rows(user_id=user.id, records=records)
+        records = await self._with_available_topic_rows(db, user_id=user.id, records=records)
         _refresh_recency_for_display(records)
         return records
 
@@ -239,6 +273,7 @@ class ProgressService:
         )
         if level is not None and theme is None:
             records = await self._with_available_topic_rows(
+                db,
                 user_id=user.id,
                 records=records,
                 levels=[level],
@@ -251,6 +286,7 @@ class ProgressService:
 
     async def _with_available_topic_rows(
         self,
+        db,
         *,
         user_id: int,
         records: list,
@@ -261,12 +297,15 @@ class ProgressService:
             return records
 
         try:
-            level_values = levels or [level.code for level in (await quiz_service.get_levels()).levels]
+            level_values = await self._catalog_levels(quiz_service, levels)
             catalog_rows = []
             for level in level_values:
-                themes = await quiz_service.get_themes(level=level)
+                if isinstance(quiz_service, LocalCatalogQuizService):
+                    themes = await quiz_service.get_themes(db, level=level)
+                else:
+                    themes = await quiz_service.get_themes(level=level)
                 catalog_rows.extend((level, theme) for theme in themes.themes)
-        except QuizBankError:
+        except (CatalogLevelDisabledError, LocalCatalogNotConfiguredError, QuizBankError):
             return records
 
         by_key = {
@@ -287,11 +326,15 @@ class ProgressService:
     def _get_quiz_service(self):
         if self._quiz_service is not None:
             return self._quiz_service
-        try:
-            self._quiz_service = QuizBankService()
-        except QuizBankError:
-            return None
+        self._quiz_service = LocalCatalogQuizService()
         return self._quiz_service
+
+    async def _catalog_levels(self, quiz_service: object, levels: list[str] | None) -> list[str]:
+        if levels is not None:
+            return levels
+        if isinstance(quiz_service, LocalCatalogQuizService):
+            return list(get_settings().enabled_cefr_levels)
+        return [level.code for level in (await quiz_service.get_levels()).levels]
 
 
 def _available_items_count(

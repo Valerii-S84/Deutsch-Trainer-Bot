@@ -6,8 +6,6 @@ import logging
 from inspect import isawaitable
 from typing import Any
 
-from aiogram import BaseMiddleware
-
 from app.bot.texts import (
     CALLBACK_PAYMENT_PLAN_PREFIX,
     CALLBACK_REVIEW,
@@ -36,7 +34,7 @@ from app.security.rate_limits import (
 logger = logging.getLogger(__name__)
 
 
-class SecurityMiddleware(BaseMiddleware):
+class SecurityMiddleware:
     """Validate update identity, drop duplicates and rate-limit abuse-sensitive actions."""
 
     def __init__(

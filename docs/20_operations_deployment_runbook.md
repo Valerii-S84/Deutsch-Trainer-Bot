@@ -16,15 +16,71 @@ restore, rollback target, and staging smoke results.
 | `deploy/env.production.template` | Production env variable template without secrets. |
 | `deploy/env.staging.template` | Staging env variable template without secrets. |
 | `scripts/ops_preflight.sh` | Non-deploy preflight validation. |
-| `scripts/ops_smoke.sh` | Non-mutating health, Telegram and Quiz Bank smoke checks. |
-| `scripts/quiz_bank_live_smoke.py` | Read-only Quiz Bank health, levels, themes, availability and optional question lookup checks. |
+| `scripts/ops_smoke.sh` | Non-mutating health, Telegram and Local Catalog readiness smoke checks. |
+| `scripts/import_local_catalog.py` | Local Quiz Catalog import and dry-run validation from snapshot data sources. |
+| `scripts/quiz_bank_live_smoke.py` | Legacy non-gameplay smoke only; not required for training gameplay readiness. |
 | `scripts/isolated_runtime_smoke.sh` | Non-mutating Docker smoke checks for isolated polling runtime. |
-| `scripts/live_integration_gates.sh` | Manual staging gates for PostgreSQL, Redis, app health, Telegram, Quiz Bank and Telegram Stars evidence. |
+| `scripts/live_integration_gates.sh` | Manual staging gates for PostgreSQL, Redis, app health, Telegram, Local Catalog and Telegram Stars evidence. |
+| `scripts/hardening_load_gates.py` | Capacity, DB pool, duplicate storm, worker lag and Quiz Bank disabled proof gates. |
+| `python -m app.workers.run_outbox` | Durable outbox worker for progress, mistakes, analytics and rollups. |
 | `scripts/payment_sandbox_evidence_check.py` | Non-secret Telegram Stars sandbox evidence validator. |
 | `scripts/git_release_preflight.sh` | Non-mutating git provenance checks before push/release. |
 | `scripts/postgres_backup.sh` | PostgreSQL dump with required production encryption. |
 | `scripts/postgres_restore_verify.sh` | Disposable restore verification with schema and integrity checks. |
 | `docs/21_isolated_server_deploy_inventory.md` | Active isolated server inventory and scoped deploy procedure. |
+
+## Capacity Contract / SLO
+
+Production hardening targets:
+
+| Contract | Target |
+|---|---:|
+| Registered users | `100000` |
+| Active peak users | `5000` |
+| Peak answer callbacks | `500/sec` |
+| Answer accept latency p95 | `<= 250 ms` app-side, excluding Telegram network delivery |
+| Answer accept latency p99 | `<= 750 ms` app-side, excluding Telegram network delivery |
+| Error rate | `<= 0.1%` for non-throttled answer callbacks over a 15 minute peak window |
+| DB pool wait budget | p95 `<= 50 ms`, p99 `<= 200 ms` |
+| Redis latency budget | p95 `<= 10 ms`, p99 `<= 50 ms` |
+| Outbox worker lag budget | p95 `<= 30 s`, p99 `<= 120 s`; `dead` events require incident review |
+
+Production-ready is blocked until load evidence proves these budgets in a
+staging or production-like environment. Unit tests, local smoke checks and clean
+Docker migrations are not enough to claim production readiness.
+
+Required load evidence:
+
+```bash
+TEST_DATABASE_URL=<staging-test-db-url> \
+python scripts/hardening_load_gates.py seed-users --count 100000
+
+python scripts/hardening_load_gates.py db-pool-saturation \
+  --requests 5000 \
+  --concurrency 500
+
+TEST_DATABASE_URL=<staging-test-db-url> \
+python scripts/hardening_load_gates.py duplicate-storm --concurrency 500
+
+SMOKE_BASE_URL=https://<staging-domain-managed-outside-repo> \
+python scripts/hardening_load_gates.py webhook-health-load \
+  --base-url "$SMOKE_BASE_URL" \
+  --path /ready \
+  --requests 5000 \
+  --concurrency 500
+
+python scripts/hardening_load_gates.py worker-lag
+python scripts/hardening_load_gates.py quiz-bank-disabled-proof
+```
+
+The 500 answer callbacks/sec gate must use real signed Telegram-like callback
+payloads or an approved internal service-level harness that executes the answer
+hot path against PostgreSQL and Redis with Quiz Bank disabled. Record p50, p95,
+p99, error rate, DB pool wait, Redis latency, worker lag and duplicate outcome.
+
+Content readiness is tracked separately: the currently selectable `599`
+reviewed Local Catalog items remain a Content Readiness risk and must not be
+mixed with this technical hardening gate.
 
 ## Pre-Deploy Checklist
 
@@ -32,13 +88,22 @@ restore, rollback target, and staging smoke results.
 - `docker-compose.production.yml` renders successfully in the target env.
 - Runtime env values are loaded from protected storage, not from committed files.
 - `APP_ENV=production`, webhook mode is enabled and polling is disabled.
+- `TELEGRAM_WEBHOOK_MAX_CONNECTIONS` is set and recorded.
+- `BOT_GLOBAL_IN_FLIGHT_LIMIT` is set below the measured DB/worker capacity.
 - `TELEGRAM_STARS_MODE=prod` is configured for production.
 - `SECURITY_STATE_BACKEND=redis` is configured outside development.
 - PostgreSQL and Redis are reachable from the bot runtime.
-- Quiz Bank protected access is available for the selected environment.
+- `/ready` returns `ok` for DB and Redis before webhook registration.
+- `ACTIVE_CATALOG_ID` is configured for the selected environment.
+- Local Quiz Catalog import passed validation and the active catalog exists in
+  PostgreSQL.
 - Admin allowlist is configured.
-- Monitoring targets are configured for bot health, Caddy, DB, Redis, Quiz Bank,
-  payments, subscriptions, admin auth failures, logs and backups.
+- Monitoring targets are configured for bot health, Caddy, DB, Redis, Local Catalog,
+  outbox worker lag, payments, subscriptions, admin auth failures, logs and backups.
+- DB connection budget is documented:
+  `(web_replicas * (DB_POOL_SIZE + DB_MAX_OVERFLOW)) +
+  (worker_replicas * (WORKER_DB_POOL_SIZE + WORKER_DB_MAX_OVERFLOW)) +
+  admin/script_headroom <= PostgreSQL max_connections - reserved_connections`.
 - A recent encrypted backup exists or an initial encrypted backup is created.
 - Restore verification passed on a disposable non-production database.
 - Rollback target is known before deploy.
@@ -57,7 +122,7 @@ Manual staging integration workflow:
 ```
 
 The workflow requires protected staging secrets for PostgreSQL, Redis, bot
-token, Quiz Bank credentials, smoke base URL and `TELEGRAM_STARS_EVIDENCE_JSON`.
+token, smoke base URL and `TELEGRAM_STARS_EVIDENCE_JSON`.
 The Telegram Stars evidence JSON must contain only non-secret test facts and is
 validated by `scripts/payment_sandbox_evidence_check.py`.
 
@@ -84,9 +149,19 @@ Webhook closure requires:
 
 - `BOT_WEBHOOK_ENABLED=true` and `BOT_POLLING_ENABLED=false`;
 - HTTPS `TELEGRAM_WEBHOOK_URL` and `TELEGRAM_WEBHOOK_SECRET` in protected env;
+- `TELEGRAM_WEBHOOK_MAX_CONNECTIONS` set to the tested value;
+- no silent fallback to polling: incomplete webhook config must fail startup;
 - Telegram webhook registration evidence;
 - `scripts/ops_preflight.sh` and `scripts/ops_smoke.sh` passing in the target
   environment.
+
+Backpressure closure requires:
+
+- Redis-backed per-user/per-chat throttling outside development;
+- global in-flight limit active in dispatcher middleware;
+- saturation returns a fast retry response instead of spawning unbounded tasks;
+- duplicate Telegram update guard active;
+- duplicate answer acceptance also protected by PostgreSQL unique constraints.
 
 Polling exception closure requires:
 
@@ -94,6 +169,7 @@ Polling exception closure requires:
 - exactly one active bot process for the Telegram token;
 - webhook disabled for that bot token before polling starts;
 - isolated PostgreSQL and Redis confirmed running;
+- active Local Quiz Catalog confirmed imported when the runtime uses gameplay;
 - `scripts/isolated_runtime_smoke.sh` passing in the target environment;
 - manual Telegram `/start -> menu -> quiz -> question -> answer -> result`
   evidence without running payments;
@@ -121,12 +197,13 @@ Runtime evidence:
 - DB container running and healthy.
 - Redis container running and healthy.
 - `scripts/isolated_runtime_smoke.sh` passed with Telegram `getMe`,
-  isolated DB schema, Redis ping, required Quiz Bank env presence and recent
+  isolated DB schema, Redis ping, required runtime env presence and recent
   bot logs checks.
 - Manual Telegram flow passed:
   `/start -> menu -> quiz -> question -> answer -> result`.
-- Quiz Bank connectivity passed through the bot runtime using the protected
-  consumer env; secret values were not printed.
+- At that time, Quiz Bank connectivity passed through the bot runtime using the
+  protected consumer env; after the Local Catalog switch, this evidence is
+  legacy and no longer proves gameplay readiness.
 
 Monitoring evidence:
 
@@ -166,10 +243,28 @@ Rollback target:
 - Validate Compose config before changing running services.
 - Pull or build the approved immutable image outside this runbook.
 - Apply database migrations only after backup and rollback review.
+- Run Local Quiz Catalog dry-run/import before enabling a new `ACTIVE_CATALOG_ID`.
 - Start or update services through Docker Compose.
 - Watch bot, Caddy, DB and Redis health checks during rollout.
+- Start at least one outbox worker process before accepting production traffic.
+- Confirm outbox worker lag is within budget before and after webhook traffic.
 - Do not register or change a production Telegram webhook without explicit
   operator approval.
+
+Local Catalog import command template:
+
+```bash
+python scripts/import_local_catalog.py \
+  --source-path "${CATALOG_SOURCE_PATH:-ProductionQuizBank}" \
+  --catalog-id "<new-catalog-id>" \
+  --catalog-version "<snapshot-version>" \
+  --dry-run
+
+python scripts/import_local_catalog.py \
+  --source-path "${CATALOG_SOURCE_PATH:-ProductionQuizBank}" \
+  --catalog-id "<new-catalog-id>" \
+  --catalog-version "<snapshot-version>"
+```
 
 Compose validation command:
 
@@ -204,24 +299,27 @@ remote. Merge, squash or rebase still requires the project merge decision.
 ## Post-Deploy Smoke Checklist
 
 - `/health` returns `{"status": "ok"}` through HTTPS.
+- `/ready` returns DB pool wait and Redis latency within budget.
 - Telegram `getMe` succeeds with the environment bot token.
 - Telegram webhook delivery is confirmed by external deployment evidence.
-- Quiz Bank `/v1/health` or approved smoke endpoint succeeds.
+- Active Local Quiz Catalog exists in PostgreSQL and selection smoke succeeds.
 - `/start` works in Telegram.
 - Level, theme and training start work with safe smoke data.
-- Answer save, progress update and mistake creation work.
+- Answer save responds quickly; progress, analytics and mistake creation are
+  observed through outbox worker processing, not the callback hot path.
 - Payment flow does not expose secrets; real payment credit is only verified in
   approved Telegram test or production mode.
 - Admin metrics load only for an authorized admin.
 - Logs, analytics and smoke output contain no secrets.
-- Monitoring shows bot, DB, Redis, Quiz Bank, payment and backup health.
+- Monitoring shows bot, DB, Redis, Local Catalog, payment and backup health.
+- Monitoring shows outbox pending/processing/failed/dead counts and worker lag.
 
 Smoke command template:
 
 ```bash
 SMOKE_BASE_URL=https://<deployment-domain-managed-outside-repo> \
 RUN_TELEGRAM_SMOKE=1 \
-RUN_QUIZ_BANK_SMOKE=1 \
+RUN_LOCAL_CATALOG_SMOKE=1 \
 bash scripts/ops_smoke.sh
 ```
 
@@ -229,19 +327,18 @@ Live integration gate template:
 
 ```bash
 RUN_TELEGRAM_SMOKE=1 \
-RUN_QUIZ_BANK_SMOKE=1 \
-QUIZ_BANK_SMOKE_LEVELS=A1,A2,B1 \
-QUIZ_BANK_SMOKE_ITEM_IDS=A1=SMOKE_ITEM_ID_A1,A2=SMOKE_ITEM_ID_A2,B1=SMOKE_ITEM_ID_B1 \
+RUN_LOCAL_CATALOG_SMOKE=1 \
+ACTIVE_CATALOG_ID=<imported-catalog-id> \
 TELEGRAM_STARS_EVIDENCE_FILE=qa_evidence/telegram_stars_sandbox.json \
 bash scripts/live_integration_gates.sh
 ```
 
-When `RUN_QUIZ_BANK_SMOKE=1`, `scripts/live_integration_gates.sh` runs both the
-basic smoke and `scripts/quiz_bank_live_smoke.py`. The live Quiz Bank smoke
-checks `/v1/health`, `/v1/levels`, available themes, title-to-theme-id
-resolution and availability without printing protected headers or payloads.
-When `QUIZ_BANK_SMOKE_ITEM_IDS` is set, it also performs read-only question
-lookup checks through known smoke item IDs.
+When `RUN_LOCAL_CATALOG_SMOKE=1`, the staging gate must prove that
+`ACTIVE_CATALOG_ID` points to an imported active catalog, selectable rows exist
+for enabled levels, and gameplay does not read snapshot CSV files directly.
+
+Legacy Quiz Bank smoke may still run for non-gameplay diagnostics, but it is not
+required for Deutsch Trainer training gameplay readiness.
 
 Isolated polling runtime smoke template:
 
@@ -274,6 +371,7 @@ Restore verification must use a disposable non-production database. It must
 prove at least:
 
 - required tables restore;
+- Local Quiz Catalog tables, active catalog rows and import history restore;
 - payment idempotency constraints restore;
 - duplicate provider payment credit is not present;
 - duplicate subscription credit for one payment is not present;
@@ -291,12 +389,13 @@ bash scripts/postgres_restore_verify.sh
 
 Rollback is considered when bot availability, Telegram update processing,
 answer writes, progress integrity, payment crediting, subscription state,
-Quiz Bank integration, admin protection or secret-safe logging is broken.
+Local Catalog availability, admin protection or secret-safe logging is broken.
 
 Before rollback:
 
 - identify current version and previous known good version;
 - identify migration and data impact;
+- identify current and previous `ACTIVE_CATALOG_ID`;
 - confirm rollback does not duplicate payment credit;
 - confirm rollback does not delete learning state or corrupt daily limits;
 - preserve incident evidence and logs without exposing secrets.
@@ -304,6 +403,8 @@ Before rollback:
 Rollback execution:
 
 - stop the rollout or hold the current service state;
+- rollback catalog by restoring the previous `ACTIVE_CATALOG_ID` when the issue
+  is catalog-specific;
 - restore the previous immutable image or Compose service definition;
 - apply only approved migration rollback or forward-fix steps;
 - do not restore production data unless incident response explicitly requires it;
@@ -313,6 +414,7 @@ Post-rollback verification:
 
 - bot responds;
 - existing users can continue;
+- active Local Quiz Catalog selection works;
 - answers save correctly;
 - progress and mistakes remain linked;
 - payment idempotency still holds;
@@ -325,9 +427,9 @@ Secret rotation is a separate controlled task. Do not rotate stable runtime
 secrets during deploy proof unless an incident or explicit operator approval
 requires it.
 
-Rotation scope can include `BOT_TOKEN`, Quiz Bank keys, database and Redis URLs,
-backup credentials, admin allowlists and payment configuration. Secret values
-must never be printed, committed, pasted into logs or included in screenshots.
+Rotation scope can include `BOT_TOKEN`, database and Redis URLs, backup
+credentials, admin allowlists and payment configuration. Secret values must
+never be printed, committed, pasted into logs or included in screenshots.
 
 Before rotation:
 
@@ -341,7 +443,7 @@ Rotation execution:
 - write the new value only into protected runtime secret storage;
 - restart only the services that read the changed secret;
 - do not restart DB or Redis unless their own credentials changed;
-- run health, Telegram and Quiz Bank smoke checks without printing env values;
+- run health, Telegram and Local Catalog smoke checks without printing env values;
 - revoke the old value only after the new runtime passes smoke checks.
 
 Post-rotation verification:
@@ -349,7 +451,7 @@ Post-rotation verification:
 - bot responds;
 - Telegram `getMe` succeeds;
 - `/start` and a safe training question work;
-- Quiz Bank smoke succeeds;
+- Local Catalog smoke succeeds;
 - logs contain no old or new secret values;
 - monitoring shows no sustained error spike.
 

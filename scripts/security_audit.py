@@ -12,8 +12,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 IGNORED_DEPENDENCY_VULNS = {
+    "PYSEC-2026-237": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
     "CVE-2026-34993": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
     "CVE-2026-47265": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
+    "CVE-2026-50269": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
+    "CVE-2026-54273": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
+    "CVE-2026-54274": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
+    "CVE-2026-54276": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
+    "CVE-2026-54277": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
+    "CVE-2026-54278": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
+    "CVE-2026-54279": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
+    "CVE-2026-54280": "Latest aiogram 3.28.2 requires aiohttp<3.14; remove when aiogram allows aiohttp>=3.14.",
 }
 
 

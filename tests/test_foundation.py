@@ -48,6 +48,31 @@ async def test_health_check_returns_ok_response() -> None:
     assert b'"status": "ok"' in response.body
 
 
+@pytest.mark.asyncio
+async def test_readiness_check_reports_db_and_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aiohttp import web
+
+    import app.main
+
+    class FakeRedis:
+        async def ping(self) -> bool:
+            return True
+
+    async def fake_pool_wait() -> float:
+        return 1.25
+
+    monkeypatch.setattr(app.main, "measure_pool_wait_ms", fake_pool_wait)
+    application = web.Application()
+    application["redis_client"] = FakeRedis()
+    request = type("Request", (), {"app": application})()
+
+    response = await app.main.readiness_check(request)  # type: ignore[arg-type]
+
+    assert response.status == 200
+    assert b'"status": "ok"' in response.body
+    assert b'"pool_wait_ms": 1.25' in response.body
+
+
 def test_logging_redacts_sensitive_values_for_child_loggers() -> None:
     from app.logging_config import configure_logging
 

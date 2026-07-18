@@ -14,8 +14,10 @@ dependencies = [
   "sqlalchemy>=2.0.30",
   "alembic>=1.13.2",
   "asyncpg>=0.29.0",
-  "pydantic-settings>=2.3.4",
+  "pydantic-settings>=2.14.2",
   "pydantic>=2.7.4",
+  "msgpack>=1.2.1",
+  "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]

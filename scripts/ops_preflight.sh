@@ -51,6 +51,10 @@ if settings.app_env != AppEnvironment.development and settings.bot_polling_enabl
     raise SystemExit("Polling mode must be disabled outside development")
 if settings.app_env != AppEnvironment.development and settings.security_state_backend == "in_memory":
     raise SystemExit("SECURITY_STATE_BACKEND=in_memory is not allowed outside development")
+if settings.telegram_webhook_max_connections > settings.bot_global_in_flight_limit:
+    raise SystemExit("TELEGRAM_WEBHOOK_MAX_CONNECTIONS must not exceed BOT_GLOBAL_IN_FLIGHT_LIMIT")
+if settings.db_pool_timeout <= 0:
+    raise SystemExit("DB_POOL_TIMEOUT must be positive")
 
 print("[ops_preflight] configuration validation passed")
 PY
@@ -71,24 +75,18 @@ from __future__ import annotations
 
 import asyncio
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
-
-from app.config import get_settings
+from app.db.session import dispose_engine, measure_pool_wait_ms
 
 
 async def main() -> None:
-    settings = get_settings()
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
-        async with engine.connect() as connection:
-            await connection.scalar(text("SELECT 1"))
+        wait_ms = await measure_pool_wait_ms()
+        print(f"[ops_preflight] database connectivity passed pool_wait_ms={wait_ms:.3f}")
     finally:
-        await engine.dispose()
+        await dispose_engine()
 
 
 asyncio.run(main())
-print("[ops_preflight] database connectivity passed")
 PY
 fi
 

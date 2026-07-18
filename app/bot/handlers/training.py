@@ -61,7 +61,6 @@ from app.services.training_session import (
     TrainingSessionService,
 )
 from app.services.entitlements import DailyLimitExceededError, EntitlementService
-from app.services.progress import ProgressService
 from app.services.mistakes import MistakeService
 
 logger = logging.getLogger(__name__)
@@ -70,7 +69,6 @@ router = Router(name="training")
 
 
 training_service = TrainingSessionService(
-    progress_service=ProgressService(),
     mistakes_service=MistakeService(),
     entitlement_service=EntitlementService(),
 )

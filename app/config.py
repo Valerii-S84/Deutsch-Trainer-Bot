@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,15 +26,27 @@ class Settings(BaseSettings):
     telegram_webhook_secret: Optional[SecretStr] = None
     telegram_webhook_path: str = "/telegram/webhook"
     telegram_webhook_require_https: bool = True
+    telegram_webhook_max_connections: int = 40
     telegram_duplicate_update_ttl_seconds: int = 300
     bot_webhook_enabled: bool = False
     bot_polling_enabled: bool = True
     bot_max_request_timeout: int = 30
+    bot_global_in_flight_limit: int = 512
+    bot_global_in_flight_timeout_seconds: float = 0.05
     security_rate_limit_enabled: bool = True
     security_state_backend: str = Field(default="auto", alias="SECURITY_STATE_BACKEND")
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/deutsch_trainer"
+    db_pool_size: int = Field(default=20, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=10, alias="DB_MAX_OVERFLOW")
+    db_pool_timeout: float = Field(default=5.0, alias="DB_POOL_TIMEOUT")
+    db_pool_recycle: int = Field(default=1800, alias="DB_POOL_RECYCLE")
+    db_pool_pre_ping: bool = Field(default=True, alias="DB_POOL_PRE_PING")
+    worker_db_pool_size: int = Field(default=10, alias="WORKER_DB_POOL_SIZE")
+    worker_db_max_overflow: int = Field(default=5, alias="WORKER_DB_MAX_OVERFLOW")
+    worker_db_pool_timeout: float = Field(default=5.0, alias="WORKER_DB_POOL_TIMEOUT")
     redis_url: str = "redis://localhost:6379/0"
+    redis_max_connections: int = Field(default=256, alias="REDIS_MAX_CONNECTIONS")
 
     quiz_bank_api_base_url: str = "https://api.quiz-bank.example.internal"
     quiz_bank_edge_api_key: Optional[SecretStr] = None
@@ -45,6 +57,11 @@ class Settings(BaseSettings):
     # Deprecated compatibility alias from previous milestones:
     # do not remove because tests and legacy scripts still reference it.
     quiz_bank_api_key: Optional[SecretStr] = None
+
+    active_catalog_id: Optional[str] = Field(default=None, alias="ACTIVE_CATALOG_ID")
+    catalog_source_path: str = Field(default="ProductionQuizBank", alias="CATALOG_SOURCE_PATH")
+    catalog_import_dry_run: bool = Field(default=False, alias="CATALOG_IMPORT_DRY_RUN")
+    enabled_cefr_levels: tuple[str, ...] = Field(default=("A1", "A2", "B1", "B2", "C1"), alias="ENABLED_CEFR_LEVELS")
 
     log_level: str = "INFO"
 
@@ -74,33 +91,81 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    @field_validator("bot_max_request_timeout")
+    @field_validator(
+        "bot_max_request_timeout",
+        "telegram_duplicate_update_ttl_seconds",
+        "quiz_bank_timeout_seconds",
+        "bot_global_in_flight_limit",
+        "db_pool_size",
+        "db_pool_timeout",
+        "worker_db_pool_size",
+        "worker_db_pool_timeout",
+        "redis_max_connections",
+    )
     @classmethod
-    def validate_timeout(cls, value: int) -> int:
+    def validate_positive_number(cls, value: int | float, info: ValidationInfo) -> int | float:
         if value <= 0:
-            raise ValueError("BOT_MAX_REQUEST_TIMEOUT must be > 0")
+            raise ValueError(f"{_env_name(info.field_name)} must be > 0")
         return value
 
-    @field_validator("telegram_duplicate_update_ttl_seconds")
+    @field_validator("telegram_webhook_max_connections")
     @classmethod
-    def validate_duplicate_update_ttl(cls, value: int) -> int:
-        if value <= 0:
-            raise ValueError("TELEGRAM_DUPLICATE_UPDATE_TTL_SECONDS must be > 0")
+    def validate_webhook_max_connections(cls, value: int) -> int:
+        if value < 1 or value > 100:
+            raise ValueError("TELEGRAM_WEBHOOK_MAX_CONNECTIONS must be between 1 and 100")
         return value
 
-    @field_validator("quiz_bank_timeout_seconds")
+    @field_validator(
+        "bot_global_in_flight_timeout_seconds",
+        "db_max_overflow",
+        "worker_db_max_overflow",
+        "quiz_bank_max_retries",
+    )
     @classmethod
-    def validate_quiz_bank_timeout(cls, value: int) -> int:
-        if value <= 0:
-            raise ValueError("QUIZ_BANK_TIMEOUT_SECONDS must be > 0")
-        return value
-
-    @field_validator("quiz_bank_max_retries")
-    @classmethod
-    def validate_quiz_bank_retries(cls, value: int) -> int:
+    def validate_non_negative_number(cls, value: int | float, info: ValidationInfo) -> int | float:
         if value < 0:
-            raise ValueError("QUIZ_BANK_MAX_RETRIES must be >= 0")
+            raise ValueError(f"{_env_name(info.field_name)} must be >= 0")
         return value
+
+    @field_validator("db_pool_recycle")
+    @classmethod
+    def validate_db_pool_recycle(cls, value: int) -> int:
+        if value < -1:
+            raise ValueError("DB_POOL_RECYCLE must be -1 or >= 0")
+        return value
+
+    @field_validator("active_catalog_id")
+    @classmethod
+    def validate_active_catalog_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("ACTIVE_CATALOG_ID cannot be blank when set")
+        return normalized
+
+    @field_validator("catalog_source_path")
+    @classmethod
+    def validate_catalog_source_path(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("CATALOG_SOURCE_PATH cannot be blank")
+        return normalized
+
+    @field_validator("enabled_cefr_levels", mode="before")
+    @classmethod
+    def parse_enabled_cefr_levels(cls, value: object) -> tuple[str, ...]:
+        if isinstance(value, str):
+            raw_values = [item.strip().upper() for item in value.split(",") if item.strip()]
+        else:
+            raw_values = [str(item).strip().upper() for item in value]  # type: ignore[arg-type]
+        allowed = {"A1", "A2", "B1", "B2", "C1", "C2"}
+        levels = tuple(raw_values)
+        if not levels:
+            raise ValueError("ENABLED_CEFR_LEVELS must contain at least one level")
+        if any(level not in allowed for level in levels):
+            raise ValueError("ENABLED_CEFR_LEVELS supports only A1,A2,B1,B2,C1,C2")
+        return levels
 
     @field_validator("security_state_backend")
     @classmethod
@@ -178,7 +243,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_webhook_security(self) -> "Settings":
-        if not self.bot_webhook_enabled or self.app_env == AppEnvironment.development:
+        if not self.bot_webhook_enabled:
             return self
 
         if not self.telegram_webhook_url:
@@ -189,6 +254,12 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_URL must use HTTPS outside development")
         if not self.telegram_webhook_path.startswith("/"):
             raise ValueError("TELEGRAM_WEBHOOK_PATH must start with /")
+        return self
+
+    @model_validator(mode="after")
+    def validate_runtime_mode(self) -> "Settings":
+        if not self.bot_webhook_enabled and not self.bot_polling_enabled:
+            raise ValueError("Either BOT_WEBHOOK_ENABLED or BOT_POLLING_ENABLED must be enabled")
         return self
 
     @model_validator(mode="after")
@@ -226,18 +297,18 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_URL is required in production")
         if not self.webhook_mode_enabled:
             raise ValueError("Webhook mode must be fully configured in production")
-        if not self.quiz_bank_edge_api_key_or_legacy:
-            raise ValueError("QUIZ_BANK_EDGE_API_KEY (or QUIZ_BANK_API_KEY legacy) is required in production")
-        if not self.quiz_bank_consumer_api_key or not self.quiz_bank_consumer_api_key.get_secret_value():
-            raise ValueError("QUIZ_BANK_CONSUMER_API_KEY is required in production")
-        if not self.quiz_bank_consumer_id:
-            raise ValueError("QUIZ_BANK_CONSUMER_ID is required in production")
         if not self.database_url:
             raise ValueError("DATABASE_URL is required in production")
         if self.security_rate_limit_enabled and not self.redis_url:
             raise ValueError("REDIS_URL is required in production")
         if self.telegram_stars_mode != "prod":
             raise ValueError("TELEGRAM_STARS_MODE=prod is required in production")
+
+
+def _env_name(field_name: str | None) -> str:
+    if not field_name:
+        return "setting"
+    return field_name.upper()
 
 
 def get_settings() -> Settings:

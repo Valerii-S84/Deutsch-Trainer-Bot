@@ -11,9 +11,6 @@ import pytest
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "git_release_preflight.sh"
 
 
-pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
-
-
 def test_git_release_preflight_passes_for_clean_feature_branch(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     _run_git(repo, "remote", "add", "origin", "https://github.com/example/deutsch-trainer-bot.git")
@@ -71,10 +68,56 @@ def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def _run_preflight(repo: Path, *, expected_branch: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "EXPECTED_BRANCH": expected_branch}
     return subprocess.run(
-        ("bash", str(SCRIPT_PATH)),
+        (BASH_PATH, str(SCRIPT_PATH)),
         cwd=repo,
         env=env,
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def _find_usable_bash() -> str | None:
+    for candidate in _bash_candidates():
+        if _is_usable_bash(candidate):
+            return candidate
+    return None
+
+
+def _bash_candidates() -> tuple[str, ...]:
+    candidates: list[str] = []
+    env_bash = os.environ.get("BASH")
+    if env_bash:
+        candidates.append(env_bash)
+    path_bash = shutil.which("bash")
+    if path_bash:
+        candidates.append(path_bash)
+    if os.name == "nt":
+        candidates.extend(
+            (
+                r"C:\Program Files\Git\bin\bash.exe",
+                r"C:\Program Files\Git\usr\bin\bash.exe",
+            ),
+        )
+    return tuple(dict.fromkeys(candidates))
+
+
+def _is_usable_bash(candidate: str) -> bool:
+    try:
+        completed = subprocess.run(
+            (candidate, "--version"),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+BASH_PATH = _find_usable_bash()
+pytestmark = [
+    pytest.mark.skipif(shutil.which("git") is None, reason="git is required"),
+    pytest.mark.skipif(BASH_PATH is None, reason="executable bash is required"),
+]

@@ -12,6 +12,7 @@ from app.services.training_session import (
     ActiveSessionNotFoundError,
     TrainingSessionService,
 )
+from tests.fakes.training_session import FakeOutboxRepository
 
 
 @dataclass
@@ -211,11 +212,7 @@ class FakeAnswerRepository:
         is_correct: bool,
         training_session_item_id: int | None = None,
         question_reference_id: int | None = None,
-        quiz_source: str | None = None,
-        external_ref: str | None = None,
-        level: str | None = None,
-        theme: str | None = None,
-        theme_key: str | None = None,
+        content_fields=None,
         session_type: str = "regular",
         metadata_snapshot: dict[str, object] | None = None,
         telegram_update_id: int | None = None,
@@ -453,8 +450,9 @@ def _question_payload(
     )
 
 
-def _make_service() -> tuple[TrainingSessionService, FakeProgressService]:
+def _make_service() -> tuple[TrainingSessionService, FakeProgressService, FakeOutboxRepository]:
     progress_service = FakeProgressService()
+    outbox_repo = FakeOutboxRepository()
     service = TrainingSessionService(
         user_repo=FakeUserRepository(),
         session_repo=FakeSessionRepository(),
@@ -463,14 +461,14 @@ def _make_service() -> tuple[TrainingSessionService, FakeProgressService]:
         question_reference_repo=FakeQuestionReferenceRepository(),
         session_item_repo=FakeSessionItemRepository(),
         quiz_service=FakeQuizBankService([_question_payload()]),
-        progress_service=progress_service,
+        outbox_repo=outbox_repo,
     )
-    return service, progress_service
+    return service, progress_service, outbox_repo
 
 
 @pytest.mark.asyncio
-async def test_submit_answer_records_progress_only_for_new_answers() -> None:
-    service, progress_service = _make_service()
+async def test_submit_answer_enqueues_progress_work_for_new_answers() -> None:
+    service, progress_service, outbox_repo = _make_service()
     db = FakeDatabaseSession()
     telegram_user_id = 111
 
@@ -492,20 +490,19 @@ async def test_submit_answer_records_progress_only_for_new_answers() -> None:
         selected_option_id="a2",
     )
 
-    assert progress_service.recorded_calls == [
-        {
-            "telegram_user_id": telegram_user_id,
-            "level": "A1",
-            "theme": "Alltag",
-            "is_correct": True,
-            "is_duplicate": False,
-        },
-    ]
+    assert progress_service.recorded_calls == []
+    assert len(outbox_repo.events) == 1
+    payload = outbox_repo.events[0]["payload"]
+    assert payload["telegram_user_id"] == telegram_user_id
+    assert payload["level"] == "A1"
+    assert payload["theme"] == "Alltag"
+    assert payload["is_correct"] is True
 
 
 @pytest.mark.asyncio
 async def test_submit_answer_records_progress_for_returned_question_theme() -> None:
     progress_service = FakeProgressService()
+    outbox_repo = FakeOutboxRepository()
     service = TrainingSessionService(
         user_repo=FakeUserRepository(),
         session_repo=FakeSessionRepository(),
@@ -521,7 +518,7 @@ async def test_submit_answer_records_progress_for_returned_question_theme() -> N
                 ),
             ],
         ),
-        progress_service=progress_service,
+        outbox_repo=outbox_repo,
     )
     db = FakeDatabaseSession()
     telegram_user_id = 115
@@ -544,20 +541,14 @@ async def test_submit_answer_records_progress_for_returned_question_theme() -> N
     )
 
     assert question.theme == "Person / Identitaet / Familie"
-    assert progress_service.recorded_calls == [
-        {
-            "telegram_user_id": telegram_user_id,
-            "level": "A1",
-            "theme": "Person / Identitaet / Familie",
-            "is_correct": True,
-            "is_duplicate": False,
-        },
-    ]
+    assert progress_service.recorded_calls == []
+    payload = outbox_repo.events[0]["payload"]
+    assert payload["theme"] == "Person / Identitaet / Familie"
 
 
 @pytest.mark.asyncio
 async def test_submit_answer_does_not_update_progress_for_duplicate() -> None:
-    service, progress_service = _make_service()
+    service, progress_service, outbox_repo = _make_service()
     db = FakeDatabaseSession()
     telegram_user_id = 112
 
@@ -586,13 +577,15 @@ async def test_submit_answer_does_not_update_progress_for_duplicate() -> None:
         selected_option_id="a2",
     )
 
-    assert len(progress_service.recorded_calls) == 1
+    assert progress_service.recorded_calls == []
+    assert len(outbox_repo.events) == 1
 
 
 @pytest.mark.asyncio
 async def test_review_session_correct_answer_records_progress() -> None:
     progress_service = FakeProgressService()
     mistakes_service = FakeMistakeService()
+    outbox_repo = FakeOutboxRepository()
     service = TrainingSessionService(
         user_repo=FakeUserRepository(),
         session_repo=FakeSessionRepository(),
@@ -601,8 +594,8 @@ async def test_review_session_correct_answer_records_progress() -> None:
         question_reference_repo=FakeQuestionReferenceRepository(),
         session_item_repo=FakeSessionItemRepository(),
         quiz_service=FakeQuizBankService([_question_payload(item_id="q_review")]),
-        progress_service=progress_service,
         mistakes_service=mistakes_service,
+        outbox_repo=outbox_repo,
     )
     db = FakeDatabaseSession()
     telegram_user_id = 114
@@ -617,22 +610,16 @@ async def test_review_session_correct_answer_records_progress() -> None:
         selected_option_id="a2",
     )
 
-    assert progress_service.recorded_calls == [
-        {
-            "telegram_user_id": telegram_user_id,
-            "level": "A1",
-            "theme": "Alltag",
-            "is_correct": True,
-            "is_duplicate": False,
-        },
-    ]
-    assert len(mistakes_service.success_calls) == 1
+    assert progress_service.recorded_calls == []
+    assert mistakes_service.success_calls == []
+    assert outbox_repo.events[0]["payload"]["session_type"] == "mistake_review"
 
 
 @pytest.mark.asyncio
 async def test_submit_answer_does_not_record_progress_when_session_not_active() -> None:
     progress_service = FakeProgressService()
     session_repo = FakeSessionRepository()
+    outbox_repo = FakeOutboxRepository()
     service = TrainingSessionService(
         user_repo=FakeUserRepository(),
         session_repo=session_repo,
@@ -641,7 +628,7 @@ async def test_submit_answer_does_not_record_progress_when_session_not_active() 
         question_reference_repo=FakeQuestionReferenceRepository(),
         session_item_repo=FakeSessionItemRepository(),
         quiz_service=FakeQuizBankService([]),
-        progress_service=progress_service,
+        outbox_repo=outbox_repo,
     )
     db = FakeDatabaseSession()
     telegram_user_id = 113
@@ -666,3 +653,4 @@ async def test_submit_answer_does_not_record_progress_when_session_not_active() 
         )
 
     assert progress_service.recorded_calls == []
+    assert outbox_repo.events == []

@@ -9,6 +9,7 @@ from app.quiz_bank import QuizBankRequestContext
 from app.quiz_bank.schemas import QuizAnswerOption, QuizCorrectAnswerReference, QuizItem, QuizQuestionsResponse
 from app.repositories.quiz_sessions import QuizSessionStatus
 from app.services.training_session import NoMoreQuestionsError, TrainingSessionService
+from tests.fakes.training_session import FakeOutboxRepository
 
 
 @dataclass
@@ -215,11 +216,7 @@ class FakeAnswerRepository:
         is_correct: bool,
         training_session_item_id: int | None = None,
         question_reference_id: int | None = None,
-        quiz_source: str | None = None,
-        external_ref: str | None = None,
-        level: str | None = None,
-        theme: str | None = None,
-        theme_key: str | None = None,
+        content_fields=None,
         session_type: str = "regular",
         metadata_snapshot: dict[str, object] | None = None,
         telegram_update_id: int | None = None,
@@ -441,6 +438,7 @@ def _question_payload(
 @pytest.mark.asyncio
 async def test_submit_answer_records_wrong_answer_to_mistake_service() -> None:
     mistakes = FakeMistakeService(active_items=[])
+    outbox_repo = FakeOutboxRepository()
     service = TrainingSessionService(
         user_repo=FakeUserRepository(),
         session_repo=FakeSessionRepository(),
@@ -450,6 +448,7 @@ async def test_submit_answer_records_wrong_answer_to_mistake_service() -> None:
         session_item_repo=FakeSessionItemRepository(),
         quiz_service=FakeQuizBankService([_question_payload(item_id="q_regular", level="A1", theme="Alltag")]),
         mistakes_service=mistakes,
+        outbox_repo=outbox_repo,
     )
     db = FakeDatabaseSession()
     user_id = 111
@@ -466,8 +465,10 @@ async def test_submit_answer_records_wrong_answer_to_mistake_service() -> None:
     )
 
     assert result.is_correct is False
-    assert len(mistakes.wrong_calls) == 1
-    assert mistakes.wrong_calls[0]["external_quiz_id"] == "q_regular"
+    assert mistakes.wrong_calls == []
+    payload = outbox_repo.events[0]["payload"]
+    assert payload["item_id"] == "q_regular"
+    assert payload["selected_answer"] == "a1"
 
 
 @pytest.mark.asyncio
@@ -475,6 +476,7 @@ async def test_submit_answer_does_not_repeat_wrong_mistake_on_duplicate_click() 
     db = FakeDatabaseSession()
     user_id = 112
     mistakes = FakeMistakeService(active_items=[])
+    outbox_repo = FakeOutboxRepository()
     service = TrainingSessionService(
         user_repo=FakeUserRepository(),
         session_repo=FakeSessionRepository(),
@@ -484,6 +486,7 @@ async def test_submit_answer_does_not_repeat_wrong_mistake_on_duplicate_click() 
         session_item_repo=FakeSessionItemRepository(),
         quiz_service=FakeQuizBankService([_question_payload(item_id="q_dup", level="A1", theme="Alltag")]),
         mistakes_service=mistakes,
+        outbox_repo=outbox_repo,
     )
 
     await service.start_session(db, user_id, level="A1", theme="Alltag", total_questions=2, force_new=False)
@@ -506,13 +509,15 @@ async def test_submit_answer_does_not_repeat_wrong_mistake_on_duplicate_click() 
 
     assert first.is_duplicate is False
     assert second.is_duplicate is True
-    assert len(mistakes.wrong_calls) == 1
+    assert mistakes.wrong_calls == []
+    assert len(outbox_repo.events) == 1
 
 
 @pytest.mark.asyncio
 async def test_submit_answer_records_review_success_for_review_session() -> None:
     review_item = FakeMistake(id=1, level="A1", theme="Alltag", external_quiz_id="q_review")
     mistakes = FakeMistakeService(active_items=[review_item])
+    outbox_repo = FakeOutboxRepository()
     service = TrainingSessionService(
         user_repo=FakeUserRepository(),
         session_repo=FakeSessionRepository(),
@@ -522,6 +527,7 @@ async def test_submit_answer_records_review_success_for_review_session() -> None
         session_item_repo=FakeSessionItemRepository(),
         quiz_service=FakeQuizBankService([_question_payload(item_id="q_review", level="A1", theme="Alltag", correct_answer="a2")]),
         mistakes_service=mistakes,
+        outbox_repo=outbox_repo,
     )
     db = FakeDatabaseSession()
     user_id = 113
@@ -538,8 +544,8 @@ async def test_submit_answer_records_review_success_for_review_session() -> None
     )
 
     assert result.is_correct is True
-    assert len(mistakes.success_calls) == 1
-    assert mistakes.success_calls[0]["external_quiz_id"] == "q_review"
+    assert mistakes.success_calls == []
+    assert outbox_repo.events[0]["payload"]["session_type"] == "mistake_review"
 
 
 @pytest.mark.asyncio

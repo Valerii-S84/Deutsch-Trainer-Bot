@@ -209,6 +209,28 @@ def test_webhook_mode_requires_secret_outside_development() -> None:
         )
 
 
+def test_webhook_mode_does_not_fall_back_to_polling_when_incomplete() -> None:
+    with pytest.raises(ValueError, match="TELEGRAM_WEBHOOK_URL"):
+        Settings(app_env="development", bot_webhook_enabled=True, bot_polling_enabled=True)
+
+
+def test_runtime_mode_requires_webhook_or_polling_enabled() -> None:
+    with pytest.raises(ValueError, match="BOT_WEBHOOK_ENABLED or BOT_POLLING_ENABLED"):
+        Settings(bot_polling_enabled=False)
+
+
+def test_hardening_runtime_defaults_are_bounded() -> None:
+    settings = Settings()
+
+    assert settings.telegram_webhook_max_connections == 40
+    assert settings.bot_global_in_flight_limit == 512
+    assert settings.db_pool_size == 20
+    assert settings.db_max_overflow == 10
+    assert settings.db_pool_timeout == 5.0
+    assert settings.db_pool_recycle == 1800
+    assert settings.db_pool_pre_ping is True
+
+
 def test_production_security_state_cannot_use_process_local_backend() -> None:
     with pytest.raises(ValueError, match="SECURITY_STATE_BACKEND"):
         Settings(app_env="production", SECURITY_STATE_BACKEND="in_memory")
@@ -231,6 +253,32 @@ def test_release_one_launch_config_defaults_are_locked() -> None:
     assert settings.plus_duration_days == 30
     assert settings.pro_duration_days == 90
     assert settings.telegram_stars_mode == "test"
+    assert settings.enabled_cefr_levels == ("A1", "A2", "B1", "B2", "C1")
+    assert settings.catalog_source_path == "ProductionQuizBank"
+
+
+def test_enabled_cefr_levels_accept_c2_but_default_excludes_it() -> None:
+    settings = Settings(ENABLED_CEFR_LEVELS="A1,B2,C2")
+
+    assert settings.enabled_cefr_levels == ("A1", "B2", "C2")
+
+
+def test_active_catalog_id_cannot_be_blank_when_set() -> None:
+    with pytest.raises(ValueError, match="ACTIVE_CATALOG_ID"):
+        Settings(ACTIVE_CATALOG_ID=" ")
+
+
+def test_production_secrets_do_not_require_legacy_quiz_bank_credentials() -> None:
+    settings = Settings(
+        app_env="production",
+        bot_webhook_enabled=True,
+        bot_token="123:ABC",
+        telegram_webhook_url="https://bot.example.test",
+        telegram_webhook_secret="webhook-secret",
+        TELEGRAM_STARS_MODE="prod",
+    )
+
+    settings.require_production_secrets()
 
 
 def test_paywall_cooldown_policy_is_none_for_release_one() -> None:
