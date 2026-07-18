@@ -19,6 +19,27 @@
 
 ## Production Checklist Closure Work
 
+### 2026-07-16
+
+- Telegram Stars sandbox evidence contract was hardened repo-side:
+  - validator now requires explicit payload format proof
+    `dtbpay:{payment_id}:{idempotency_key}`;
+  - raw invoice payload, raw Telegram/provider charge ids, runtime env values
+    and credential-like fields are rejected recursively;
+  - credited payment status, active subscription status and duplicate
+    no-second-credit/no-second-subscription-period proof are required.
+- Operator runbook now includes a sandbox-only evidence shape and execution
+  procedure for `qa_evidence/telegram_stars_sandbox.json`.
+- Live Telegram Stars sandbox run was executed on the isolated server runtime:
+  - active runtime mode was verified as `TELEGRAM_STARS_MODE=test`;
+  - Plus invoice amount was set to exactly `1` Star;
+  - Telegram delivered the invoice to the owner-confirmed test account;
+  - pre-checkout, successful payment, credited payment status, active
+    subscription status and duplicate-provider-event idempotency were verified;
+  - sanitized evidence was written to ignored local artifact
+    `qa_evidence/telegram_stars_sandbox.json`.
+- Production Stars mode and production charge were not run.
+
 ### 2026-06-05
 
 - Payment DB idempotency hardening added for Telegram Stars charge reuse:
@@ -510,13 +531,13 @@ staging-first actions and record why each gate remains open in this local pass.
 |---|---|---|---|---|---|---|---|---|
 | Telegram E2E smoke | `/start` through onboarding, level, theme, training, result, progress and mistake review. | Staging first; production only after explicit approval. | Manual Telegram smoke with safe staging bot credentials, staging DB, staging Redis and approved Quiz Bank smoke data; capture non-secret transcript/result. | Blocked, not run: no staging target inventory, bot token, webhook/domain evidence or protected credentials were available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local handler tests cannot prove Telegram delivery, webhook routing, real callback payloads or target DB writes. | None recorded. |
 | Quiz Bank monitoring evidence | Runtime Quiz Bank health, latency/error monitoring and protected credential path. | Staging first; production evidence before release. | `SMOKE_BASE_URL=https://<staging-domain-managed-outside-repo> RUN_QUIZ_BANK_SMOKE=1 bash scripts/ops_smoke.sh`, plus monitoring dashboard/alert evidence for Quiz Bank API. | Blocked, not run: no target Quiz Bank credentials, endpoint inventory or monitoring access was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Contract tests do not prove live availability, alert routing or production credential wiring. | None recorded. |
-| Telegram Stars payment evidence | Live test/prod payment path, invoice, pre-checkout, successful payment, idempotent credit and subscription activation. | Telegram Stars test mode first; production mode only with explicit approval. | Execute approved Stars test payment in staging with `TELEGRAM_STARS_MODE=test`; production payment evidence requires separate approval and owner sign-off. | Blocked, not run: no live Telegram payment credentials/test approval or production approval was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local payment tests cannot prove Telegram provider behavior, live pre-checkout delivery or production Stars configuration. | None recorded. |
+| Telegram Stars payment evidence | Live test-mode payment path, invoice, pre-checkout, successful payment, idempotent credit and subscription activation. Production Stars remains separate. | Telegram Stars test mode on isolated server runtime; production mode only with explicit approval. | Executed approved 1 Star Telegram Stars test invoice with `TELEGRAM_STARS_MODE=test`; validated sanitized artifact with `scripts/payment_sandbox_evidence_check.py`. | Passed for sandbox/test: invoice, pre-checkout, successful payment, charge-id hash, credited payment, active subscription and duplicate-provider-event idempotency verified. Production mode/prod charge not run. | `2026-07-16T11:50:34Z` | None for sandbox evidence. | Does not prove production Stars/prod charge; production payment still requires separate approval and owner sign-off. | Owner completed the Telegram test payment. |
 
-Monetization production readiness remains blocked until Telegram Stars sandbox
-or approved live evidence proves real invoice payload delivery, pre-checkout
-delivery, `telegram_payment_charge_id` presence, successful payment delivery and
-active subscription crediting. Green local tests are not sufficient for this
-gate.
+Monetization sandbox readiness is closed for Telegram Stars test mode. Production
+payment readiness remains blocked until an explicitly approved production Stars
+procedure is run, or the owner decides that sandbox evidence is sufficient for
+launch without a production charge. Green local tests alone are not sufficient
+for this gate.
 | Active monitoring | Bot, DB, Redis, Quiz Bank API, payments, subscriptions, logs and backups. | Staging first; production before release. | Verify target dashboards/alerts and run non-mutating health checks from `docs/20_operations_deployment_runbook.md`. | Blocked, not run: no monitoring system access or target environment inventory was available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Monitoring artifacts in repo do not prove active alerting, retention, routing or operator visibility. | None recorded. |
 | Production backup configured | Encrypted, access-controlled PostgreSQL backup in target storage. | Production, after explicit approval. | `APP_ENV=production BACKUP_ENCRYPTION=age bash scripts/postgres_backup.sh` from protected target environment; verify restricted backup path/access without printing secrets. | Blocked, not run: production DB, backup storage, encryption recipient/key and production approval were not available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local backup script evidence does not prove target encryption, retention, operator access control or storage durability. | None recorded. |
 | Target-environment backup/restore verification | Restore latest target backup into disposable non-production DB and verify schema/idempotency checks. | Staging or disposable target restore DB; never production restore target. | `RESTORE_CONFIRM_NON_PRODUCTION=I_UNDERSTAND_THIS_IS_NOT_PRODUCTION bash scripts/postgres_restore_verify.sh` using target backup and disposable restore DB. | Blocked, not run: no target backup artifact, restore DB or backup access credentials were available. | `2026-05-26T19:34:37Z` | Not applicable; command/action was not executed. | Local disposable restore evidence does not prove target backup decryptability, restore access or target-data integrity. | None recorded. |

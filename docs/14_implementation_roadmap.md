@@ -509,13 +509,14 @@ Status rule:
 - `[ ]` means still open for Full Production because external staging/production
   evidence is missing.
 
-Current evidence status at `2026-06-04`: isolated server runtime evidence exists
+Current evidence status at `2026-07-16`: isolated server runtime evidence exists
 for `/opt/deutsch-trainer-bot`, including isolated DB migrations, protected
 Quiz Bank env presence, live Telegram `/start -> menu -> quiz -> question ->
-answer -> result` proof, and local QA. Full production gates below remain `[ ]`
+answer -> result` proof, live Telegram Stars sandbox payment proof and local QA.
+Full production gates below remain `[ ]`
 where webhook-or-approved-polling mode, GitHub/release provenance, Telegram
-Stars proof, backup/restore, rollback, monitoring or production smoke evidence
-is still missing. Detailed evidence records are tracked in
+Stars production-mode approval, backup/restore, rollback, monitoring or
+production smoke evidence is still missing. Detailed evidence records are tracked in
 `docs/15_roadmap_execution_log.md`.
 
 - [ ] Bot works end-to-end from `/start` to onboarding, level, theme, training, result, progress and mistake review. Isolated live Telegram quiz flow passed; staging/production closure still requires the approved target runtime.
@@ -526,7 +527,7 @@ is still missing. Detailed evidence records are tracked in
 - [x] Database schema supports users, sessions, session items, answers, progress, history, mistakes, subscriptions, payments, limits, analytics and API errors. Runtime PostgreSQL verification passed for current schema.
 - [x] Answer processing is idempotent. Covered by duplicate answer, duplicate Telegram update and unique answer tests.
 - [x] Payment credit is idempotent. Covered by duplicate provider event and provider reference reuse tests.
-- [ ] Payments tested with Telegram Stars test/prod configuration as approved. Local Stars payload/provider validation passed; live Telegram Stars test/prod evidence is still required.
+- [x] Payments tested with Telegram Stars test configuration as approved. Local Stars payload/provider validation passed; live Telegram Stars sandbox evidence passed on `2026-07-16` with a 1 Star test invoice, pre-checkout, successful payment, credited subscription and duplicate-provider-event proof. Production Stars/prod charge was not run and still requires separate explicit approval before production launch.
 - [x] Subscriptions tested for Free, Plus, Pro, pending, active, expired and renewal. Covered by entitlement, subscription and payment QA gates.
 - [x] Progress tested for accuracy, coverage, stability, weakness, recency and topic status. Covered by progress model/service/repository and integration tests.
 - [x] Mistakes tested for creation, repeat, improved, resolved and reopened states. Covered by mistakes service/repository and training mistakes integration tests.
