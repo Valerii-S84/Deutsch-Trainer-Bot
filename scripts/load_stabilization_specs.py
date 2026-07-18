@@ -91,7 +91,12 @@ def _default_app_service() -> ServiceSpec:
     return ServiceSpec(
         runner="docker",
         replicas=1,
-        command=["python", "-m", "app.main", "serve-webhook"],
+        command=[
+            "python", "-m", "uvicorn", "app.runtime.webhook_ingress_asgi:create_app",
+            "--factory", "--host", "0.0.0.0", "--port", "{listen_port}",
+            "--backlog", "8192", "--loop", "uvloop", "--http", "httptools",
+            "--no-access-log",
+        ],
         env={
             "BOT_WEBHOOK_ENABLED": "True",
             "BOT_FAKE_API_ENABLED": "True",
@@ -103,6 +108,9 @@ def _default_app_service() -> ServiceSpec:
             "TELEGRAM_WEBHOOK_PATH": "/telegram/webhook",
             "SECURITY_STATE_BACKEND": "redis",
             "SECURITY_RATE_LIMIT_ENABLED": "True",
+            "WEBHOOK_INGRESS_BACKEND": "redis_stream",
+            "TRAINING_ANSWER_CACHE_ENABLED": "True",
+            "TRAINING_ANSWER_WRITE_BEHIND_ENABLED": "True",
         },
         build=DockerBuildSpec(context="."),
         listen_port=8080,
@@ -114,11 +122,16 @@ def _default_worker_service() -> ServiceSpec:
     return ServiceSpec(
         runner="docker",
         replicas=1,
-        command=["python", "-m", "app.workers.run_outbox"],
+        command=["python", "-m", "app.workers.run_webhook_ingress", "--with-outbox-worker"],
         env={
             "SECURITY_STATE_BACKEND": "redis",
             "SECURITY_RATE_LIMIT_ENABLED": "True",
+            "WEBHOOK_INGRESS_BACKEND": "redis_stream",
+            "TRAINING_ANSWER_CACHE_ENABLED": "True",
+            "TRAINING_ANSWER_WRITE_BEHIND_ENABLED": "True",
             "BOT_FAKE_API_ENABLED": "True",
+            "ANSWER_PERSIST_BATCH_SIZE": "250",
+            "ANSWER_PERSIST_FLUSH_INTERVAL_MS": "50",
         },
         build=DockerBuildSpec(context="."),
     )
@@ -183,7 +196,10 @@ def _resolve_ingress(raw: Any, default: ServiceSpec | None) -> ServiceSpec | Non
     fallback = default or ServiceSpec(
         runner="process", replicas=1, command=[], listen_port=8081, ready_path="/health",
     )
-    return service_spec_from_raw(raw, fallback)
+    ingress = service_spec_from_raw(raw, fallback)
+    if str(raw.get("runner", fallback.runner)) == "docker" and "command" not in raw:
+        ingress.command = []
+    return ingress
 
 
 def _resolve_side_worker(

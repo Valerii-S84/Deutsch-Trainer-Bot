@@ -17,6 +17,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 QA_EVIDENCE_DIR = ROOT / "qa_evidence"
+TERMINATE_SIGNAL = getattr(signal, "SIGTERM", signal.SIGINT)
+KILL_SIGNAL = getattr(signal, "SIGKILL", TERMINATE_SIGNAL)
 DEFAULT_POSTGRES_IMAGE = os.environ.get("DTB_LOAD_POSTGRES_IMAGE", "postgres:16-alpine")
 DEFAULT_REDIS_IMAGE = os.environ.get("DTB_LOAD_REDIS_IMAGE", "redis:7-alpine")
 DEFAULT_PGBOUNCER_IMAGE = os.environ.get("DTB_LOAD_PGBOUNCER_IMAGE", "edoburu/pgbouncer:latest")
@@ -243,11 +245,11 @@ def run_process(
         stdout, stderr = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
         timed_out = True
-        _signal_process_tree(process, signal.SIGTERM)
+        _signal_process_tree(process, TERMINATE_SIGNAL)
         try:
             stdout, stderr = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:
-            _signal_process_tree(process, signal.SIGKILL)
+            _signal_process_tree(process, KILL_SIGNAL)
             stdout, stderr = process.communicate(timeout=5)
     return ProcessResult(
         argv=list(argv),
@@ -306,13 +308,19 @@ def run_command_spec(
 def _signal_process_tree(process: subprocess.Popen[str], sig: int) -> None:
     if process.poll() is not None:
         return
-    try:
-        os.killpg(process.pid, sig)
-    except (OSError, ProcessLookupError):
+    if hasattr(os, "killpg"):
         try:
-            process.send_signal(sig)
-        except (OSError, ProcessLookupError):
+            os.killpg(process.pid, sig)
             return
+        except (OSError, ProcessLookupError):
+            pass
+    try:
+        if sig == KILL_SIGNAL:
+            process.kill()
+        else:
+            process.send_signal(sig)
+    except (OSError, ProcessLookupError):
+        return
 
 
 def get_nested_value(payload: Any, path: str) -> int | float | None:

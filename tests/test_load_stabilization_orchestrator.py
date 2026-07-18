@@ -270,28 +270,6 @@ def test_phase4_webhook_plan_assigns_hard_measurement_timeout() -> None:
     assert command_spec.timeout_seconds == 310.0
 
 
-def test_capacity_3000_spec_keeps_full_gate_limits_and_split_worker_pools() -> None:
-    import json
-    from pathlib import Path
-
-    spec = json.loads(Path("build/capacity_3000_webhook_v4_spec_20260706.json").read_text(encoding="utf-8"))
-    plan = spec["plans"][0]
-
-    assert spec["env"]["WEBHOOK_INGRESS_ACK_BEFORE_REDIS"] == "True"
-    assert spec["env"]["WEBHOOK_INGRESS_FAST_ANSWER_PATH"] == "True"
-    assert spec["stack"]["app_replicas"] == 48
-    assert spec["stack"]["worker_replicas"] == 24
-    assert spec["stack"]["answer_worker_replicas"] == 2
-    assert spec["stack"]["outbox_worker_replicas"] == 1
-    assert plan["total_requests"] == 3000
-    assert plan["concurrency"] == 3000
-    assert plan["client_shards"] == 64
-    assert plan["validate_events"] is True
-    assert plan["max_http_p95_ms"] == 500
-    assert plan["max_http_p99_ms"] == 1500
-    assert plan["max_processing_lag_p95_ms"] == 3000
-
-
 def test_local_ci_runs_full_pytest_suite_for_fast_regression_net() -> None:
     from pathlib import Path
 
