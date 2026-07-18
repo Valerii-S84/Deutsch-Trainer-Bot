@@ -147,6 +147,75 @@ async def test_persist_answer_events_batches_and_is_idempotent(session_factory) 
     _assert_persisted_answer_state(answers, outbox_events, session, item)
 
 
+@pytest.mark.asyncio
+async def test_persist_answer_events_persists_many_answers_in_one_transaction(session_factory) -> None:
+    async with session_factory() as db:
+        db.add_all(_persistence_seed_rows())
+        db.add(_second_session_item())
+        await db.commit()
+
+    events = [
+        _persistable_event(),
+        replace(
+            _persistable_event(),
+            answer_event_id="update:9002",
+            telegram_update_id=9002,
+            session_item_id=12,
+            item_id="q2",
+            question_token="tok2",
+            position=2,
+            answered_count=2,
+        ),
+    ]
+    async with session_factory() as db:
+        async with db.begin():
+            await persist_answer_events(db, events)
+
+    async with session_factory() as db:
+        answers = list((await db.scalars(select(UserAnswer))).all())
+        outbox_events = list((await db.scalars(select(OutboxEvent))).all())
+        session = await db.get(QuizSession, 1)
+
+    assert len(answers) == 2
+    assert len(outbox_events) == 2
+    assert session is not None
+    assert session.answered_count == 2
+
+
+@pytest.mark.asyncio
+async def test_answer_persistence_worker_acks_only_after_successful_db_commit(monkeypatch) -> None:
+    queue = _SuccessfulQueue()
+    worker = AnswerPersistenceWorker(queue=queue, batch_size=2)
+
+    async def persist_messages(messages):
+        assert len(messages) == 2
+        assert queue.marked == []
+
+    monkeypatch.setattr(worker, "_persist_messages", persist_messages)
+
+    processed = await worker.process_once()
+
+    assert processed == 2
+    assert queue.marked == ["1-0", "2-0"]
+
+
+@pytest.mark.asyncio
+async def test_answer_persistence_worker_retries_each_message_after_transient_db_error(monkeypatch) -> None:
+    queue = _SuccessfulQueue()
+    worker = AnswerPersistenceWorker(queue=queue, batch_size=2, max_attempts=3)
+
+    async def fail_persist(_messages):
+        raise RuntimeError("db temporarily unavailable")
+
+    monkeypatch.setattr(worker, "_persist_messages", fail_persist)
+
+    processed = await worker.process_once()
+
+    assert processed == 0
+    assert queue.retried == ["1-0", "2-0"]
+    assert queue.marked == []
+
+
 def _persistence_seed_rows() -> list[object]:
     return [
         User(id=1, telegram_user_id=700001),
@@ -292,6 +361,31 @@ class _RetryQueue:
         raise AssertionError("failed batch must not be acked")
 
 
+class _SuccessfulQueue:
+    def __init__(self) -> None:
+        self.messages = [
+            AnswerPersistenceMessage("1-0", "update:9001", _event_payload(9001), 1, 0),
+            AnswerPersistenceMessage("2-0", "update:9002", _event_payload(9002), 1, 0),
+        ]
+        self.marked: list[str] = []
+        self.retried: list[str] = []
+
+    async def claim_stale(self, **_kwargs):
+        return []
+
+    async def read_batch(self, **_kwargs):
+        messages = self.messages
+        self.messages = []
+        return messages
+
+    async def retry_or_dead(self, message, **_kwargs):
+        self.retried.append(message.message_id)
+        return True
+
+    async def mark_persisted(self, messages):
+        self.marked.extend(message.message_id for message in messages)
+
+
 def _pending_payload() -> QuizQuestionPayload:
     return QuizQuestionPayload(
         session_id=1,
@@ -368,3 +462,23 @@ def _persistable_event() -> PersistableAnswerEvent:
         correct_answers=0,
         total_questions=5,
     )
+
+
+def _second_session_item() -> TrainingSessionItem:
+    return TrainingSessionItem(
+        id=12,
+        session_id=1,
+        user_id=1,
+        question_reference_id=1,
+        item_id="q2",
+        position=2,
+        status="shown",
+    )
+
+
+def _event_payload(update_id: int) -> dict[str, object]:
+    return {
+        **asdict(_persistable_event()),
+        "answer_event_id": f"update:{update_id}",
+        "telegram_update_id": update_id,
+    }

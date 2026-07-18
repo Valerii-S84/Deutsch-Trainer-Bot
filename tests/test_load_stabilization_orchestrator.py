@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import argparse
+import asyncio
+from collections import Counter
 import sys
 
 from scripts.load_stabilization_orchestrator import (
@@ -9,6 +12,8 @@ from scripts.load_stabilization_orchestrator import (
     phase2_variants,
     phase4_variants,
     phase4_plan_command,
+    _finish_sampler_task,
+    _webhook_acceptance,
 )
 from scripts.load_stabilization_common import CommandSpec, run_command_spec
 from scripts.load_stabilization_support import wait_for_http
@@ -265,6 +270,36 @@ def test_phase4_webhook_plan_assigns_hard_measurement_timeout() -> None:
     assert command_spec.timeout_seconds == 310.0
 
 
+def test_capacity_3000_spec_keeps_full_gate_limits_and_split_worker_pools() -> None:
+    import json
+    from pathlib import Path
+
+    spec = json.loads(Path("build/capacity_3000_webhook_v4_spec_20260706.json").read_text(encoding="utf-8"))
+    plan = spec["plans"][0]
+
+    assert spec["env"]["WEBHOOK_INGRESS_ACK_BEFORE_REDIS"] == "True"
+    assert spec["env"]["WEBHOOK_INGRESS_FAST_ANSWER_PATH"] == "True"
+    assert spec["stack"]["app_replicas"] == 48
+    assert spec["stack"]["worker_replicas"] == 24
+    assert spec["stack"]["answer_worker_replicas"] == 2
+    assert spec["stack"]["outbox_worker_replicas"] == 1
+    assert plan["total_requests"] == 3000
+    assert plan["concurrency"] == 3000
+    assert plan["client_shards"] == 64
+    assert plan["validate_events"] is True
+    assert plan["max_http_p95_ms"] == 500
+    assert plan["max_http_p99_ms"] == 1500
+    assert plan["max_processing_lag_p95_ms"] == 3000
+
+
+def test_local_ci_runs_full_pytest_suite_for_fast_regression_net() -> None:
+    from pathlib import Path
+
+    script = Path("scripts/local_ci.sh").read_text(encoding="utf-8")
+
+    assert "python -m pytest -q --capture=no --cov=app --cov-report=term-missing" in script
+
+
 def test_run_command_spec_timeout_records_failure_without_hanging() -> None:
     result = run_command_spec(
         CommandSpec(
@@ -308,6 +343,95 @@ def test_phase4_webhook_validation_includes_answer_persistence_queue() -> None:
     assert "--answer-persist-dead-letter-key" in command_spec.command
     assert "--answer-persist-metrics-key-prefix" in command_spec.command
     assert command_spec.context["answer_persist_stream_key"] == "dtb:answer_persist:events"
+
+
+def test_webhook_acceptance_counts_required_capacity_regression_fields() -> None:
+    acceptance = _webhook_acceptance(
+        error_total=0,
+        statuses=Counter({200: 3000}),
+        latency_summary={"p95": 365.928, "p99": 443.411, "max": 900.0},
+        event_validation={
+            "passed": True,
+            "lost_count": 0,
+            "duplicate_update_count": 0,
+            "duplicate_quiz_answer_count": 0,
+        },
+        queue_processing={
+            "drained": True,
+            "dead_letter_total": 0,
+            "lag_ms": {"p95": 1200.0},
+        },
+        args=argparse.Namespace(
+            validate_events=True,
+            max_http_p95_ms=500.0,
+            max_http_p99_ms=1500.0,
+            telegram_timeout_ms=30000.0,
+            max_processing_lag_p95_ms=3000.0,
+        ),
+    )
+
+    assert acceptance["passed"] is True
+    assert all(acceptance["criteria"].values())
+
+
+def test_webhook_acceptance_fails_on_lost_duplicate_dlq_or_latency_regression() -> None:
+    acceptance = _webhook_acceptance(
+        error_total=1,
+        statuses=Counter({200: 2999, 500: 1}),
+        latency_summary={"p95": 501.0, "p99": 1501.0, "max": 30001.0},
+        event_validation={
+            "passed": False,
+            "lost_count": 1,
+            "duplicate_update_count": 1,
+            "duplicate_quiz_answer_count": 1,
+        },
+        queue_processing={
+            "drained": False,
+            "dead_letter_total": 1,
+            "lag_ms": {"p95": 3001.0},
+        },
+        args=argparse.Namespace(
+            validate_events=True,
+            max_http_p95_ms=500.0,
+            max_http_p99_ms=1500.0,
+            telegram_timeout_ms=30000.0,
+            max_processing_lag_p95_ms=3000.0,
+        ),
+    )
+
+    assert acceptance["passed"] is False
+    assert not any(acceptance["criteria"].values())
+
+
+def test_sampler_timeout_writes_failure_marker(tmp_path, monkeypatch) -> None:
+    async def never_finishes() -> dict[str, object]:
+        await asyncio.sleep(60)
+        return {}
+
+    written = {}
+
+    def write_json(path, payload):
+        written["path"] = path
+        written["payload"] = payload
+
+    monkeypatch.setattr("scripts.load_stabilization_orchestrator.resolve_evidence_path", lambda raw: tmp_path / raw)
+    monkeypatch.setattr("scripts.load_stabilization_orchestrator.write_json", write_json)
+
+    async def run() -> dict[str, object]:
+        task = asyncio.create_task(never_finishes())
+        return await _finish_sampler_task(
+            task,
+            asyncio.Event(),
+            sampler_name="pgbouncer",
+            output_path="sampler_timeout.json",
+            stop_timeout_seconds=0.01,
+        )
+
+    summary = asyncio.run(run())
+
+    assert summary["measurement_timeout"] is True
+    assert summary["errors"] == 1
+    assert written["payload"]["summary"]["measurement_timeout"] is True
 
 
 def test_phase4_variants_include_top_level_prepare_commands() -> None:
