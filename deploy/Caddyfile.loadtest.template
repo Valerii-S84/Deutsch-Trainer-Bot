@@ -4,15 +4,14 @@
 }
 
 @@LISTEN_ADDRESS@@ {
-    log {
-        output stdout
-        format console
-    }
-
     @ingress_health path @@INGRESS_HEALTH_PATH@@
-    respond @ingress_health "ok" 200
+    handle @ingress_health {
+        respond "ok" 200
+    }
 
 @@PROXY_BLOCKS@@
 
-    respond "not found" 404
+    handle {
+        respond "not found" 404
+    }
 }

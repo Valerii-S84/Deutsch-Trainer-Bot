@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
@@ -16,6 +17,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 QA_EVIDENCE_DIR = ROOT / "qa_evidence"
+TERMINATE_SIGNAL = getattr(signal, "SIGTERM", signal.SIGINT)
+KILL_SIGNAL = getattr(signal, "SIGKILL", TERMINATE_SIGNAL)
 DEFAULT_POSTGRES_IMAGE = os.environ.get("DTB_LOAD_POSTGRES_IMAGE", "postgres:16-alpine")
 DEFAULT_REDIS_IMAGE = os.environ.get("DTB_LOAD_REDIS_IMAGE", "redis:7-alpine")
 DEFAULT_PGBOUNCER_IMAGE = os.environ.get("DTB_LOAD_PGBOUNCER_IMAGE", "edoburu/pgbouncer:latest")
@@ -99,6 +102,8 @@ class ProcessResult:
     stdout: str
     stderr: str
     duration_seconds: float
+    timed_out: bool = False
+    timeout_seconds: float | None = None
 
 
 def now_utc() -> str:
@@ -226,21 +231,34 @@ def run_process(
     timeout_seconds: float | None = None,
 ) -> ProcessResult:
     started = time.perf_counter()
-    completed = subprocess.run(
+    process = subprocess.Popen(  # noqa: S603
         list(argv),
         cwd=str(cwd),
         env=dict(env) if env is not None else None,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout_seconds,
-        check=False,
+        start_new_session=True,
     )
+    timed_out = False
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _signal_process_tree(process, TERMINATE_SIGNAL)
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            _signal_process_tree(process, KILL_SIGNAL)
+            stdout, stderr = process.communicate(timeout=5)
     return ProcessResult(
         argv=list(argv),
-        returncode=completed.returncode,
-        stdout=scrub_output(completed.stdout),
-        stderr=scrub_output(completed.stderr),
+        returncode=process.returncode if process.returncode is not None else -9,
+        stdout=scrub_output(stdout or ""),
+        stderr=scrub_output(stderr or ""),
         duration_seconds=round(time.perf_counter() - started, 3),
+        timed_out=timed_out,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -250,6 +268,8 @@ def build_command_record(result: ProcessResult, *, parser: str, parsed: Any = No
         "parser": parser,
         "returncode": result.returncode,
         "ok": result.returncode == 0 and parse_error is None,
+        "timed_out": result.timed_out,
+        "timeout_seconds": result.timeout_seconds,
         "duration_seconds": result.duration_seconds,
         "stdout_sha256": sha256_text(result.stdout),
         "stderr_sha256": sha256_text(result.stderr),
@@ -272,18 +292,35 @@ def run_command_spec(
     argv = [format_template(arg, context) for arg in spec.command]
     env = dict(base_env)
     env.update({key: format_template(value, context) for key, value in spec.env.items()})
-    result = run_process(argv, env=env, cwd=cwd)
+    result = run_process(argv, env=env, cwd=cwd, timeout_seconds=spec.timeout_seconds)
     parsed: Any = None
     parse_error: str | None = None
-    if result.returncode == 0:
-        try:
-            parsed = parse_stdout(result.stdout, spec.parser)
-        except Exception as exc:  # noqa: BLE001
-            parse_error = f"{exc.__class__.__name__}: {exc}"
+    try:
+        parsed = parse_stdout(result.stdout, spec.parser)
+    except Exception as exc:  # noqa: BLE001
+        parse_error = f"{exc.__class__.__name__}: {exc}"
     record = build_command_record(result, parser=spec.parser, parsed=parsed, parse_error=parse_error)
     record["name"] = spec.name
     record["compare_paths"] = list(spec.compare_paths)
     return record
+
+
+def _signal_process_tree(process: subprocess.Popen[str], sig: int) -> None:
+    if process.poll() is not None:
+        return
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(process.pid, sig)
+            return
+        except (OSError, ProcessLookupError):
+            pass
+    try:
+        if sig == KILL_SIGNAL:
+            process.kill()
+        else:
+            process.send_signal(sig)
+    except (OSError, ProcessLookupError):
+        return
 
 
 def get_nested_value(payload: Any, path: str) -> int | float | None:

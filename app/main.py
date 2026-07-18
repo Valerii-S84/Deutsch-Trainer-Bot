@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 
-from app.config import Settings, get_settings
+from app.config import Settings, WebhookIngressBackend, get_settings
 from app.db.models import OutboxEvent
 from app.db.session import dispose_engine, measure_pool_wait_ms
 from app.db.session import AsyncSessionLocal
@@ -28,6 +28,8 @@ from app.repositories.outbox import OUTBOX_DEAD, OUTBOX_FAILED, OUTBOX_PENDING, 
 from app.runtime.backpressure import BackpressureMonitor, global_backpressure_monitor
 from app.runtime.driver_profiling import install_driver_profiling
 from app.runtime.webhook_handler import ProfiledSimpleRequestHandler
+from app.runtime.webhook_ingress_handler import FastWebhookIngressHandler
+from app.runtime.webhook_ingress_queue import WebhookIngressQueue, WebhookIngressQueueError, WebhookIngressQueueSettings
 from app.runtime.webhook_profiling import (
     create_webhook_profile_collector_from_env,
     install_aiogram_webhook_profiling,
@@ -39,6 +41,7 @@ logger = logging.getLogger(__name__)
 # Container health and webhook endpoints must be reachable inside Docker.
 WEBHOOK_BIND_HOST = os.environ.get("WEBHOOK_BIND_HOST", "0.0.0.0")  # nosec B104
 WEBHOOK_BIND_PORT = int(os.environ.get("WEBHOOK_BIND_PORT", "8080"))
+WEBHOOK_LISTEN_BACKLOG = int(os.environ.get("WEBHOOK_LISTEN_BACKLOG", "4096"))
 READY_DB_POOL_WAIT_UNHEALTHY_MS = 200.0
 READY_REDIS_LATENCY_UNHEALTHY_MS = 50.0
 READY_WORKER_LAG_UNHEALTHY_SECONDS = 120.0
@@ -68,6 +71,22 @@ def create_bot(token: str) -> Bot:
     if getattr(settings, "bot_fake_api_enabled", False):
         return Bot(token=token, session=FakeTelegramSession())
     return Bot(token=token)
+
+
+def create_webhook_ingress_queue(settings: Settings, redis_client: Redis) -> WebhookIngressQueue:
+    """Create Redis Stream backed Telegram webhook ingress queue."""
+    return WebhookIngressQueue(
+        redis_client,
+        WebhookIngressQueueSettings(
+            stream_key=settings.webhook_ingress_stream_key,
+            group_name=settings.webhook_ingress_group_name,
+            dead_letter_key=settings.webhook_ingress_dead_letter_key,
+            dedupe_key_prefix=settings.webhook_ingress_dedupe_key_prefix,
+            metrics_key_prefix=settings.webhook_ingress_metrics_key_prefix,
+            dedupe_ttl_seconds=settings.telegram_duplicate_update_ttl_seconds,
+            processing_lag_sample_size=settings.webhook_ingress_processing_lag_sample_size,
+        ),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,6 +122,8 @@ async def readiness_check(request: web.Request) -> web.Response:
 
     if request.app.get("outbox_readiness_enabled", False):
         status_code = _merge_status(status_code, await _outbox_readiness(checks))
+    if request.app.get("webhook_ingress_readiness_enabled", False):
+        status_code = _merge_status(status_code, await _webhook_ingress_readiness(request, checks))
 
     status = "ok" if status_code == 200 else "unavailable"
     return web.json_response({"status": status, "checks": checks}, status=status_code)
@@ -178,6 +199,40 @@ async def _outbox_readiness(checks: dict[str, object]) -> int:
         return 503
 
 
+async def _webhook_ingress_readiness(request: web.Request, checks: dict[str, object]) -> int:
+    queue = request.app.get("webhook_ingress_queue")
+    settings = get_settings()
+    if not isinstance(queue, WebhookIngressQueue):
+        checks["webhook_ingress"] = {"status": "unavailable"}
+        return 503
+    try:
+        stats = await queue.stats()
+    except WebhookIngressQueueError as exc:
+        logger.warning("readiness webhook ingress check failed: %s", exc)
+        checks["webhook_ingress"] = {"status": "unavailable"}
+        return 503
+
+    if stats.dead_letter_length > 0:
+        status = "unavailable"
+    elif stats.oldest_lag_ms > settings.webhook_ingress_queue_lag_unhealthy_ms:
+        status = "saturated"
+    else:
+        status = "ok"
+    checks["webhook_ingress"] = {
+        "status": status,
+        "queue_depth": stats.queue_depth,
+        "stream_length": stats.stream_length,
+        "pending": stats.pending,
+        "lag": stats.lag,
+        "oldest_lag_ms": stats.oldest_lag_ms,
+        "dead_letter_length": stats.dead_letter_length,
+        "processed_total": stats.processed_total,
+        "failed_total": stats.failed_total,
+        "dead_total": stats.dead_total,
+    }
+    return 200 if status == "ok" else 503
+
+
 async def _outbox_status_count(db, status: str) -> int:
     query = select(func.count()).select_from(OutboxEvent).where(OutboxEvent.status == status)
     return int((await db.scalar(query)) or 0)
@@ -207,6 +262,7 @@ def create_webhook_app(
     redis_client: Redis | None = None,
 ) -> web.Application:
     """Create an aiohttp app that forwards Telegram webhook updates to aiogram."""
+    settings = get_settings()
     app = web.Application()
     webhook_profiler = create_webhook_profile_collector_from_env()
     app["redis_client"] = redis_client
@@ -214,25 +270,41 @@ def create_webhook_app(
     app["outbox_readiness_enabled"] = True
     app.router.add_get("/health", health_check)
     app.router.add_get("/ready", readiness_check)
-    request_handler_cls = SimpleRequestHandler
-    request_handler_kwargs: dict[str, object] = {}
-    if webhook_profiler.enabled:
+    if webhook_profiler.enabled and settings.webhook_ingress_backend == WebhookIngressBackend.direct:
         install_aiogram_webhook_profiling()
         install_driver_profiling()
         webhook_profiler.start()
         app["webhook_profiler"] = webhook_profiler
         app.on_shutdown.append(_close_webhook_profiler)
-        request_handler_cls = ProfiledSimpleRequestHandler
-        request_handler_kwargs["profiler"] = webhook_profiler
-    request_handler_cls(
-        dispatcher=dispatcher,
-        bot=bot,
-        handle_in_background=handle_in_background,
-        secret_token=webhook_secret,
-        **request_handler_kwargs,
-    ).register(app, path=webhook_path)
+    if settings.webhook_ingress_backend == WebhookIngressBackend.redis_stream:
+        if redis_client is None:
+            raise RuntimeError("Redis client is required for WEBHOOK_INGRESS_BACKEND=redis_stream")
+        queue = create_webhook_ingress_queue(settings, redis_client)
+        app["webhook_ingress_queue"] = queue
+        app["webhook_ingress_readiness_enabled"] = True
+        app.on_startup.append(_ensure_webhook_ingress_group)
+        FastWebhookIngressHandler(queue=queue, secret_token=webhook_secret).register(app, path=webhook_path)
+    else:
+        request_handler_cls = SimpleRequestHandler
+        request_handler_kwargs: dict[str, object] = {}
+        if webhook_profiler.enabled:
+            request_handler_cls = ProfiledSimpleRequestHandler
+            request_handler_kwargs["profiler"] = webhook_profiler
+        request_handler_cls(
+            dispatcher=dispatcher,
+            bot=bot,
+            handle_in_background=handle_in_background,
+            secret_token=webhook_secret,
+            **request_handler_kwargs,
+        ).register(app, path=webhook_path)
     setup_application(app, dispatcher, bot=bot)
     return app
+
+
+async def _ensure_webhook_ingress_group(app: web.Application) -> None:
+    queue = app.get("webhook_ingress_queue")
+    if isinstance(queue, WebhookIngressQueue):
+        await queue.ensure_group()
 
 
 def create_webhook_config(settings) -> WebhookRuntimeConfig:
@@ -285,7 +357,12 @@ async def run_webhook(
     )
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host=WEBHOOK_BIND_HOST, port=WEBHOOK_BIND_PORT)
+    site = web.TCPSite(
+        runner,
+        host=WEBHOOK_BIND_HOST,
+        port=WEBHOOK_BIND_PORT,
+        backlog=WEBHOOK_LISTEN_BACKLOG,
+    )
     try:
         await site.start()
         logger.info("Webhook server is listening on %s:%s", WEBHOOK_BIND_HOST, WEBHOOK_BIND_PORT)
@@ -379,8 +456,13 @@ async def _close_webhook_profiler(app: web.Application) -> None:
 
 
 def _uses_redis_runtime(settings) -> bool:
-    return _uses_redis_security_state(settings) or bool(
-        getattr(settings, "local_catalog_cache_enabled", False)
+    ingress_backend = getattr(settings, "webhook_ingress_backend", WebhookIngressBackend.direct)
+    return (
+        _uses_redis_security_state(settings)
+        or ingress_backend == WebhookIngressBackend.redis_stream
+        or bool(getattr(settings, "local_catalog_cache_enabled", False))
+        or bool(getattr(settings, "training_answer_cache_enabled", False))
+        or bool(getattr(settings, "training_answer_write_behind_enabled", False))
     )
 
 

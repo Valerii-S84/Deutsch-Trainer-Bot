@@ -49,6 +49,7 @@ from app.services.training_payloads import (
     NoMoreQuestionsError,
     QuestionStateError,
 )
+from app.services.training_answer_cache import cache_pending_question_if_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,7 @@ async def send_question(message: Message, question: Any) -> None:
         reply_markup=build_question_options_keyboard(question),
         parse_mode="Markdown",
     )
+    await cache_pending_question_if_enabled(question)
 
 
 async def send_answer_result(message: Message, result: AnswerResult) -> None:

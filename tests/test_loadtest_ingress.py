@@ -27,8 +27,11 @@ def test_render_caddyfile_includes_all_replica_targets_and_health_checks() -> No
     assert rendered.count("to 127.0.0.1:8082") == 2
     assert "@upstream_ready path /ready" in rendered
     assert "@telegram_webhook path /telegram/webhook" in rendered
-    assert "health_uri /ready" in rendered
+    assert "handle @telegram_webhook" in rendered
     assert "unhealthy_status 5xx" in rendered
+    assert "health_uri" not in rendered
+    assert "keepalive 2m" in rendered
+    assert "\n    log {" not in rendered
 
 
 def test_parse_targets_rejects_duplicates() -> None:
@@ -61,7 +64,7 @@ def test_main_writes_rendered_file_from_targets_json(tmp_path) -> None:
     assert exit_code == 0
     rendered = output_path.read_text(encoding="utf-8")
     assert "127.0.0.1:9090 {" in rendered
-    assert rendered.count("reverse_proxy @") == 2
+    assert rendered.count("reverse_proxy {") == 2
 
 
 def test_main_prints_config_to_stdout(capsys) -> None:
@@ -77,6 +80,9 @@ def test_main_dispatches_serve_mode(monkeypatch) -> None:
     async def fake_run(args) -> int:
         assert args.listen_port == 9080
         assert args.upstream_url == ["http://127.0.0.1:8081"]
+        assert args.upstream_connection_limit == 0
+        assert args.upstream_connection_limit_per_host == 0
+        assert args.listen_backlog == 4096
         return 7
 
     monkeypatch.setattr("scripts.loadtest_ingress.run_ingress_server", fake_run)

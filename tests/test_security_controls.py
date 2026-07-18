@@ -235,6 +235,8 @@ def test_hardening_runtime_defaults_are_bounded() -> None:
     assert settings.db_pool_timeout == 5.0
     assert settings.db_pool_recycle == 1800
     assert settings.db_pool_pre_ping is True
+    assert settings.db_pgbouncer_reuse_app_connections is False
+    assert settings.redis_warmup_connections == 0
 
 
 def test_pgbouncer_backend_clamps_effective_in_flight_limit_below_client_cap() -> None:
@@ -254,6 +256,7 @@ def test_multi_instance_pgbouncer_budget_exposes_shared_and_local_limits() -> No
         DB_CONNECTION_BACKEND="pgbouncer_transaction",
         DB_PGBOUNCER_MAX_CLIENT_CONN=200,
         DB_PGBOUNCER_CLIENT_HEADROOM=32,
+        DB_PGBOUNCER_REUSE_APP_CONNECTIONS=False,
         DB_APP_REPLICA_COUNT=4,
         DB_WORKER_REPLICA_COUNT=2,
         DB_WORKER_CLIENT_BUDGET_PER_REPLICA=5,
@@ -333,6 +336,9 @@ def test_production_secrets_do_not_require_legacy_quiz_bank_credentials() -> Non
         bot_token="123:ABC",
         telegram_webhook_url="https://bot.example.test",
         telegram_webhook_secret="webhook-secret",
+        WEBHOOK_INGRESS_BACKEND="redis_stream",
+        TRAINING_ANSWER_CACHE_ENABLED=True,
+        TRAINING_ANSWER_WRITE_BEHIND_ENABLED=True,
         TELEGRAM_STARS_MODE="prod",
     )
 
@@ -354,6 +360,9 @@ def test_production_requires_telegram_stars_prod_mode() -> None:
         quiz_bank_edge_api_key="edge-key",
         quiz_bank_consumer_id="deutsch-trainer-bot",
         quiz_bank_consumer_api_key="consumer-key",
+        WEBHOOK_INGRESS_BACKEND="redis_stream",
+        TRAINING_ANSWER_CACHE_ENABLED=True,
+        TRAINING_ANSWER_WRITE_BEHIND_ENABLED=True,
         TELEGRAM_STARS_MODE="test",
     )
 

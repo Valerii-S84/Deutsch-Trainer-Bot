@@ -22,6 +22,7 @@ def create_engine(
     pool_size: int | None = None,
     max_overflow: int | None = None,
     pool_timeout: float | None = None,
+    use_queue_pool_for_pgbouncer: bool = False,
 ) -> AsyncEngine:
     """Create the async DB engine with runtime pool settings."""
 
@@ -33,7 +34,7 @@ def create_engine(
     if not database_url.startswith("sqlite"):
         if settings.db_connection_backend == DbConnectionBackend.pgbouncer_transaction:
             engine_kwargs.update(connect_args=_pgbouncer_connect_args())
-            if settings.db_pgbouncer_uses_null_pool:
+            if settings.db_pgbouncer_uses_null_pool and not use_queue_pool_for_pgbouncer:
                 engine_kwargs.update(poolclass=NullPool)
             else:
                 engine_kwargs.update(
@@ -84,6 +85,7 @@ _worker_engine = create_engine(
     pool_size=_settings.worker_db_pool_size,
     max_overflow=_settings.worker_db_max_overflow,
     pool_timeout=_settings.worker_db_pool_timeout,
+    use_queue_pool_for_pgbouncer=True,
 )
 
 AsyncSessionLocal = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)

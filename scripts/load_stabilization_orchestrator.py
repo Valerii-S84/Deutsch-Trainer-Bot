@@ -540,5 +540,13 @@ from scripts.load_stabilization_webhook_load import (
 )
 from scripts.load_stabilization_cli import build_parser, main
 
+def _install_uvloop_if_available() -> None:
+    try:
+        import uvloop
+    except ImportError:
+        return
+    uvloop.install()
+
+
 if __name__ == "__main__":
     main()

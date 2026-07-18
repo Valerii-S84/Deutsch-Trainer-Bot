@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 from urllib.parse import urlsplit
 
-from aiohttp import ClientError, ClientSession, ClientTimeout, web
+from aiohttp import ClientError, ClientSession, ClientTimeout, TCPConnector, web
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,15 +23,15 @@ DEFAULT_WEBHOOK_PATH = "/telegram/webhook"
 DEFAULT_LB_POLICY = "round_robin"
 DEFAULT_LB_TRY_DURATION = "5s"
 DEFAULT_LB_TRY_INTERVAL = "250ms"
-DEFAULT_HEALTH_INTERVAL = "2s"
-DEFAULT_HEALTH_TIMEOUT = "2s"
-DEFAULT_HEALTH_PASSES = 1
-DEFAULT_HEALTH_FAILS = 2
-DEFAULT_HEALTH_STATUS = 200
 DEFAULT_FAIL_DURATION = "10s"
 DEFAULT_MAX_FAILS = 1
 DEFAULT_UNHEALTHY_STATUS = "5xx"
+DEFAULT_UPSTREAM_KEEPALIVE = "2m"
+DEFAULT_UPSTREAM_KEEPALIVE_INTERVAL = "30s"
 DEFAULT_UPSTREAM_TIMEOUT_SECONDS = 10.0
+DEFAULT_UPSTREAM_CONNECTION_LIMIT = 0
+DEFAULT_UPSTREAM_CONNECTION_LIMIT_PER_HOST = 0
+DEFAULT_LISTEN_BACKLOG = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,14 +48,11 @@ class IngressConfig:
     lb_policy: str = DEFAULT_LB_POLICY
     lb_try_duration: str = DEFAULT_LB_TRY_DURATION
     lb_try_interval: str = DEFAULT_LB_TRY_INTERVAL
-    health_interval: str = DEFAULT_HEALTH_INTERVAL
-    health_timeout: str = DEFAULT_HEALTH_TIMEOUT
-    health_passes: int = DEFAULT_HEALTH_PASSES
-    health_fails: int = DEFAULT_HEALTH_FAILS
-    health_status: int = DEFAULT_HEALTH_STATUS
     fail_duration: str = DEFAULT_FAIL_DURATION
     max_fails: int = DEFAULT_MAX_FAILS
     unhealthy_status: str = DEFAULT_UNHEALTHY_STATUS
+    upstream_keepalive: str = DEFAULT_UPSTREAM_KEEPALIVE
+    upstream_keepalive_interval: str = DEFAULT_UPSTREAM_KEEPALIVE_INTERVAL
 
     def validate(self) -> None:
         if not self.listen_address.strip():
@@ -67,17 +64,14 @@ class IngressConfig:
         ):
             if not value.startswith("/"):
                 raise ValueError(f"{field_name} must start with '/'")
-        for field_name, value in (
-            ("health_passes", self.health_passes),
-            ("health_fails", self.health_fails),
-            ("max_fails", self.max_fails),
-        ):
-            if value < 1:
-                raise ValueError(f"{field_name} must be >= 1")
-        if not 100 <= self.health_status <= 599:
-            raise ValueError("health_status must be a valid HTTP status code")
+        if self.max_fails < 1:
+            raise ValueError("max_fails must be >= 1")
         if not self.unhealthy_status.strip():
             raise ValueError("unhealthy_status must not be empty")
+        if not self.upstream_keepalive.strip():
+            raise ValueError("upstream_keepalive must not be empty")
+        if not self.upstream_keepalive_interval.strip():
+            raise ValueError("upstream_keepalive_interval must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,23 +156,23 @@ def render_proxy_block(
 ) -> str:
     lines = [
         f"    @{matcher_name} path {matcher_path}",
-        f"    reverse_proxy @{matcher_name} {{",
+        f"    handle @{matcher_name} {{",
+        "        reverse_proxy {",
     ]
-    lines.extend(f"        to {target.dial_address}" for target in targets)
+    lines.extend(f"            to {target.dial_address}" for target in targets)
     lines.extend(
         [
-            f"        lb_policy {config.lb_policy}",
-            f"        lb_try_duration {config.lb_try_duration}",
-            f"        lb_try_interval {config.lb_try_interval}",
-            f"        health_uri {config.ready_path}",
-            f"        health_interval {config.health_interval}",
-            f"        health_timeout {config.health_timeout}",
-            f"        health_passes {config.health_passes}",
-            f"        health_fails {config.health_fails}",
-            f"        health_status {config.health_status}",
-            f"        fail_duration {config.fail_duration}",
-            f"        max_fails {config.max_fails}",
-            f"        unhealthy_status {config.unhealthy_status}",
+            f"            lb_policy {config.lb_policy}",
+            f"            lb_try_duration {config.lb_try_duration}",
+            f"            lb_try_interval {config.lb_try_interval}",
+            f"            fail_duration {config.fail_duration}",
+            f"            max_fails {config.max_fails}",
+            f"            unhealthy_status {config.unhealthy_status}",
+            "            transport http {",
+            f"                keepalive {config.upstream_keepalive}",
+            f"                keepalive_interval {config.upstream_keepalive_interval}",
+            "            }",
+            "        }",
             "    }",
         ]
     )
@@ -235,14 +229,11 @@ def build_config_from_args(args: argparse.Namespace) -> IngressConfig:
         lb_policy=args.lb_policy,
         lb_try_duration=args.lb_try_duration,
         lb_try_interval=args.lb_try_interval,
-        health_interval=args.health_interval,
-        health_timeout=args.health_timeout,
-        health_passes=args.health_passes,
-        health_fails=args.health_fails,
-        health_status=args.health_status,
         fail_duration=args.fail_duration,
         max_fails=args.max_fails,
         unhealthy_status=args.unhealthy_status,
+        upstream_keepalive=args.upstream_keepalive,
+        upstream_keepalive_interval=args.upstream_keepalive_interval,
     )
 
 
@@ -276,9 +267,13 @@ class RoundRobinUpstreams:
         self._lock = asyncio.Lock()
 
     async def refresh(self, client: ClientSession) -> None:
+        results = await asyncio.gather(
+            *(self._probe(client, upstream) for upstream in self._upstreams),
+            return_exceptions=True,
+        )
         async with self._lock:
-            for upstream in self._upstreams:
-                self._healthy[upstream.base_url] = await self._probe(client, upstream)
+            for upstream, result in zip(self._upstreams, results, strict=True):
+                self._healthy[upstream.base_url] = result is True
 
     async def choose(self) -> UpstreamUrl | None:
         async with self._lock:
@@ -304,6 +299,7 @@ class RoundRobinUpstreams:
 
 
 async def run_ingress_server(args: argparse.Namespace) -> int:
+    _validate_ingress_args(args)
     upstreams = resolve_upstream_urls(args)
     state = RoundRobinUpstreams(
         upstreams,
@@ -388,6 +384,96 @@ async def _health_loop(
         await asyncio.sleep(args.health_interval_seconds)
 
 
+def _validate_ingress_args(args: argparse.Namespace) -> None:
+    if args.upstream_connection_limit < 0:
+        raise ValueError("upstream connection limit must be >= 0")
+    if args.upstream_connection_limit_per_host < 0:
+        raise ValueError("upstream connection limit per host must be >= 0")
+    if args.listen_backlog < 1:
+        raise ValueError("listen backlog must be >= 1")
+
+
+def _create_ingress_client(args: argparse.Namespace) -> ClientSession:
+    connector = TCPConnector(
+        limit=args.upstream_connection_limit,
+        limit_per_host=args.upstream_connection_limit_per_host,
+        enable_cleanup_closed=True,
+    )
+    return ClientSession(
+        timeout=ClientTimeout(total=args.upstream_timeout_seconds),
+        connector=connector,
+    )
+
+
+def _create_ingress_app(
+    args: argparse.Namespace,
+    *,
+    state: RoundRobinUpstreams,
+    client: ClientSession,
+) -> web.Application:
+    app = web.Application()
+    app["upstream_state"] = state
+    app["upstream_client"] = client
+    app.router.add_get(args.ingress_health_path, _ingress_health)
+    app.router.add_route("*", args.ready_path, _proxy)
+    app.router.add_route("*", args.webhook_path, _proxy)
+    return app
+
+
+async def _ingress_health(_request: web.Request) -> web.Response:
+    return web.Response(text="ok", status=200)
+
+
+async def _proxy(request: web.Request) -> web.Response:
+    state: RoundRobinUpstreams = request.app["upstream_state"]
+    client: ClientSession = request.app["upstream_client"]
+    upstream = await state.choose()
+    if upstream is None:
+        return web.Response(text="no healthy upstreams", status=503)
+    try:
+        return await _proxy_to_upstream(request, client=client, upstream=upstream)
+    except (ClientError, TimeoutError, OSError):
+        await state.mark_unhealthy(upstream)
+        return web.Response(text="upstream unavailable", status=503)
+
+
+async def _proxy_to_upstream(
+    request: web.Request,
+    *,
+    client: ClientSession,
+    upstream: UpstreamUrl,
+) -> web.Response:
+    async with client.request(
+        request.method,
+        f"{upstream.base_url}{request.path_qs}",
+        data=await request.read(),
+        headers=_forwarded_headers(request),
+        allow_redirects=False,
+    ) as response:
+        body = await response.read()
+        return web.Response(status=response.status, headers=_response_headers(response), body=body)
+
+
+async def _health_loop(args: argparse.Namespace, *, state: RoundRobinUpstreams, client: ClientSession) -> None:
+    while True:
+        await state.refresh(client)
+        await asyncio.sleep(args.health_interval_seconds)
+
+
+def _forwarded_headers(request: web.Request) -> dict[str, str]:
+    headers = {key: value for key, value in request.headers.items() if key.lower() not in {"host", "content-length"}}
+    headers["X-Forwarded-For"] = request.remote or "127.0.0.1"
+    return headers
+
+
+def _response_headers(response) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in response.headers.items()
+        if key.lower() not in {"content-length", "transfer-encoding", "connection"}
+    }
+
+
 def build_render_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Render a Caddy ingress config for local multi-instance webhook load tests."
@@ -409,14 +495,11 @@ def build_render_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lb-policy", default=DEFAULT_LB_POLICY)
     parser.add_argument("--lb-try-duration", default=DEFAULT_LB_TRY_DURATION)
     parser.add_argument("--lb-try-interval", default=DEFAULT_LB_TRY_INTERVAL)
-    parser.add_argument("--health-interval", default=DEFAULT_HEALTH_INTERVAL)
-    parser.add_argument("--health-timeout", default=DEFAULT_HEALTH_TIMEOUT)
-    parser.add_argument("--health-passes", type=int, default=DEFAULT_HEALTH_PASSES)
-    parser.add_argument("--health-fails", type=int, default=DEFAULT_HEALTH_FAILS)
-    parser.add_argument("--health-status", type=int, default=DEFAULT_HEALTH_STATUS)
     parser.add_argument("--fail-duration", default=DEFAULT_FAIL_DURATION)
     parser.add_argument("--max-fails", type=int, default=DEFAULT_MAX_FAILS)
     parser.add_argument("--unhealthy-status", default=DEFAULT_UNHEALTHY_STATUS)
+    parser.add_argument("--upstream-keepalive", default=DEFAULT_UPSTREAM_KEEPALIVE)
+    parser.add_argument("--upstream-keepalive-interval", default=DEFAULT_UPSTREAM_KEEPALIVE_INTERVAL)
     parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE_PATH)
     parser.add_argument("--output", type=Path, help="Write the rendered Caddyfile to this path.")
     return parser
@@ -441,6 +524,13 @@ def build_serve_parser() -> argparse.ArgumentParser:
     parser.add_argument("--health-interval-seconds", type=float, default=2.0)
     parser.add_argument("--health-timeout-seconds", type=float, default=2.0)
     parser.add_argument("--upstream-timeout-seconds", type=float, default=DEFAULT_UPSTREAM_TIMEOUT_SECONDS)
+    parser.add_argument("--upstream-connection-limit", type=int, default=DEFAULT_UPSTREAM_CONNECTION_LIMIT)
+    parser.add_argument(
+        "--upstream-connection-limit-per-host",
+        type=int,
+        default=DEFAULT_UPSTREAM_CONNECTION_LIMIT_PER_HOST,
+    )
+    parser.add_argument("--listen-backlog", type=int, default=DEFAULT_LISTEN_BACKLOG)
     return parser
 
 

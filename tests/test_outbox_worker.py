@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -68,6 +69,32 @@ async def test_outbox_worker_prefers_batch_path_when_available(session_factory) 
     assert processed == 1
     worker._try_process_batch.assert_awaited_once_with([batch_event])
     worker._process_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_outbox_worker_run_forever_retries_loop_error(monkeypatch, session_factory) -> None:
+    worker = OutboxWorker(session_factory=session_factory)
+    calls = 0
+    sleeps: list[float] = []
+
+    async def process_once() -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("db unavailable")
+        raise asyncio.CancelledError
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(worker, "process_once", process_once)
+    monkeypatch.setattr("app.workers.outbox.asyncio.sleep", sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_forever(idle_sleep_seconds=0.01)
+
+    assert calls == 2
+    assert sleeps == [1.0]
 
 
 def test_parse_answer_payload_reads_v2_metadata_fields() -> None:
