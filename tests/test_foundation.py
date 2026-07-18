@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 import io
 import logging
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -265,10 +264,11 @@ def test_config_loads_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret")
     monkeypatch.setenv("QUIZ_BANK_API_KEY", "quiz-key")
 
-    # force reload of module-level settings
-    import importlib
+    from app import config as config_module
 
-    config_module = importlib.reload(__import__("app.config", fromlist=["get_settings"]))
     config_module.clear_settings_cache()
-    settings = config_module.get_settings()
-    assert settings.app_env.value == "staging"
+    try:
+        settings = config_module.get_settings()
+        assert settings.app_env.value == "staging"
+    finally:
+        config_module.clear_settings_cache()

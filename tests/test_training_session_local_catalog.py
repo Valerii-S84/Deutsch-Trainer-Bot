@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from app.catalog.service import LocalCatalogQuizService
+from app.config import clear_settings_cache
 from app.quiz_bank.schemas import (
     QuizAnswerOption,
     QuizCorrectAnswerReference,
@@ -24,15 +25,19 @@ from tests.fakes.training_session import (
 
 def test_training_question_flow_uses_local_catalog_service(monkeypatch) -> None:
     monkeypatch.setenv("ACTIVE_CATALOG_ID", "cat-local")
-    fake_catalog = FakeLocalCatalogService()
+    clear_settings_cache()
 
-    question, answer_repo = asyncio.run(_run_training_round(fake_catalog))
+    try:
+        fake_catalog = FakeLocalCatalogService()
+        question, answer_repo = asyncio.run(_run_training_round(fake_catalog))
 
-    assert fake_catalog.calls == [{"catalog_id": "cat-local", "level": "A1", "theme": "T01"}]
-    assert question.metadata_snapshot["catalog_id"] == "cat-local"
-    assert answer_repo._answers[0].catalog_id == "cat-local"
-    assert answer_repo._answers[0].item_id == "local-q1"
-    assert answer_repo._answers[0].item_version == "1.0"
+        assert fake_catalog.calls == [{"catalog_id": "cat-local", "level": "A1", "theme": "T01"}]
+        assert question.metadata_snapshot["catalog_id"] == "cat-local"
+        assert answer_repo._answers[0].catalog_id == "cat-local"
+        assert answer_repo._answers[0].item_id == "local-q1"
+        assert answer_repo._answers[0].item_version == "1.0"
+    finally:
+        clear_settings_cache()
 
 
 async def _run_training_round(fake_catalog: "FakeLocalCatalogService"):
