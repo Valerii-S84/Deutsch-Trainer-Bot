@@ -11,6 +11,7 @@ from app.bot.handlers import level as level_handlers
 from app.bot.handlers import profile, start, subscription, theme
 from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.main_menu import build_main_menu_keyboard
+from app.catalog.service import LocalCatalogNotConfiguredError
 from app.bot.texts import (
     LEVEL_CALLBACK_FALLBACK_TEXT,
     PROFILE_TEXT,
@@ -23,6 +24,7 @@ from app.bot.texts import (
     UNKNOWN_MESSAGE_TEXT,
     WELCOME_TEXT,
     TRAINING_PROMPT,
+    TRAINING_NO_LEVEL_SELECTED_TEXT,
 )
 from app.quiz_bank.schemas import QuizTheme, QuizThemesResponse
 from app.quiz_bank.errors import (
@@ -286,3 +288,74 @@ async def test_fallback_callback_handler_responds() -> None:
     callback = _CallbackQuery(data="invalid:payload")
     await fallback.fallback_callback(callback)
     callback.answer.assert_awaited_once_with(UNKNOWN_CALLBACK_TEXT, show_alert=True)
+
+
+@pytest.mark.asyncio
+async def test_theme_groups_reject_unknown_level_before_catalog_lookup(monkeypatch) -> None:
+    catalog_service = _CatalogService()
+    monkeypatch.setattr(theme, "_catalog_service", lambda: catalog_service)
+
+    callback = _CallbackQuery(data="groups:ZZ")
+
+    await theme.open_theme_groups_for_level(callback)
+
+    catalog_service.get_themes.assert_not_awaited()
+    callback.message.answer.assert_awaited_once()
+    assert callback.message.answer.await_args.args[0] == TRAINING_NO_LEVEL_SELECTED_TEXT
+    assert callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard == build_levels_keyboard().inline_keyboard
+
+
+@pytest.mark.asyncio
+async def test_theme_group_rejects_tampered_payload_with_german_fallback() -> None:
+    callback = _CallbackQuery(data="group:A1:UNKNOWN")
+
+    await theme.open_theme_group(callback)
+
+    callback.message.answer.assert_awaited_once()
+    assert callback.message.answer.await_args.args[0] == theme.THEME_CALLBACK_FALLBACK_TEXT
+
+
+@pytest.mark.asyncio
+async def test_theme_group_shows_only_available_themes_for_selected_group(monkeypatch) -> None:
+    catalog_service = _CatalogService(
+        themes=[
+            QuizTheme(theme="Alltag", theme_key="T01", is_active=True, available_items_count=3),
+            QuizTheme(theme="Familie", theme_key="T02", is_active=True, available_items_count=2),
+            QuizTheme(theme="Arbeit", theme_key="T06", is_active=True, available_items_count=5),
+        ],
+    )
+    monkeypatch.setattr(theme, "_catalog_service", lambda: catalog_service)
+    monkeypatch.setattr(theme, "_session_factory", lambda: _SessionContext(_Db()))
+
+    callback = _CallbackQuery(data="group:A1:G01")
+
+    await theme.open_theme_group(callback)
+
+    callback.message.answer.assert_awaited_once()
+    text = callback.message.answer.await_args.args[0]
+    payloads = [
+        button.callback_data
+        for row in callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert "Ich & Alltag" in text
+    assert "theme:A1:T01" in payloads
+    assert "theme:A1:T02" in payloads
+    assert "theme:A1:T06" not in payloads
+    assert "groups:A1" in payloads
+
+
+@pytest.mark.asyncio
+async def test_theme_group_catalog_unavailable_uses_level_picker_recovery(monkeypatch) -> None:
+    catalog_service = _CatalogService()
+    catalog_service.get_themes.side_effect = LocalCatalogNotConfiguredError("missing catalog")
+    monkeypatch.setattr(theme, "_catalog_service", lambda: catalog_service)
+    monkeypatch.setattr(theme, "_session_factory", lambda: _SessionContext(_Db()))
+
+    callback = _CallbackQuery(data="group:A1:G01")
+
+    await theme.open_theme_group(callback)
+
+    callback.message.answer.assert_awaited_once()
+    assert callback.message.answer.await_args.args[0] == TRAINING_QUIZBANK_UNAVAILABLE_TEXT
+    assert callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard == build_levels_keyboard().inline_keyboard

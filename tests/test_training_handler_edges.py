@@ -7,10 +7,11 @@ import pytest
 
 from app.bot.handlers import training
 from app.bot.texts import PAYWALL_DAILY_LIMIT_TEXT, TRAINING_QUESTION_TEMPLATE
-from app.services.training_session import ActiveSessionNotFoundError, AnswerResult
+from app.services.training_session import ActiveSessionNotFoundError, AnswerResult, NoMoreQuestionsError
 from tests.test_training_handlers import (
     FakeDb,
     _Callback,
+    _Message,
     _daily_limit_error,
     _extract_text,
     _patch_service,
@@ -23,6 +24,69 @@ def test_theme_payload_needs_level_detects_legacy_or_empty_level_callbacks() -> 
     assert training._theme_payload_needs_level("theme::T01") is True
     assert training._theme_payload_needs_level("theme:A1:T01") is False
     assert training._theme_payload_needs_level("train:next:1:tok") is False
+
+
+@pytest.mark.asyncio
+async def test_continue_active_training_returns_false_without_active_session(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.get_active_session.return_value = None
+    _patch_service(monkeypatch, service, db)
+
+    message = _Message()
+
+    assert await training.continue_active_training_from_message(message, 111) is False
+    service.get_or_create_current_question.assert_not_awaited()
+    message.answer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_continue_active_training_sends_existing_question(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.get_active_session.return_value = SimpleNamespace(id=10)
+    service.get_or_create_current_question.return_value = _question()
+    _patch_service(monkeypatch, service, db)
+
+    message = _Message()
+
+    assert await training.continue_active_training_from_message(message, 111) is True
+    service.get_or_create_current_question.assert_awaited_once_with(db, 111, force_refresh=False)
+    assert db.committed == 1
+    assert TRAINING_QUESTION_TEMPLATE.format(position=1, total=3, question_text="Was ist korrekt?") in _extract_text(
+        message.answer.await_args
+    )
+
+
+@pytest.mark.asyncio
+async def test_continue_active_training_rolls_back_and_maps_session_error(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.get_active_session.return_value = SimpleNamespace(id=10, level="A1", theme="T01")
+    service.get_or_create_current_question.side_effect = NoMoreQuestionsError()
+    _patch_service(monkeypatch, service, db)
+
+    message = _Message()
+
+    assert await training.continue_active_training_from_message(message, 111) is True
+    assert db.rolled_back == 1
+    message.answer.assert_awaited_once()
+    assert training.TRAINING_SESSION_COMPLETED_TEXT in _extract_text(message.answer.await_args)
+
+
+@pytest.mark.asyncio
+async def test_start_saved_theme_training_sends_generic_error_on_unexpected_failure(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    service.get_active_session.side_effect = RuntimeError("db unavailable")
+    _patch_service(monkeypatch, service, db)
+
+    message = _Message()
+
+    await training.start_saved_theme_training_from_message(message, 111, level="A1", theme="T01")
+
+    assert db.rolled_back == 1
+    message.answer.assert_awaited_once_with(training.TRAINING_SESSION_ERROR_TEXT)
 
 
 @pytest.mark.asyncio

@@ -55,6 +55,7 @@ class _Message:
 
 class _Callback:
     def __init__(self, data: str | None = None, from_user_id: int = 111) -> None:
+        self.id = "callback-1"
         self.data = data
         self.message = _Message(from_user_id)
         self.from_user = self.message.from_user
