@@ -52,6 +52,7 @@ EXPECTED_TABLES = {
     "progress_history",
     "mistakes",
     "mistake_history",
+    "outbox_events",
     "recommendations",
     "daily_limits",
     "subscriptions",
@@ -114,6 +115,13 @@ REQUIRED_INDEXES = {
         "ix_mistake_history_mistake_id",
         "ix_mistake_history_item_id",
     },
+    "outbox_events": {
+        "ix_outbox_events_status_next_attempt",
+        "ix_outbox_events_status_next_attempt_created",
+        "ix_outbox_events_status_locked_at",
+        "ix_outbox_events_type_status",
+        "ix_outbox_events_aggregate",
+    },
     "recommendations": {"ix_recommendations_user_priority", "ix_recommendations_user_created"},
     "daily_limits": {"ix_daily_limits_user_date"},
     "subscriptions": {"ix_subscriptions_user_id", "ix_subscriptions_status_expires_at"},
@@ -146,6 +154,7 @@ REQUIRED_UNIQUE_CONSTRAINTS = {
         "uq_user_answers_user_session_catalog_item",
     },
     "progress": {"uq_progress_user_level_theme"},
+    "outbox_events": {"uq_outbox_events_idempotency_key"},
     "daily_limits": {"uq_daily_limits_user_date_plan"},
     "payments": {
         "uq_payments_idempotency_key",
@@ -164,6 +173,11 @@ REQUIRED_FOREIGN_KEYS = {
 REQUIRED_CHECK_CONSTRAINTS = {
     "question_references": {"ck_question_references_supported_level"},
     "training_session_items": {"ck_training_session_items_catalog_scope_complete"},
+    "outbox_events": {
+        "ck_outbox_events_status",
+        "ck_outbox_events_retry_count_non_negative",
+        "ck_outbox_events_max_retries_non_negative",
+    },
     "payments": {"ck_payments_confirmed_telegram_charge_id"},
 }
 
@@ -173,7 +187,7 @@ REQUIRED_NOT_NULL_COLUMNS = {
 
 REQUIRED_JSONB = {
     "quiz_catalogs": {"metadata"},
-    "quiz_catalog_items": {"tags", "metadata"},
+    "quiz_catalog_items": {"options", "tags", "metadata"},
     "quiz_catalog_import_runs": {"error_summary"},
     "quiz_sessions": {"source_metadata", "api_metadata"},
     "question_references": {"metadata_snapshot"},
@@ -181,6 +195,7 @@ REQUIRED_JSONB = {
     "progress_history": {"previous_scores", "new_scores", "delta"},
     "mistakes": {"source_snapshot"},
     "mistake_history": {"metadata_snapshot"},
+    "outbox_events": {"payload"},
     "recommendations": {"source_snapshot"},
     "payments": {"audit_metadata"},
     "analytics_events": {"event_metadata"},
