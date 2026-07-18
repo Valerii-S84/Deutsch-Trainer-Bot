@@ -1,0 +1,92 @@
+{
+  "generated_at_utc": "2026-07-03T11:36:39.743675+00:00",
+  "scope": "System audit of Redis client creation/reuse in app hot paths after shared-pool hardening.",
+  "runtime_policy": {
+    "shared_factory": "app/runtime/redis.py:create_redis_client",
+    "process_singleton": true,
+    "startup_warmup_setting": "REDIS_WARMUP_CONNECTIONS",
+    "default_warmup_connections": 128,
+    "shutdown_closes_lazy_shared_client": true
+  },
+  "creation_sites": [
+    {
+      "path": "app/runtime/redis.py",
+      "site": "create_redis_client(settings)",
+      "status": "shared_process_singleton",
+      "notes": "Only app factory that calls Redis.from_url; repeated calls return the registered shared client."
+    },
+    {
+      "path": "app/main.py",
+      "site": "run_bot startup",
+      "status": "shared_startup_client",
+      "notes": "Creates one shared client for Redis-backed security/local catalog cache and warms the security hot-path pool."
+    },
+    {
+      "path": "app/bot/dispatcher.py",
+      "site": "rate limiter / duplicate guard / shared admission wiring",
+      "status": "uses_injected_or_shared_client",
+      "notes": "Dispatcher reuses the runtime Redis client; no per-request client creation."
+    },
+    {
+      "path": "app/security/rate_limits.py",
+      "site": "RedisRateLimiter / RedisDuplicateUpdateGuard",
+      "status": "uses_injected_client",
+      "notes": "Rate limiter now performs one EVAL round-trip; Redis TIME is called inside Lua, not as a second client command."
+    },
+    {
+      "path": "app/runtime/idempotency_locks.py",
+      "site": "answer attempt lock",
+      "status": "uses_get_or_create_shared_client",
+      "notes": "Shared Redis lock path; file was not edited in this increment."
+    },
+    {
+      "path": "app/catalog/service.py",
+      "site": "local catalog cache",
+      "status": "uses_get_shared_client",
+      "notes": "Cache uses the process shared client when startup created it."
+    },
+    {
+      "path": "app/quiz_bank/service.py",
+      "site": "QuizBankService L2 cache",
+      "status": "uses_get_shared_client",
+      "notes": "Cache uses the process shared client; file was not edited in this increment."
+    },
+    {
+      "path": "scripts/worker_pipeline_v2_regression_isolation.py",
+      "site": "load harness RedisProbe(create_redis_client(settings))",
+      "status": "single_harness_client_per_run",
+      "notes": "Standalone harness, not production app hot path."
+    },
+    {
+      "path": "scripts/redis_runtime_check.py",
+      "site": "Redis.from_url(redis_url)",
+      "status": "standalone_runtime_smoke_excluded",
+      "notes": "One-off connectivity smoke, not request hot path."
+    }
+  ],
+  "hot_path_profile_p95_before": {
+    "command_count_p95": 2.0,
+    "command_ms_p95": 561.024,
+    "connect_ms_p95": 468.063,
+    "pool_acquire_ms_p95": 472.243,
+    "pool_new_connection_count_p95": null,
+    "read_response_ms_p95": 177.964
+  },
+  "hot_path_profile_p95_after": {
+    "command_count_p95": 1.0,
+    "command_ms_p95": 79.434,
+    "connect_ms_p95": null,
+    "pool_acquire_ms_p95": 0.086,
+    "pool_new_connection_count_p95": null,
+    "read_response_ms_p95": 79.298
+  },
+  "exit_criteria": {
+    "rate_limit_redis_connect_metric_absent_after": true,
+    "rate_limit_redis_command_count_after": 1.0,
+    "rate_limit_redis_pool_acquire_ms_after": 0.086
+  },
+  "tests": [
+    ".venv/bin/python -m pytest tests/test_runtime_redis.py tests/test_security_controls.py tests/test_load_stabilization_orchestrator.py tests/test_foundation.py -q --capture=no",
+    ".venv/bin/python -m compileall app/runtime/redis.py app/runtime/driver_profiling.py app/security/rate_limits.py app/main.py scripts/load_stabilization_orchestrator.py scripts/load_stabilization_support.py"
+  ]
+}

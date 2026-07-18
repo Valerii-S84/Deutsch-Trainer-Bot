@@ -1,0 +1,172 @@
+{
+  "migrate": true,
+  "ready_timeout_seconds": 600,
+  "env": {
+    "REDIS_MAX_CONNECTIONS": "128",
+    "REDIS_POOL_TIMEOUT_SECONDS": "1",
+    "REDIS_WARMUP_CONNECTIONS": "32",
+    "WEBHOOK_LISTEN_BACKLOG": "8192",
+    "DB_PGBOUNCER_REUSE_APP_CONNECTIONS": "False",
+    "DB_POOL_PRE_PING": "True",
+    "DB_WORKER_CLIENT_BUDGET_PER_REPLICA": "25",
+    "WEBHOOK_INGRESS_BACKEND": "redis_stream",
+    "WEBHOOK_INGRESS_ENQUEUE_BATCH_SIZE": "256",
+    "WEBHOOK_INGRESS_ENQUEUE_FLUSH_INTERVAL_MS": "1",
+    "WEBHOOK_INGRESS_ACK_BEFORE_REDIS": "True",
+    "WEBHOOK_INGRESS_FAST_ANSWER_PATH": "True",
+    "TRAINING_ANSWER_CACHE_ENABLED": "True",
+    "TRAINING_ANSWER_WRITE_BEHIND_ENABLED": "True",
+    "BOT_FAKE_API_ENABLED": "True",
+    "ANSWER_PERSIST_BATCH_SIZE": "1000",
+    "ANSWER_PERSIST_FLUSH_INTERVAL_MS": "10",
+    "ANSWER_PERSIST_PROCESSING_LAG_SAMPLE_SIZE": "10000",
+    "WEBHOOK_INGRESS_WORKER_BATCH_SIZE": "128",
+    "WEBHOOK_INGRESS_WORKER_PARALLELISM": "128",
+    "WEBHOOK_INGRESS_READ_BLOCK_MS": "10",
+    "WEBHOOK_INGRESS_PROCESSING_LAG_SAMPLE_SIZE": "10000",
+    "LOG_LEVEL": "WARNING"
+  },
+  "prepare": [
+    {
+      "name": "stack_warmup",
+      "stage": "after_stack",
+      "command": [
+        "{python}",
+        "-c",
+        "import time; time.sleep(30)"
+      ],
+      "parser": "text"
+    }
+  ],
+  "stack": {
+    "app_replicas": 48,
+    "worker_replicas": 24,
+    "answer_worker_replicas": 2,
+    "outbox_worker_replicas": 1,
+    "app": {
+      "runner": "process",
+      "command": [
+        "{python}",
+        "-m",
+        "uvicorn",
+        "app.runtime.webhook_ingress_asgi:create_app",
+        "--factory",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "{listen_port}",
+        "--backlog",
+        "8192",
+        "--loop",
+        "uvloop",
+        "--http",
+        "httptools",
+        "--no-access-log",
+        "--log-level",
+        "warning"
+      ],
+      "listen_port": 8080,
+      "ready_path": "/ready"
+    },
+    "worker": {
+      "runner": "process",
+      "command": [
+        "/usr/bin/nice",
+        "-n",
+        "10",
+        "{python}",
+        "-m",
+        "app.workers.run_webhook_ingress",
+        "--batch-size",
+        "128",
+        "--parallelism",
+        "128",
+        "--block-ms",
+        "10",
+        "--fast-answer-path",
+        "--without-answer-persistence"
+      ]
+    },
+    "answer_worker": {
+      "runner": "process",
+      "command": [
+        "{python}",
+        "-m",
+        "app.workers.run_answer_persistence",
+        "--batch-size",
+        "500",
+        "--flush-interval-ms",
+        "10",
+        "--idle-sleep-seconds",
+        "0.01"
+      ]
+    },
+    "outbox_worker": {
+      "runner": "process",
+      "command": [
+        "{python}",
+        "-m",
+        "app.workers.run_outbox",
+        "--batch-size",
+        "250",
+        "--parallelism",
+        "2",
+        "--idle-sleep-seconds",
+        "0.02"
+      ]
+    },
+    "ingress": {
+      "runner": "process",
+      "replicas": 8,
+      "command": [
+        "{python}",
+        "scripts/run_caddy_ingress.py",
+        "--image",
+        "caddy:2.8",
+        "--config",
+        "{ingress_caddyfile}"
+      ],
+      "listen_port": 9080,
+      "ready_path": "/health"
+    }
+  },
+  "plans": [
+    {
+      "name": "capacity_3000_burst",
+      "mode": "burst",
+      "total_requests": 3000,
+      "target_rps": 3000000,
+      "concurrency": 3000,
+      "burst_window_seconds": 1,
+      "burst_interval_seconds": 5,
+      "warmup_connections": 3000,
+      "warmup_path": "/health",
+      "client_shards": 64,
+      "validate_events": true,
+      "queue_drain_timeout_seconds": 180,
+      "queue_drain_poll_interval_seconds": 0.25,
+      "pgbouncer_sample_output": "qa_evidence/capacity_3000_webhook_v4_pgbouncer_20260706.json",
+      "pgbouncer_sample_interval_ms": 250,
+      "postgres_lock_sample_output": "qa_evidence/capacity_3000_webhook_v4_postgres_locks_20260706.json",
+      "postgres_lock_sample_interval_ms": 500,
+      "max_http_p95_ms": 500,
+      "max_http_p99_ms": 1500,
+      "max_processing_lag_p95_ms": 3000,
+      "telegram_timeout_ms": 30000,
+      "sampler_query_timeout_seconds": 5,
+      "sampler_stop_timeout_seconds": 15,
+      "measurement_timeout_seconds": 420
+    }
+  ],
+  "variants": [
+    {
+      "name": "caddy_process_front_proxy_8ingress_sharded_48app_24dispatch_2persist_1outbox",
+      "role": "candidate",
+      "pgbouncer": {
+        "max_client_conn": "4000",
+        "default_pool_size": "40",
+        "reserve_pool_size": "20"
+      }
+    }
+  ]
+}
