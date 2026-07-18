@@ -10,7 +10,10 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.handlers.common import extract_user_id as _extract_user_id
-from app.bot.handlers.training import continue_active_training_from_message, start_saved_theme_training_from_message
+from app.bot.handlers.training_message_flow import (
+    continue_active_training_from_message,
+    start_saved_theme_training_from_message,
+)
 from app.bot.keyboards.levels import build_levels_keyboard
 from app.bot.keyboards.main_menu import build_main_menu_keyboard, build_main_menu_text
 from app.bot.keyboards.themes import build_theme_group_keyboard
