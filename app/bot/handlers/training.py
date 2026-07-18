@@ -81,6 +81,7 @@ training_service = TrainingSessionService(
 _api_error_log_repo = ApiErrorLogRepository()
 _user_repo = UserRepository()
 _analytics_tracker = AnalyticsTracker()
+_answer_persistence_queue: AnswerPersistenceQueue | None = None
 _NEW_TRAINING_RECOVERABLE_ERRORS = (
     QuizBankAuthError,
     QuizBankRateLimitError,
@@ -94,6 +95,16 @@ _QUESTION_FLOW_RECOVERABLE_ERRORS = (
     QuestionStateError,
     *_NEW_TRAINING_RECOVERABLE_ERRORS,
 )
+
+
+def _get_answer_persistence_queue() -> AnswerPersistenceQueue:
+    global _answer_persistence_queue
+
+    settings = get_settings()
+    if _answer_persistence_queue is None:
+        redis_client = get_or_create_shared_redis_client(settings)
+        _answer_persistence_queue = create_answer_persistence_queue(settings, redis_client)
+    return _answer_persistence_queue
 
 
 async def _persist_quiz_bank_error(
@@ -424,6 +435,22 @@ async def handle_submit_answer(callback_query: CallbackQuery, event_update: Upda
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
             return
 
+        settings = get_settings()
+        if settings.training_answer_write_behind_enabled:
+            result = await _submit_write_behind_answer(
+                callback_query,
+                user_id=user_id,
+                session_id=session_id,
+                question_token=question_token,
+                selected_option=selected_option,
+                event_update=event_update,
+            )
+            if result is None:
+                return
+            with webhook_timing_span("handler.training_answer_send_result_ms"):
+                await _send_answer_result(callback_query.message, result)
+            return
+
         result = await _submit_answer_with_db(
             callback_query,
             user_id=user_id,
@@ -436,6 +463,31 @@ async def handle_submit_answer(callback_query: CallbackQuery, event_update: Upda
             return
         with webhook_timing_span("handler.training_answer_send_result_ms"):
             await _send_answer_result(callback_query.message, result)
+
+
+async def _submit_write_behind_answer(
+    callback_query: CallbackQuery,
+    *,
+    user_id: int,
+    session_id: int,
+    question_token: str,
+    selected_option: str,
+    event_update: Update | None,
+) -> Any | None:
+    try:
+        with webhook_timing_span("handler.training_answer_submit_ms"):
+            return await accept_answer_write_behind(
+                queue=_get_answer_persistence_queue(),
+                telegram_user_id=user_id,
+                session_id=session_id,
+                question_token=question_token,
+                selected_option_id=selected_option,
+                telegram_update_id=_extract_update_id(event_update),
+                callback_query_id=callback_query.id,
+            )
+    except (QuestionStateError, ActiveSessionNotFoundError, NoMoreQuestionsError) as exc:
+        await callback_query.message.answer(_map_session_error(exc))
+        return None
 
 
 async def _submit_answer_with_db(

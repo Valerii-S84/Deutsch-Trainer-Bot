@@ -23,6 +23,13 @@ class DbConnectionBackend(str, Enum):
     pgbouncer_transaction = "pgbouncer_transaction"
 
 
+class WebhookIngressBackend(str, Enum):
+    """Telegram webhook delivery strategy."""
+
+    direct = "direct"
+    redis_stream = "redis_stream"
+
+
 class _SettingsFields(BaseSettings):
     """Environment-driven settings for production-ready deployment."""
 

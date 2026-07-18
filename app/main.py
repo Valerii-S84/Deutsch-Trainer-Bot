@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 
-from app.config import Settings, get_settings
+from app.config import Settings, WebhookIngressBackend, get_settings
 from app.db.models import OutboxEvent
 from app.db.session import dispose_engine, measure_pool_wait_ms
 from app.db.session import AsyncSessionLocal

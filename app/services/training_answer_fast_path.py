@@ -142,6 +142,7 @@ async def _validate_context(
     with timing_span("answer.validate.business_logic_ms"):
         return _build_fast_path_context(
             row,
+            cached_pending=cached_pending,
             question_token=question_token,
             selected_option_id=selected_option_id,
         )
@@ -177,6 +178,7 @@ async def _fetch_session_answer_context_row(
 def _build_fast_path_context(
     row: Any | None,
     *,
+    cached_pending: QuizQuestionPayload | None,
     question_token: str,
     selected_option_id: str,
 ) -> FastPathContext:
@@ -186,10 +188,7 @@ def _build_fast_path_context(
         raise ActiveSessionNotFoundError("Session is not active")
 
     metadata = row["api_metadata"] if isinstance(row["api_metadata"], dict) else {}
-    pending_raw = metadata.get("pending_question")
-    if not isinstance(pending_raw, dict):
-        raise QuestionStateError("No active question in session")
-    pending = deserialize_question_payload(pending_raw)
+    pending = cached_pending or _pending_from_metadata(metadata)
     if pending.question_token != question_token or pending.session_id != int(row["session_id"]):
         raise QuestionStateError("Question token is stale")
     if selected_option_id not in option_ids(pending):
@@ -208,6 +207,13 @@ def _build_fast_path_context(
         correct_answer_text=pending.correct_answer_text or option_text(pending, pending.correct_answer),
         api_metadata=metadata,
     )
+
+
+def _pending_from_metadata(metadata: dict[str, object]) -> QuizQuestionPayload:
+    pending_raw = metadata.get("pending_question")
+    if not isinstance(pending_raw, dict):
+        raise QuestionStateError("No active question in session")
+    return deserialize_question_payload(pending_raw)
 
 
 async def _mark_session_item_answered(db: AsyncSession, context: FastPathContext) -> None:
