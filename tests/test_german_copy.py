@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import app.bot.texts as bot_texts
+from app.bot.theme_groups import THEME_GROUPS
 from app.bot.handlers.profile import _format_limited_progress_text, _format_progress_text
 from app.bot.handlers.subscription import _format_subscription_text
 from app.bot.handlers.training_flow import _build_completed_feedback, result_message
@@ -149,6 +150,7 @@ def iter_user_facing_copy_samples() -> tuple[tuple[str, str], ...]:
     )
     samples.extend(iter_payment_invoice_copy_samples())
     samples.extend(iter_admin_metrics_copy_samples())
+    samples.extend(iter_theme_group_copy_samples())
     samples.extend(iter_rendered_telegram_scenario_samples())
     return tuple(samples)
 
@@ -230,6 +232,10 @@ def iter_payment_invoice_copy_samples() -> tuple[tuple[str, str], ...]:
 
 def iter_admin_metrics_copy_samples() -> tuple[tuple[str, str], ...]:
     return (("admin_metrics", format_admin_metrics(_admin_metrics_snapshot())),)
+
+
+def iter_theme_group_copy_samples() -> tuple[tuple[str, str], ...]:
+    return tuple((f"theme_group.{group.group_id}", group.label) for group in THEME_GROUPS)
 
 
 def iter_rendered_telegram_scenario_samples() -> tuple[tuple[str, str], ...]:

@@ -35,6 +35,7 @@ from app.bot.texts import (
     TRAINING_SESSION_ERROR_TEXT,
 )
 from app.logging_config import log_exception_summary
+from app.bot.theme_groups import normalize_theme_id
 from app.quiz_bank.errors import (
     QuizBankAuthError,
     QuizBankError,
@@ -72,7 +73,7 @@ def parse_theme_payload(data: str | None) -> tuple[str, str]:
         raise ValueError("no level")
     if not theme:
         raise ValueError("invalid payload")
-    return level, _normalize_theme(theme)
+    return level, normalize_theme_id(theme)
 
 
 def parse_answer_payload(data: str | None) -> tuple[int, str, str]:
@@ -240,13 +241,6 @@ def quiz_bank_error_category(error: QuizBankError) -> str:
     if isinstance(error, QuizBankUnavailableError):
         return "unavailable"
     return "unknown"
-
-
-def _normalize_theme(theme: str) -> str:
-    normalized = theme.strip()
-    if not normalized:
-        raise ValueError("invalid theme")
-    return normalized
 
 
 def _question_message(position: int, total_questions: int, question_text: str) -> str:

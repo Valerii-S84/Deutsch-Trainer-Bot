@@ -11,8 +11,8 @@ from aiogram.types import Message
 from app.bot.formatting import escape_markdown_text
 from app.bot.handlers.common import session_factory as _session_factory
 from app.bot.keyboards.levels import build_levels_keyboard
-from app.bot.keyboards.main_menu import build_main_menu_keyboard
-from app.bot.texts import MENU_PROMPT, TRAINING_PROMPT, WELCOME_TEXT
+from app.bot.keyboards.main_menu import build_main_menu_keyboard, build_main_menu_text
+from app.bot.texts import TRAINING_PROMPT, WELCOME_TEXT
 from app.logging_config import log_exception_summary
 from app.services.analytics import AnalyticsTracker
 from app.repositories.users import UserRepository
@@ -78,7 +78,10 @@ async def handle_start(message: Message) -> None:
     text = WELCOME_TEXT
     if message.from_user and getattr(message.from_user, "first_name", None):
         first_name = escape_markdown_text(message.from_user.first_name)
-        text = f"{text}\n\nHallo *{first_name}*! {MENU_PROMPT}"
+        text = f"{text}\n\nHallo *{first_name}*!\n\n"
+    else:
+        text = f"{text}\n\n"
+    text = f"{text}{build_main_menu_text(level=user.selected_level, theme=getattr(user, 'selected_theme', None))}"
     await message.answer(
         text=text,
         reply_markup=build_main_menu_keyboard(),

@@ -8,15 +8,21 @@ WELCOME_TEXT = (
     "Wähle im Menü, was du als Nächstes tun möchtest."
 )
 
-MENU_PROMPT = "Was möchtest du heute üben?"
+MENU_PROMPT = "Was möchtest du tun?"
+MENU_TITLE_TEXT = "🏠 Dein Training"
+MENU_LEVEL_SELECTED_TEXT = "Niveau: {level}"
+MENU_LEVEL_EMPTY_TEXT = "Niveau: noch nicht gewählt"
+MENU_THEME_SELECTED_TEXT = "Thema: {theme}"
+MENU_THEME_EMPTY_TEXT = "Thema: noch nicht gewählt"
 
 TRAINING_PROMPT = (
     "📘 Wähle ein Niveau, um eine neue Übungsrunde zu starten."
 )
 
-LEVEL_SELECTED_TEXT = "✅ {level} wurde ausgewählt. Jetzt wähle bitte ein Thema."
+LEVEL_SELECTED_TEXT = "📚 Wähle einen Bereich\n\nNiveau: {level}"
 
-THEME_PROMPT = "📚 Wähle ein Thema für die nächste Übung."
+THEME_GROUP_PROMPT = "📚 Wähle einen Bereich\n\nNiveau: {level}"
+THEME_PROMPT = "📚 Wähle ein Thema\n\nNiveau: {level}\nBereich: {group}"
 THEME_EMPTY_STATE_TEXT = (
     "📭 Für dieses Niveau sind aktuell keine aktiven Themen verfügbar. "
     "Bitte wähle ein anderes Niveau."
@@ -135,22 +141,29 @@ ADMIN_METRICS_UNAVAILABLE_TEXT = "Admin-Metriken sind aktuell nicht verfügbar."
 HOME_TEXT = "🏠 Hauptmenü"
 
 MENU_BUTTON_TRAIN = "▶️ Üben"
+MENU_BUTTON_CONTINUE = "▶️ Weiterlernen"
 MENU_BUTTON_LEVEL_THEME = "🎯 Niveau & Thema"
+MENU_BUTTON_CHOOSE_THEME = "🎯 Thema wählen"
 MENU_BUTTON_PROGRESS = "📊 Mein Fortschritt"
 MENU_BUTTON_REVIEW = "🔁 Fehler wiederholen"
 MENU_BUTTON_REVIEW_START = "▶️ Fehler üben"
 MENU_BUTTON_HOME = "🏠 Hauptmenü"
+MENU_BUTTON_CHANGE_LEVEL = "🎓 Niveau ändern"
+MENU_BUTTON_BACK_TO_GROUPS = "⬅️ Bereiche"
 
 LEVELS = ("A1", "A2", "B1", "B2", "C1")
 CALLBACK_HOME = "bot:home"
 CALLBACK_LEVELS = "menu:levels"
-CALLBACK_THEMES = "bot:theme"
+CALLBACK_CONTINUE = "menu:continue"
+CALLBACK_THEMES = "menu:themes"
 CALLBACK_PROFILE = "menu:profile"
 CALLBACK_REVIEW = "menu:review"
 CALLBACK_REVIEW_START = "review:start"
 CALLBACK_SUBSCRIPTION = "menu:subscription"
 CALLBACK_PAYMENT_PLAN_PREFIX = "payment:plan:"
 CALLBACK_LEVEL_PREFIX = "level:"
+CALLBACK_GROUPS_PREFIX = "groups:"
+CALLBACK_GROUP_PREFIX = "group:"
 CALLBACK_THEME_PREFIX = "theme:"
 
 CALLBACK_TRAIN_ANSWER_PREFIX = "train:ans"
@@ -185,7 +198,10 @@ TRAINING_RESUME_NO_ACTIVE_TEXT = (
 TRAINING_SESSION_COMPLETED_TEXT = "🏁 Diese Runde ist bereits beendet."
 TRAINING_SESSION_CANCELLED_TEXT = "✅ Sitzung wurde beendet."
 TRAINING_NO_LEVEL_SELECTED_TEXT = "⚠️ Bitte wähle zuerst ein Niveau bevor du ein Thema auswählst."
-TRAINING_THEME_NOT_AVAILABLE_TEXT = "⚠️ Dieses Thema ist aktuell nicht verfügbar."
+TRAINING_THEME_NOT_AVAILABLE_TEXT = (
+    "⚠️ Dieses Thema ist aktuell nicht verfügbar. "
+    "Bitte wähle ein Thema neu aus."
+)
 
 REVIEW_EMPTY_STATE_TEXT = (
     "🧹 Keine aktiven Fehler für die Wiederholung.\n\n"

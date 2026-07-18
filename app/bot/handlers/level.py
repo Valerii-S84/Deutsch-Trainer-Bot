@@ -8,7 +8,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from app.bot.keyboards.levels import build_levels_keyboard
-from app.bot.keyboards.themes import build_theme_keyboard
+from app.bot.keyboards.themes import build_theme_group_keyboard
 from app.bot.texts import (
     CALLBACK_LEVELS,
     CALLBACK_LEVEL_PREFIX,
@@ -94,5 +94,5 @@ async def level_selected(callback_query: CallbackQuery) -> None:
             return
         await callback_query.message.answer(
             LEVEL_SELECTED_TEXT.format(level=level),
-            reply_markup=build_theme_keyboard(selected_level=level, themes=themes_response.themes),
+            reply_markup=build_theme_group_keyboard(selected_level=level, themes=themes_response.themes),
         )

@@ -68,6 +68,10 @@ from app.services.training_session import (
 )
 from app.services.entitlements import DailyLimitExceededError, EntitlementService
 from app.services.mistakes import MistakeService
+from app.bot.handlers.training_message_flow import (
+    continue_active_training_from_message,
+    start_saved_theme_training_from_message,
+)
 
 logger = logging.getLogger(__name__)
 

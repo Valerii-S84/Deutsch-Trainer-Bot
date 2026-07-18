@@ -55,6 +55,7 @@ class _Message:
 
 class _Callback:
     def __init__(self, data: str | None = None, from_user_id: int = 111) -> None:
+        self.id = "callback-1"
         self.data = data
         self.message = _Message(from_user_id)
         self.from_user = self.message.from_user
@@ -118,7 +119,7 @@ async def test_handle_theme_selected_starts_session_and_shows_question(monkeypat
 
     _patch_service(monkeypatch, service, db)
 
-    callback = _Callback(data="theme:A1:Alltag")
+    callback = _Callback(data="theme:A1:T01")
     await training.handle_theme_selected(callback)
 
     callback.answer.assert_awaited_once()
@@ -127,7 +128,7 @@ async def test_handle_theme_selected_starts_session_and_shows_question(monkeypat
         db,
         111,
         level="A1",
-        theme="Alltag",
+        theme="T01",
         force_new=False,
         total_questions=5,
     )
@@ -149,7 +150,7 @@ async def test_handle_theme_selected_shows_daily_limit_paywall(monkeypatch) -> N
 
     _patch_service(monkeypatch, service, db)
 
-    callback = _Callback(data="theme:A1:Alltag")
+    callback = _Callback(data="theme:A1:T01")
     await training.handle_theme_selected(callback)
 
     assert db.rolled_back == 1
@@ -168,7 +169,7 @@ async def test_handle_theme_selected_shows_resume_for_active_session(monkeypatch
 
     _patch_service(monkeypatch, service, db)
 
-    callback = _Callback(data="theme:A1:Alltag")
+    callback = _Callback(data="theme:A1:T01")
     await training.handle_theme_selected(callback)
 
     callback.message.answer.assert_awaited_once()
@@ -176,6 +177,20 @@ async def test_handle_theme_selected_shows_resume_for_active_session(monkeypatch
     payloads = _button_payloads(callback.message.answer.await_args.kwargs["reply_markup"])
     assert payloads == [f"train:resume:99", "train:new:99", "train:cancel:99", "bot:home"]
     assert service.resume_or_start_session.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_theme_selected_rejects_legacy_text_payload(monkeypatch) -> None:
+    db = FakeDb()
+    service = AsyncMock()
+    _patch_service(monkeypatch, service, db)
+
+    callback = _Callback(data="theme:A1:Alltag")
+    await training.handle_theme_selected(callback)
+
+    callback.message.answer.assert_awaited_once_with(training.TRAINING_THEME_NOT_AVAILABLE_TEXT)
+    service.get_active_session.assert_not_awaited()
+    service.resume_or_start_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio

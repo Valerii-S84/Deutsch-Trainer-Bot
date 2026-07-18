@@ -49,7 +49,7 @@ def _catalog_service(*, themes: list[QuizTheme] | None = None, error: Exception 
     catalog = themes if themes is not None else [_theme()]
     return SimpleNamespace(get_themes=AsyncMock(return_value=QuizThemesResponse(level="A1", themes=catalog)))
 def _theme() -> QuizTheme:
-    return QuizTheme(theme="Alltag", theme_key="alltag", is_active=True, available_items_count=3)
+    return QuizTheme(theme="Alltag", theme_key="T01", is_active=True, available_items_count=3)
 @pytest.mark.asyncio
 async def test_theme_selection_without_user_id_falls_back_to_levels() -> None:
     callback = _callback(user_id=None)
