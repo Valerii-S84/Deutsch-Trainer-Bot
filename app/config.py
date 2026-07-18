@@ -41,6 +41,50 @@ class _SettingsFields(BaseSettings):
     bot_fake_api_enabled: bool = False
     bot_max_request_timeout: int = 30
     telegram_webhook_handle_in_background: bool = True
+    webhook_ingress_backend: WebhookIngressBackend = Field(
+        default=WebhookIngressBackend.direct,
+        alias="WEBHOOK_INGRESS_BACKEND",
+    )
+    webhook_ingress_stream_key: str = Field(
+        default="dtb:webhook_ingress:updates",
+        alias="WEBHOOK_INGRESS_STREAM_KEY",
+    )
+    webhook_ingress_group_name: str = Field(
+        default="dtb-webhook-workers",
+        alias="WEBHOOK_INGRESS_GROUP_NAME",
+    )
+    webhook_ingress_dead_letter_key: str = Field(
+        default="dtb:webhook_ingress:dead",
+        alias="WEBHOOK_INGRESS_DEAD_LETTER_KEY",
+    )
+    webhook_ingress_dedupe_key_prefix: str = Field(
+        default="dtb:webhook_ingress:dedupe",
+        alias="WEBHOOK_INGRESS_DEDUPE_KEY_PREFIX",
+    )
+    webhook_ingress_metrics_key_prefix: str = Field(
+        default="dtb:webhook_ingress:metrics",
+        alias="WEBHOOK_INGRESS_METRICS_KEY_PREFIX",
+    )
+    webhook_ingress_max_attempts: int = Field(default=5, alias="WEBHOOK_INGRESS_MAX_ATTEMPTS")
+    webhook_ingress_worker_batch_size: int = Field(default=50, alias="WEBHOOK_INGRESS_WORKER_BATCH_SIZE")
+    webhook_ingress_worker_parallelism: int = Field(default=20, alias="WEBHOOK_INGRESS_WORKER_PARALLELISM")
+    webhook_ingress_read_block_ms: int = Field(default=1000, alias="WEBHOOK_INGRESS_READ_BLOCK_MS")
+    webhook_ingress_enqueue_batch_size: int = Field(default=250, alias="WEBHOOK_INGRESS_ENQUEUE_BATCH_SIZE")
+    webhook_ingress_enqueue_flush_interval_ms: int = Field(
+        default=2,
+        alias="WEBHOOK_INGRESS_ENQUEUE_FLUSH_INTERVAL_MS",
+    )
+    webhook_ingress_ack_before_redis: bool = Field(default=False, alias="WEBHOOK_INGRESS_ACK_BEFORE_REDIS")
+    webhook_ingress_fast_answer_path: bool = Field(default=False, alias="WEBHOOK_INGRESS_FAST_ANSWER_PATH")
+    webhook_ingress_stale_idle_ms: int = Field(default=60000, alias="WEBHOOK_INGRESS_STALE_IDLE_MS")
+    webhook_ingress_processing_lag_sample_size: int = Field(
+        default=10000,
+        alias="WEBHOOK_INGRESS_PROCESSING_LAG_SAMPLE_SIZE",
+    )
+    webhook_ingress_queue_lag_unhealthy_ms: int = Field(
+        default=120000,
+        alias="WEBHOOK_INGRESS_QUEUE_LAG_UNHEALTHY_MS",
+    )
     bot_global_in_flight_limit: int = 512
     bot_global_in_flight_timeout_seconds: float = 0.05
     security_rate_limit_enabled: bool = True
@@ -73,7 +117,47 @@ class _SettingsFields(BaseSettings):
     worker_db_pool_timeout: float = Field(default=5.0, alias="WORKER_DB_POOL_TIMEOUT")
     redis_url: str = "redis://localhost:6379/0"
     redis_max_connections: int = Field(default=256, alias="REDIS_MAX_CONNECTIONS")
-    redis_warmup_connections: int = Field(default=128, alias="REDIS_WARMUP_CONNECTIONS")
+    redis_pool_timeout_seconds: float = Field(default=2.0, alias="REDIS_POOL_TIMEOUT_SECONDS")
+    redis_warmup_connections: int = Field(default=0, alias="REDIS_WARMUP_CONNECTIONS")
+    training_answer_cache_enabled: bool = Field(default=False, alias="TRAINING_ANSWER_CACHE_ENABLED")
+    training_answer_cache_ttl_seconds: int = Field(default=600, alias="TRAINING_ANSWER_CACHE_TTL_SECONDS")
+    training_answer_write_behind_enabled: bool = Field(
+        default=False,
+        alias="TRAINING_ANSWER_WRITE_BEHIND_ENABLED",
+    )
+    answer_persist_stream_key: str = Field(default="dtb:answer_persist:events", alias="ANSWER_PERSIST_STREAM_KEY")
+    answer_persist_group_name: str = Field(
+        default="dtb-answer-persist-workers",
+        alias="ANSWER_PERSIST_GROUP_NAME",
+    )
+    answer_persist_dead_letter_key: str = Field(
+        default="dtb:answer_persist:dead",
+        alias="ANSWER_PERSIST_DEAD_LETTER_KEY",
+    )
+    answer_persist_event_key_prefix: str = Field(
+        default="dtb:answer_persist:event",
+        alias="ANSWER_PERSIST_EVENT_KEY_PREFIX",
+    )
+    answer_persist_question_key_prefix: str = Field(
+        default="dtb:answer_persist:question",
+        alias="ANSWER_PERSIST_QUESTION_KEY_PREFIX",
+    )
+    answer_persist_result_key_prefix: str = Field(
+        default="dtb:answer_persist:result",
+        alias="ANSWER_PERSIST_RESULT_KEY_PREFIX",
+    )
+    answer_persist_metrics_key_prefix: str = Field(
+        default="dtb:answer_persist:metrics",
+        alias="ANSWER_PERSIST_METRICS_KEY_PREFIX",
+    )
+    answer_persist_batch_size: int = Field(default=250, alias="ANSWER_PERSIST_BATCH_SIZE")
+    answer_persist_flush_interval_ms: int = Field(default=100, alias="ANSWER_PERSIST_FLUSH_INTERVAL_MS")
+    answer_persist_max_attempts: int = Field(default=5, alias="ANSWER_PERSIST_MAX_ATTEMPTS")
+    answer_persist_stale_idle_ms: int = Field(default=60000, alias="ANSWER_PERSIST_STALE_IDLE_MS")
+    answer_persist_processing_lag_sample_size: int = Field(
+        default=10000,
+        alias="ANSWER_PERSIST_PROCESSING_LAG_SAMPLE_SIZE",
+    )
 
     quiz_bank_api_base_url: str = "https://api.quiz-bank.example.internal"
     quiz_bank_edge_api_key: Optional[SecretStr] = None
@@ -126,6 +210,15 @@ class _SettingsValidation(_SettingsFields):
         "telegram_duplicate_update_ttl_seconds",
         "quiz_bank_timeout_seconds",
         "bot_global_in_flight_limit",
+        "webhook_ingress_max_attempts",
+        "webhook_ingress_worker_batch_size",
+        "webhook_ingress_worker_parallelism",
+        "webhook_ingress_read_block_ms",
+        "webhook_ingress_enqueue_batch_size",
+        "webhook_ingress_enqueue_flush_interval_ms",
+        "webhook_ingress_stale_idle_ms",
+        "webhook_ingress_processing_lag_sample_size",
+        "webhook_ingress_queue_lag_unhealthy_ms",
         "db_pgbouncer_max_client_conn",
         "db_app_replica_count",
         "db_worker_client_budget_per_replica",
@@ -134,6 +227,13 @@ class _SettingsValidation(_SettingsFields):
         "worker_db_pool_size",
         "worker_db_pool_timeout",
         "redis_max_connections",
+        "redis_pool_timeout_seconds",
+        "training_answer_cache_ttl_seconds",
+        "answer_persist_batch_size",
+        "answer_persist_flush_interval_ms",
+        "answer_persist_max_attempts",
+        "answer_persist_stale_idle_ms",
+        "answer_persist_processing_lag_sample_size",
         "local_catalog_cache_ttl_seconds",
     )
     @classmethod
@@ -210,6 +310,27 @@ class _SettingsValidation(_SettingsFields):
         normalized = value.strip().lower()
         if normalized not in {"auto", "in_memory", "redis"}:
             raise ValueError("SECURITY_STATE_BACKEND must be auto, in_memory, or redis")
+        return normalized
+
+    @field_validator(
+        "webhook_ingress_stream_key",
+        "webhook_ingress_group_name",
+        "webhook_ingress_dead_letter_key",
+        "webhook_ingress_dedupe_key_prefix",
+        "webhook_ingress_metrics_key_prefix",
+        "answer_persist_stream_key",
+        "answer_persist_group_name",
+        "answer_persist_dead_letter_key",
+        "answer_persist_event_key_prefix",
+        "answer_persist_question_key_prefix",
+        "answer_persist_result_key_prefix",
+        "answer_persist_metrics_key_prefix",
+    )
+    @classmethod
+    def validate_non_blank_string(cls, value: str, info: ValidationInfo) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"{_env_name(info.field_name)} cannot be blank")
         return normalized
 
     @field_validator("telegram_stars_mode")
@@ -308,6 +429,12 @@ class Settings(_SettingsValidation):
             raise ValueError("SECURITY_STATE_BACKEND=in_memory is not allowed outside development")
         if self.security_rate_limit_enabled and not self.redis_url:
             raise ValueError("REDIS_URL is required when production security rate limits are enabled")
+        if self.webhook_ingress_backend == WebhookIngressBackend.redis_stream and not self.redis_url:
+            raise ValueError("REDIS_URL is required when WEBHOOK_INGRESS_BACKEND=redis_stream")
+        if self.training_answer_cache_enabled and not self.redis_url:
+            raise ValueError("REDIS_URL is required when TRAINING_ANSWER_CACHE_ENABLED=true")
+        if self.training_answer_write_behind_enabled and not self.redis_url:
+            raise ValueError("REDIS_URL is required when TRAINING_ANSWER_WRITE_BEHIND_ENABLED=true")
         return self
 
     @model_validator(mode="after")
@@ -405,6 +532,12 @@ class Settings(_SettingsValidation):
             raise ValueError("DATABASE_URL is required in production")
         if self.security_rate_limit_enabled and not self.redis_url:
             raise ValueError("REDIS_URL is required in production")
+        if self.webhook_ingress_backend != WebhookIngressBackend.redis_stream:
+            raise ValueError("WEBHOOK_INGRESS_BACKEND=redis_stream is required in production")
+        if not self.training_answer_cache_enabled:
+            raise ValueError("TRAINING_ANSWER_CACHE_ENABLED=true is required in production")
+        if not self.training_answer_write_behind_enabled:
+            raise ValueError("TRAINING_ANSWER_WRITE_BEHIND_ENABLED=true is required in production")
         if self.telegram_stars_mode != "prod":
             raise ValueError("TELEGRAM_STARS_MODE=prod is required in production")
 

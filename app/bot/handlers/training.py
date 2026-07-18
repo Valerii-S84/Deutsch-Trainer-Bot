@@ -52,8 +52,12 @@ from app.quiz_bank.errors import (
 )
 from app.repositories.api_error_logs import ApiErrorLogRepository
 from app.repositories.users import UserRepository
+from app.config import get_settings
+from app.runtime.answer_persistence_queue import AnswerPersistenceQueue, create_answer_persistence_queue
+from app.runtime.redis import get_or_create_shared_redis_client
 from app.runtime.timing import begin_timing, end_timing
 from app.runtime.webhook_profiling import merge_webhook_metrics, merge_webhook_timings, webhook_timing_span
+from app.services.training_answer_write_behind import accept_answer_write_behind
 from app.services.analytics import AnalyticsTracker
 from app.services.training_session import (
     ActiveSessionConflictError,

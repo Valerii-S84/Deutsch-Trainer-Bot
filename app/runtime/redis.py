@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from redis.asyncio import Redis
+from redis.asyncio import BlockingConnectionPool, Redis
 
 from app.config import Settings
 
@@ -17,11 +17,13 @@ def create_redis_client(settings: Settings) -> Redis:
     if _shared_redis_client is not None:
         return _shared_redis_client
 
-    redis_client = Redis.from_url(
+    pool = BlockingConnectionPool.from_url(
         settings.redis_url,
         decode_responses=True,
         max_connections=settings.redis_max_connections,
+        timeout=settings.redis_pool_timeout_seconds,
     )
+    redis_client = Redis(connection_pool=pool)
     _shared_redis_client = redis_client
     return redis_client
 

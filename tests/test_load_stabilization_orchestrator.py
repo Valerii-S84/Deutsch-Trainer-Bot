@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from scripts.load_stabilization_orchestrator import (
     BuildDefaults,
     build_runtime_spec,
@@ -8,6 +10,7 @@ from scripts.load_stabilization_orchestrator import (
     phase4_variants,
     phase4_plan_command,
 )
+from scripts.load_stabilization_common import CommandSpec, run_command_spec
 from scripts.load_stabilization_support import wait_for_http
 
 
@@ -146,10 +149,18 @@ def test_build_runtime_spec_parses_multi_instance_stack_defaults() -> None:
     assert spec.stack.app.image == "dtb-loadtest:local"
     assert spec.stack.worker.image == "dtb-loadtest:local"
     assert spec.stack.ingress is not None
-    assert spec.stack.app.command == ["python", "-m", "app.main", "serve-webhook"]
+    assert spec.stack.app.command[:4] == [
+        "python",
+        "-m",
+        "uvicorn",
+        "app.runtime.webhook_ingress_asgi:create_app",
+    ]
+    assert "--no-access-log" in spec.stack.app.command
     assert spec.stack.app.env["BOT_FAKE_API_ENABLED"] == "True"
     assert spec.stack.app.env["TELEGRAM_WEBHOOK_HANDLE_IN_BACKGROUND"] == "False"
     assert spec.stack.app.env["TELEGRAM_WEBHOOK_REQUIRE_HTTPS"] == "False"
+    assert spec.stack.app.env["TRAINING_ANSWER_WRITE_BEHIND_ENABLED"] == "True"
+    assert spec.stack.worker.env["TRAINING_ANSWER_WRITE_BEHIND_ENABLED"] == "True"
     assert spec.stack.app.env["DB_APP_REPLICA_COUNT"] == "3"
     assert spec.stack.app.env["DB_WORKER_REPLICA_COUNT"] == "2"
     assert spec.stack.worker.env["DB_APP_REPLICA_COUNT"] == "3"
@@ -158,6 +169,37 @@ def test_build_runtime_spec_parses_multi_instance_stack_defaults() -> None:
     assert spec.stack.ingress.runner == "docker"
     assert spec.stack.ingress.command == ["run", "--config", "/etc/caddy/Caddyfile"]
     assert spec.stack.ingress.listen_port == 8090
+
+
+def test_build_runtime_spec_parses_split_worker_pools() -> None:
+    spec = build_runtime_spec(
+        {
+            "name": "webhook-split",
+            "stack": {
+                "app_replicas": 4,
+                "worker_replicas": 3,
+                "answer_worker_replicas": 2,
+                "outbox_worker_replicas": 1,
+                "image": "dtb-loadtest:local",
+                "worker": {"command": ["python", "-m", "app.workers.run_webhook_ingress", "--without-answer-persistence"]},
+                "answer_worker": {"command": ["python", "-m", "app.workers.run_answer_persistence"]},
+                "outbox_worker": {"command": ["python", "-m", "app.workers.run_outbox"]},
+            },
+        },
+        runtime_defaults(),
+    )
+
+    assert spec.stack is not None
+    assert spec.stack.worker.replicas == 3
+    assert spec.stack.worker.command[-1] == "--without-answer-persistence"
+    assert spec.stack.answer_worker is not None
+    assert spec.stack.answer_worker.replicas == 2
+    assert spec.stack.answer_worker.command == ["python", "-m", "app.workers.run_answer_persistence"]
+    assert spec.stack.outbox_worker is not None
+    assert spec.stack.outbox_worker.replicas == 1
+    assert spec.stack.app.env["DB_WORKER_REPLICA_COUNT"] == "6"
+    assert spec.stack.worker.env["DB_WORKER_REPLICA_COUNT"] == "6"
+    assert spec.stack.answer_worker.env["DB_WORKER_REPLICA_COUNT"] == "6"
 
 
 def test_phase4_plan_command_builds_webhook_burst_command() -> None:
@@ -195,6 +237,102 @@ def test_phase4_plan_command_builds_webhook_burst_command() -> None:
     assert command_spec.context["target_rps"] == "100"
 
 
+def test_phase4_webhook_plan_assigns_hard_measurement_timeout() -> None:
+    runtime = build_runtime_spec(
+        {
+            "name": "webhook-multi",
+            "stack": {
+                "app_replicas": 48,
+                "worker_replicas": 16,
+            },
+        },
+        runtime_defaults(),
+    )
+
+    command_spec, needs_seed = phase4_plan_command(
+        {
+            "mode": "burst",
+            "total_requests": 3000,
+            "target_rps": 3000000,
+            "concurrency": 3000,
+            "validate_events": True,
+            "queue_drain_timeout_seconds": 180,
+        },
+        runtime=runtime,
+    )
+
+    assert needs_seed is True
+    assert command_spec.timeout_seconds == 310.0
+
+
+def test_run_command_spec_timeout_records_failure_without_hanging() -> None:
+    result = run_command_spec(
+        CommandSpec(
+            name="slow_measurement",
+            command=[sys.executable, "-c", "import time; time.sleep(10)"],
+            timeout_seconds=0.1,
+        ),
+        base_env={},
+        base_context={},
+    )
+
+    assert result["name"] == "slow_measurement"
+    assert result["ok"] is False
+    assert result["timed_out"] is True
+    assert result["timeout_seconds"] == 0.1
+
+
+def test_phase4_webhook_validation_includes_answer_persistence_queue() -> None:
+    runtime = build_runtime_spec(
+        {
+            "name": "webhook-multi",
+            "stack": {
+                "app_replicas": 2,
+                "worker_replicas": 2,
+            },
+        },
+        runtime_defaults(),
+    )
+
+    command_spec, needs_seed = phase4_plan_command(
+        {
+            "mode": "burst",
+            "total_requests": 3000,
+            "validate_events": True,
+        },
+        runtime=runtime,
+    )
+
+    assert needs_seed is True
+    assert "--answer-persist-stream-key" in command_spec.command
+    assert "--answer-persist-dead-letter-key" in command_spec.command
+    assert "--answer-persist-metrics-key-prefix" in command_spec.command
+    assert command_spec.context["answer_persist_stream_key"] == "dtb:answer_persist:events"
+
+
+def test_phase4_variants_include_top_level_prepare_commands() -> None:
+    variants = phase4_variants(
+        {
+            "migrate": False,
+            "prepare": [
+                {
+                    "name": "stack_warmup",
+                    "stage": "after_stack",
+                    "command": ["{python}", "-c", "pass"],
+                },
+            ],
+            "stack": {"app_replicas": 1, "worker_replicas": 1},
+            "plans": [{"mode": "burst", "total_requests": 10}],
+            "variants": [{"name": "candidate"}],
+        }
+    )
+
+    assert [(command.name, command.stage) for command in variants[0].prepare] == [
+        ("stack_warmup", "after_stack"),
+        ("seed_worker_pipeline", "before_stack"),
+    ]
+
+
 def test_phase4_plan_command_enables_pgbouncer_sampling() -> None:
     runtime = build_runtime_spec(
         {
@@ -223,6 +361,35 @@ def test_phase4_plan_command_enables_pgbouncer_sampling() -> None:
     assert command_spec.context["pgbouncer_sample_output"] == "qa_evidence/pgbouncer_pool_stats_20260703.json"
     assert command_spec.env["PGBOUNCER_ADMIN_DOCKER_CONTAINER"] == "{postgres_container}"
     assert command_spec.env["PGBOUNCER_TARGET_DATABASE"] == "{postgres_db}"
+
+
+def test_phase4_plan_command_enables_postgres_lock_sampling() -> None:
+    runtime = build_runtime_spec(
+        {
+            "name": "webhook-multi",
+            "stack": {
+                "app_replicas": 1,
+                "worker_replicas": 1,
+                "ingress": False,
+            },
+        },
+        runtime_defaults(),
+    )
+
+    command_spec, needs_seed = phase4_plan_command(
+        {
+            "mode": "steady",
+            "target_rps": 100,
+            "total_requests": 500,
+            "postgres_lock_sample_output": "qa_evidence/lock_contention_profile_20260705.json",
+        },
+        runtime=runtime,
+    )
+
+    assert needs_seed is True
+    assert "--postgres-lock-sample-output" in command_spec.command
+    assert command_spec.context["postgres_lock_sample_output"] == "qa_evidence/lock_contention_profile_20260705.json"
+    assert command_spec.env["POSTGRES_LOCK_SAMPLE_DATABASE_URL"] == "{database_url_direct}"
 
 
 def test_summarize_pgbouncer_samples_filters_target_database() -> None:
@@ -310,7 +477,7 @@ def test_phase4_variants_seed_webhook_stack_and_assign_offsets() -> None:
     assert [measurement.name for measurement in variant.measurements] == ["steady_1000_requests", "burst_500_requests"]
     assert [measurement.context["session_offset"] for measurement in variant.measurements] == ["0", "1000"]
     assert variant.stack.ingress is not None
-    assert variant.stack.ingress.command[:3] == ["{python}", "scripts/loadtest_ingress.py", "serve"]
+    assert variant.stack.ingress.command == []
 
 
 def test_wait_for_http_retries_connection_reset(monkeypatch) -> None:

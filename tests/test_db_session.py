@@ -42,6 +42,19 @@ def test_create_engine_reuses_queue_pool_for_pgbouncer_transaction_when_enabled(
         engine.sync_engine.dispose()
 
 
+def test_create_engine_can_use_bounded_worker_pool_for_pgbouncer_transaction() -> None:
+    settings = _settings(DbConnectionBackend.pgbouncer_transaction, reuse_app_connections=False)
+
+    engine = create_engine(settings, pool_size=3, max_overflow=1, use_queue_pool_for_pgbouncer=True)
+
+    try:
+        assert engine.sync_engine.url.query["prepared_statement_cache_size"] == "0"
+        assert not isinstance(engine.sync_engine.pool, NullPool)
+        assert engine.sync_engine.pool.size() == 3
+    finally:
+        engine.sync_engine.dispose()
+
+
 def test_prepared_statement_name_is_unique() -> None:
     assert _prepared_statement_name() != _prepared_statement_name()
 

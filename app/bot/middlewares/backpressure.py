@@ -32,6 +32,9 @@ class BackpressureMiddleware:
         self._monitor.configure(limit=self._in_flight_limit)
 
     async def __call__(self, handler: Any, event: Any, data: dict[str, Any]) -> Any:
+        if data.get("skip_backpressure"):
+            return await handler(event, data)
+
         update = data.get("event_update") or event
         try:
             with webhook_timing_span("middleware.backpressure_acquire_ms"):

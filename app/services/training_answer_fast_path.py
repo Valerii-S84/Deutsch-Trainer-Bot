@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import QuizSession, TrainingSessionItem, User
 from app.repositories.answers import AnswerContentFields, AnswerCreateData, AnswerWriteResult
 from app.runtime.timing import record_timing_metric, timing_query, timing_span
+from app.services.training_answer_cache import (
+    delete_cached_pending_question_if_enabled,
+    get_cached_pending_question_if_enabled,
+)
 from app.services.training_payloads import (
     ActiveSessionNotFoundError,
     AnswerResult,
@@ -102,6 +106,10 @@ async def accept_answer_fast_path(
             payload=_answer_accepted_payload(context, session_state, answer=answer, is_correct=is_correct, result=result),
         )
 
+    await delete_cached_pending_question_if_enabled(
+        session_id=context.session_id,
+        question_token=context.pending.question_token,
+    )
     return result
 
 
@@ -113,6 +121,12 @@ async def _validate_context(
     question_token: str,
     selected_option_id: str,
 ) -> FastPathContext:
+    with timing_span("answer.validate.cache_read_ms"):
+        cached_pending = await get_cached_pending_question_if_enabled(
+            session_id=session_id,
+            question_token=question_token,
+        )
+
     with timing_span("answer.validate.db_acquire_ms"):
         await _ensure_connection_acquired(db)
 

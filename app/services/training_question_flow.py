@@ -12,6 +12,7 @@ from app.services.training_payloads import (
     ActiveSessionNotFoundError,
     NoMoreQuestionsError,
     NoReviewItemsError,
+    QuestionPayloadContext,
     QuizQuestionPayload,
     answer_text,
     build_question_payload,
@@ -42,7 +43,6 @@ class TrainingQuestionProcessor:
 
     def __init__(self, service: Any) -> None:
         self._service = service
-
     async def get_or_create_current_question(
         self,
         db: AsyncSession,
@@ -100,7 +100,6 @@ class TrainingQuestionProcessor:
         if payload.total_questions != session.total_questions:
             return None
         return payload
-
     async def _build_question_request(
         self,
         db: AsyncSession,
@@ -125,7 +124,6 @@ class TrainingQuestionProcessor:
             is_review_session=is_review_session,
             mistake_item_ids=mistake_item_ids,
         )
-
     async def _review_item_ids(self, db: AsyncSession, user: Any, session: Any) -> list[str]:
         service = self._service
         review_items = await service._mistakes_service.get_review_items(db, user.telegram_user_id)
@@ -238,9 +236,13 @@ class TrainingQuestionProcessor:
             question=question,
             position=context.answered + 1,
             total_questions=context.session.total_questions,
-            question_reference_id=question_reference.id,
-            training_session_item_id=session_item.id,
-            metadata_snapshot=metadata_snapshot,
+            context=_payload_context(
+                context,
+                question_reference_id=question_reference.id,
+                training_session_item_id=session_item.id,
+                metadata_snapshot=metadata_snapshot,
+                session_type=self._service._session_flow(context.session),
+            ),
         )
         await self._save_pending_question(db, context.session, payload, response)
         await db.flush()
@@ -356,3 +358,23 @@ def _catalog_id_from_metadata(metadata: dict[str, Any] | None) -> str | None:
 def _apply_catalog_session_item_context(session_item: Any, question: Any) -> None:
     session_item.catalog_id = _catalog_id_from_metadata(question.metadata)
     session_item.item_version = question.content_version
+
+
+def _payload_context(
+    context: _QuestionContext,
+    *,
+    question_reference_id: int,
+    training_session_item_id: int,
+    metadata_snapshot: dict[str, Any],
+    session_type: str,
+) -> QuestionPayloadContext:
+    return QuestionPayloadContext(
+        question_reference_id=question_reference_id,
+        training_session_item_id=training_session_item_id,
+        metadata_snapshot=metadata_snapshot,
+        user_id=context.user.id,
+        telegram_user_id=context.user.telegram_user_id,
+        session_type=session_type,
+        answered_count=context.answered,
+        correct_answers=int(context.session.correct_answers or 0),
+    )

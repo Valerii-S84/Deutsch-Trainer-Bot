@@ -13,15 +13,22 @@ from app.runtime import redis as redis_runtime
 
 def test_create_redis_client_registers_shared_client(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_client = SimpleNamespace(aclose=AsyncMock())
+    fake_pool = SimpleNamespace()
 
-    def fake_from_url(url: str, *, decode_responses: bool, max_connections: int):
+    def fake_pool_from_url(url: str, *, decode_responses: bool, max_connections: int, timeout: float):
         assert url == "redis://cache.example.test:6379/0"
         assert decode_responses is True
         assert max_connections == 64
+        assert timeout == 2.0
+        return fake_pool
+
+    def fake_redis(*, connection_pool):
+        assert connection_pool is fake_pool
         return fake_client
 
     monkeypatch.setattr(redis_runtime, "_shared_redis_client", None)
-    monkeypatch.setattr(redis_runtime.Redis, "from_url", fake_from_url)
+    monkeypatch.setattr(redis_runtime.BlockingConnectionPool, "from_url", fake_pool_from_url)
+    monkeypatch.setattr(redis_runtime, "Redis", fake_redis)
 
     client = redis_runtime.create_redis_client(
         Settings(redis_url="redis://cache.example.test:6379/0", REDIS_MAX_CONNECTIONS=64),
@@ -44,7 +51,7 @@ def test_create_redis_client_reuses_registered_shared_client(monkeypatch: pytest
     fake_client = SimpleNamespace(aclose=AsyncMock())
     monkeypatch.setattr(redis_runtime, "_shared_redis_client", fake_client)
     from_url = AsyncMock()
-    monkeypatch.setattr(redis_runtime.Redis, "from_url", from_url)
+    monkeypatch.setattr(redis_runtime.BlockingConnectionPool, "from_url", from_url)
 
     client = redis_runtime.create_redis_client(Settings())
 

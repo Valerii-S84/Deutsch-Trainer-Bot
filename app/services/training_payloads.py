@@ -26,6 +26,11 @@ class QuizQuestionPayload:
     metadata_snapshot: dict[str, Any] | None = None
     question_reference_id: int | None = None
     training_session_item_id: int | None = None
+    user_id: int | None = None
+    telegram_user_id: int | None = None
+    session_type: str | None = None
+    answered_count: int | None = None
+    correct_answers: int | None = None
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,18 @@ class AnswerResult:
     weak_theme: str | None = None
     new_mistakes_count: int = 0
     recommendation_text: str | None = None
+
+
+@dataclass(frozen=True)
+class QuestionPayloadContext:
+    question_reference_id: int | None = None
+    training_session_item_id: int | None = None
+    metadata_snapshot: dict[str, Any] | None = None
+    user_id: int | None = None
+    telegram_user_id: int | None = None
+    session_type: str | None = None
+    answered_count: int | None = None
+    correct_answers: int | None = None
 
 
 class TrainingFlowError(Exception):
@@ -116,10 +133,9 @@ def build_question_payload(
     *,
     position: int,
     total_questions: int,
-    question_reference_id: int | None = None,
-    training_session_item_id: int | None = None,
-    metadata_snapshot: dict[str, Any] | None = None,
+    context: QuestionPayloadContext | None = None,
 ) -> QuizQuestionPayload:
+    context = context or QuestionPayloadContext()
     return QuizQuestionPayload(
         session_id=session_id,
         question_token=sha1(question.item_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:8],
@@ -135,9 +151,14 @@ def build_question_payload(
         correct_answer_text=answer_text(question, question.correct_answer.option_id),
         theme_key=question.theme_key,
         content_version=question.content_version,
-        metadata_snapshot=metadata_snapshot or question_metadata_snapshot(question),
-        question_reference_id=question_reference_id,
-        training_session_item_id=training_session_item_id,
+        metadata_snapshot=context.metadata_snapshot or question_metadata_snapshot(question),
+        question_reference_id=context.question_reference_id,
+        training_session_item_id=context.training_session_item_id,
+        user_id=context.user_id,
+        telegram_user_id=context.telegram_user_id,
+        session_type=context.session_type,
+        answered_count=context.answered_count,
+        correct_answers=context.correct_answers,
     )
 
 
@@ -160,6 +181,11 @@ def serialize_question_payload(payload: QuizQuestionPayload) -> dict[str, object
         "metadata_snapshot": payload.metadata_snapshot,
         "question_reference_id": payload.question_reference_id,
         "training_session_item_id": payload.training_session_item_id,
+        "user_id": payload.user_id,
+        "telegram_user_id": payload.telegram_user_id,
+        "session_type": payload.session_type,
+        "answered_count": payload.answered_count,
+        "correct_answers": payload.correct_answers,
     }
 
 
@@ -192,6 +218,13 @@ def deserialize_question_payload(payload: dict[str, object]) -> QuizQuestionPayl
             training_session_item_id=int(payload["training_session_item_id"])
             if payload.get("training_session_item_id") is not None
             else None,
+            user_id=int(payload["user_id"]) if payload.get("user_id") is not None else None,
+            telegram_user_id=int(payload["telegram_user_id"])
+            if payload.get("telegram_user_id") is not None
+            else None,
+            session_type=payload.get("session_type") if isinstance(payload.get("session_type"), str) else None,
+            answered_count=int(payload["answered_count"]) if payload.get("answered_count") is not None else None,
+            correct_answers=int(payload["correct_answers"]) if payload.get("correct_answers") is not None else None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise QuestionStateError("pending question payload is invalid") from exc

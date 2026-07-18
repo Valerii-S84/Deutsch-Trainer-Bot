@@ -56,20 +56,10 @@ class SecurityMiddleware:
     async def __call__(self, handler: Any, event: Any, data: dict[str, Any]) -> Any:
         update = data.get("event_update") or event
         update_id = _update_id(update)
-        try:
-            with webhook_timing_span("middleware.security_duplicate_guard_ms"):
-                record_webhook_metric("duplicate_guard.call_count", 1)
-                with webhook_operation_label("duplicate_guard.redis"):
-                    accepted = await _maybe_await(self._duplicate_guard.accept(update_id))
-        except RateLimitBackendError:
-            logger.warning("telegram security state backend unavailable: update_id=%s", update_id)
-            await _notify_rate_limit(update)
-            return None
-        if not accepted:
-            logger.info("duplicate telegram update ignored: update_id=%s", update_id)
+        if not data.get("skip_duplicate_guard") and not await self._accept_update(update, update_id):
             return None
 
-        if not self._rate_limit_enabled:
+        if data.get("skip_rate_limit") or not self._rate_limit_enabled:
             return await handler(event, data)
 
         action = _action_from_update(update)
@@ -77,18 +67,8 @@ class SecurityMiddleware:
             return await handler(event, data)
 
         identity = _rate_limit_identity(update)
-        try:
-            with webhook_timing_span("middleware.security_rate_limit_ms"):
-                with webhook_operation_label("rate_limit.redis"):
-                    decision = await _maybe_await(self._rate_limiter.check(action=action, identity=identity))
-        except RateLimitBackendError:
-            logger.warning(
-                "telegram rate limit backend unavailable: action=%s identity=%s update_id=%s",
-                action,
-                identity,
-                update_id,
-            )
-            await _notify_rate_limit(update)
+        decision = await self._check_rate_limit(action=action, identity=identity, update=update, update_id=update_id)
+        if decision is None:
             return None
         if decision.allowed:
             return await handler(event, data)
@@ -102,6 +82,39 @@ class SecurityMiddleware:
         )
         await _notify_rate_limit(update)
         return None
+
+    async def _accept_update(self, update: Any, update_id: int | None) -> bool:
+        try:
+            accepted = await self._check_duplicate_guard(update_id)
+        except RateLimitBackendError:
+            logger.warning("telegram security state backend unavailable: update_id=%s", update_id)
+            await _notify_rate_limit(update)
+            return False
+        if accepted:
+            return True
+        logger.info("duplicate telegram update ignored: update_id=%s", update_id)
+        return False
+
+    async def _check_duplicate_guard(self, update_id: int | None) -> bool:
+        with webhook_timing_span("middleware.security_duplicate_guard_ms"):
+            record_webhook_metric("duplicate_guard.call_count", 1)
+            with webhook_operation_label("duplicate_guard.redis"):
+                return bool(await _maybe_await(self._duplicate_guard.accept(update_id)))
+
+    async def _check_rate_limit(self, *, action: str, identity: str, update: Any, update_id: int | None) -> Any | None:
+        try:
+            with webhook_timing_span("middleware.security_rate_limit_ms"):
+                with webhook_operation_label("rate_limit.redis"):
+                    return await _maybe_await(self._rate_limiter.check(action=action, identity=identity))
+        except RateLimitBackendError:
+            logger.warning(
+                "telegram rate limit backend unavailable: action=%s identity=%s update_id=%s",
+                action,
+                identity,
+                update_id,
+            )
+            await _notify_rate_limit(update)
+            return None
 
 
 def _update_id(update: Any) -> int | None:

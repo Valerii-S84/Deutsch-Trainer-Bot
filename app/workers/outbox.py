@@ -200,7 +200,12 @@ class OutboxWorker:
 
     async def run_forever(self, *, idle_sleep_seconds: float = 1.0) -> None:
         while True:
-            processed = await self.process_once()
+            try:
+                processed = await self.process_once()
+            except Exception:
+                logger.exception("outbox worker loop failed; retrying")
+                await asyncio.sleep(max(1.0, idle_sleep_seconds))
+                continue
             if processed == 0:
                 await asyncio.sleep(idle_sleep_seconds)
 
