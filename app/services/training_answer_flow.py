@@ -160,7 +160,7 @@ class TrainingAnswerProcessor:
     ) -> AnswerContext:
         service = self._service
         with timing_span("answer.validate.db_acquire_ms"):
-            await db.connection()
+            await _ensure_connection_acquired(db)
 
         record_timing_metric("answer.validate.logical_round_trip_count", 1)
         with timing_query("answer.validate.sql_1"):
@@ -463,6 +463,12 @@ def _answered_count(session: Any) -> int:
     if isinstance(value, int) and value >= 0:
         return value
     return 0
+
+
+async def _ensure_connection_acquired(db: AsyncSession) -> None:
+    connection = getattr(db, "connection", None)
+    if connection is not None:
+        await connection()
 
 
 def _answer_record(answer: Any) -> AnswerWriteResult:

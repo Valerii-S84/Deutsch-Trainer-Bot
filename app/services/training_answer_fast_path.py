@@ -114,7 +114,7 @@ async def _validate_context(
     selected_option_id: str,
 ) -> FastPathContext:
     with timing_span("answer.validate.db_acquire_ms"):
-        await db.connection()
+        await _ensure_connection_acquired(db)
 
     record_timing_metric("answer.validate.logical_round_trip_count", 1)
     with timing_query("answer.validate.sql_1"):
@@ -435,3 +435,9 @@ def _dialect_name(db: AsyncSession) -> str:
         return ""
     bind = get_bind()
     return bind.dialect.name if bind is not None else ""
+
+
+async def _ensure_connection_acquired(db: AsyncSession) -> None:
+    connection = getattr(db, "connection", None)
+    if connection is not None:
+        await connection()
