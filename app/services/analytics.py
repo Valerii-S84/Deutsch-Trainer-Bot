@@ -116,6 +116,17 @@ class AnalyticsTracker:
             )
             return None
 
+    async def record_many(
+        self,
+        db,
+        events: list[dict[str, Any]],
+    ) -> list[AnalyticsEvent]:
+        try:
+            return await self._repository.record_many(db, events)
+        except Exception:
+            logger.exception("analytics_write_failed batch_size=%s", len(events))
+            return []
+
 
 class AnalyticsMetricsService:
     """Admin-facing product, learning, monetization and operations metrics."""

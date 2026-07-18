@@ -18,6 +18,7 @@ from app.services.progress_model import (
     coverage_from_counts,
     recency_risk_score,
 )
+from app.services.user_identity import ResolvedUserId
 
 RECENT_TOPIC_EVENTS_LIMIT = 200
 
@@ -28,6 +29,7 @@ class _ProgressAnswerUpdate:
     level: str
     theme: str | None
     is_correct: bool
+    is_duplicate: bool
     session_id: int | None
     user_answer_id: int | None
     item_id: str | None
@@ -61,7 +63,7 @@ class ProgressSummaryRow:
     last_answered_at: datetime | None = None
 
 
-class ProgressService:
+class _ProgressWriteService:
     """Runtime business logic for progress aggregation."""
 
     def __init__(
@@ -80,7 +82,7 @@ class ProgressService:
     async def record_answer_result(
         self,
         db,
-        telegram_user_id: int,
+        telegram_user_id: int | ResolvedUserId | None,
         *,
         level: str,
         theme: str | None,
@@ -96,26 +98,16 @@ class ProgressService:
         reason_code: str = "answer_accepted",
     ):
         now = answered_at or datetime.now(UTC)
-        user = await self._user_repo.create_if_missing(db, telegram_user_id)
-        progress = await self._progress_repo.get_or_create(
+        target_user_id = await self._resolve_user_id(
             db,
-            user_id=user.id,
-            level=level,
-            theme=theme,
+            identity=telegram_user_id,
         )
-        await db.flush()
-
-        if theme_key:
-            progress.theme_key = theme_key
-
-        if is_duplicate:
-            return progress
-
         answer_update = _ProgressAnswerUpdate(
-            user_id=user.id,
+            user_id=target_user_id,
             level=level,
             theme=theme,
             is_correct=is_correct,
+            is_duplicate=is_duplicate,
             session_id=session_id,
             user_answer_id=user_answer_id,
             item_id=item_id,
@@ -125,11 +117,60 @@ class ProgressService:
             metadata_snapshot=metadata_snapshot,
             reason_code=reason_code,
         )
+        progress, totals_already_applied = await self._progress_for_answer(db, answer_update)
+        await db.flush()
+
+        if theme_key and not totals_already_applied:
+            progress.theme_key = theme_key
+        if is_duplicate:
+            return progress
         return await self._record_new_answer(
             db,
             progress=progress,
             answer_update=answer_update,
+            totals_already_applied=totals_already_applied,
         )
+
+    async def _progress_for_answer(self, db, answer_update: _ProgressAnswerUpdate):
+        progress = await self._progress_repo.get_by_user_level_theme(
+            db,
+            user_id=answer_update.user_id,
+            level=answer_update.level,
+            theme=answer_update.theme,
+        )
+        if progress is None:
+            if answer_update.is_duplicate:
+                progress = await self._progress_repo.create(
+                    db,
+                    user_id=answer_update.user_id,
+                    level=answer_update.level,
+                    theme=answer_update.theme,
+                )
+                return progress, False
+            progress = await self._progress_repo.create_from_answer(
+                db,
+                user_id=answer_update.user_id,
+                level=answer_update.level,
+                theme=answer_update.theme,
+                theme_key=answer_update.theme_key,
+                is_correct=answer_update.is_correct,
+                now=answer_update.answered_at,
+            )
+            return progress, True
+        return progress, False
+
+    async def _resolve_user_id(
+        self,
+        db,
+        *,
+        identity: int | ResolvedUserId | None,
+    ) -> int:
+        if isinstance(identity, ResolvedUserId):
+            return identity.value
+        if identity is None:
+            raise ValueError("telegram_user_id is required when user_id is not provided")
+        user = await self._user_repo.create_if_missing(db, identity)
+        return int(user.id)
 
     async def _record_new_answer(
         self,
@@ -137,17 +178,19 @@ class ProgressService:
         *,
         progress,
         answer_update: _ProgressAnswerUpdate,
+        totals_already_applied: bool = False,
     ):
         previous_status = progress.topic_status
-        previous_scores = self._progress_history_repo.snapshot_scores(progress)
-        await self._progress_repo.update_totals(
-            db,
-            progress,
-            answered_delta=1,
-            correct_delta=1 if answer_update.is_correct else 0,
-            now=answer_update.answered_at,
-        )
-        await self._progress_repo.update_streak_if_supported(progress, is_correct=answer_update.is_correct)
+        previous_scores = None if totals_already_applied else self._progress_history_repo.snapshot_scores(progress)
+        if not totals_already_applied:
+            await self._progress_repo.update_totals(
+                db,
+                progress,
+                answered_delta=1,
+                correct_delta=1 if answer_update.is_correct else 0,
+                now=answer_update.answered_at,
+            )
+            await self._progress_repo.update_streak_if_supported(progress, is_correct=answer_update.is_correct)
         await self._apply_progress_model(
             db,
             progress=progress,
@@ -176,19 +219,7 @@ class ProgressService:
             metadata_snapshot=answer_update.metadata_snapshot,
             current_value=progress.available_items_count,
         )
-        answer_events = await self._progress_repo.list_recent_topic_answer_events(
-            db,
-            user_id=answer_update.user_id,
-            level=answer_update.level,
-            theme=answer_update.theme,
-            limit=RECENT_TOPIC_EVENTS_LIMIT,
-        )
-        answer_events = _with_current_event(
-            answer_events,
-            item_id=answer_update.item_id,
-            is_correct=answer_update.is_correct,
-            answered_at=answer_update.answered_at,
-        )
+        answer_events = await self._answer_events(db, progress, answer_update)
         mistake_signals = await self._progress_repo.get_topic_mistake_signals(
             db,
             user_id=answer_update.user_id,
@@ -221,6 +252,23 @@ class ProgressService:
             now=answer_update.answered_at,
         )
 
+    async def _answer_events(self, db, progress, answer_update: _ProgressAnswerUpdate) -> list[TopicAnswerEvent]:
+        answer_events: list[TopicAnswerEvent] = []
+        if int(progress.total_answered or 0) > 1:
+            answer_events = await self._progress_repo.list_recent_topic_answer_events(
+                db,
+                user_id=answer_update.user_id,
+                level=answer_update.level,
+                theme=answer_update.theme,
+                limit=RECENT_TOPIC_EVENTS_LIMIT,
+            )
+        return _with_current_event(
+            answer_events,
+            item_id=answer_update.item_id,
+            is_correct=answer_update.is_correct,
+            answered_at=answer_update.answered_at,
+        )
+
     async def _unique_items_seen(
         self,
         db,
@@ -231,6 +279,8 @@ class ProgressService:
     ) -> int:
         current_value = int(getattr(progress, "unique_items_seen", 0) or 0)
         recent_unique = len({event.item_id for event in answer_events})
+        if int(progress.total_answered or 0) <= 1:
+            return max(1 if answer_update.item_id is not None else 0, recent_unique)
         if answer_update.item_id is None or answer_update.user_answer_id is None:
             return max(current_value, recent_unique)
 
@@ -245,6 +295,7 @@ class ProgressService:
         increment = 0 if already_seen else 1
         return max(current_value + increment, recent_unique)
 
+class ProgressService(_ProgressWriteService):
     async def get_user_summary(self, db, telegram_user_id: int) -> list:
         user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
         if user is None:

@@ -11,7 +11,7 @@ from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 from app.services.progress_model import TopicAnswerEvent, TopicMistakeSignals, TopicScores
 
 
-class ProgressRepository:
+class _ProgressWriteRepository:
     """Persistence helpers for user progress aggregation."""
 
     async def get_by_user_level_theme(
@@ -51,6 +51,40 @@ class ProgressRepository:
             accuracy=Decimal("0.00"),
             stability_score=Decimal("0.00"),
             weakness_score=Decimal("0.00"),
+        )
+        db.add(progress)
+        return progress
+
+    async def create_from_answer(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        level: str,
+        theme: str | None,
+        theme_key: str | None,
+        is_correct: bool,
+        now: datetime,
+    ) -> Progress:
+        progress_id = await next_sqlite_id_if_needed(db, Progress)
+        total_correct = 1 if is_correct else 0
+        wrong_count = 0 if is_correct else 1
+        progress = Progress(
+            id=progress_id,
+            user_id=user_id,
+            level=level,
+            theme=theme,
+            theme_key=theme_key,
+            total_answered=1,
+            total_correct=total_correct,
+            wrong_count=wrong_count,
+            accuracy=Decimal("100.00") if is_correct else Decimal("0.00"),
+            stability_score=Decimal("0.00"),
+            weakness_score=Decimal("0.00"),
+            streak=1 if is_correct else 0,
+            last_answered_at=now,
+            last_wrong_at=None if is_correct else now,
+            last_recalculated_at=now,
         )
         db.add(progress)
         return progress
@@ -165,6 +199,7 @@ class ProgressRepository:
         result = await db.execute(query)
         return list(result.scalars().all())
 
+class ProgressRepository(_ProgressWriteRepository):
     async def list_topic_answer_events(
         self,
         db: AsyncSession,

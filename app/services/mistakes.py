@@ -7,6 +7,7 @@ from app.db.models import Mistake, MistakeStatus
 from app.repositories.mistake_history import MistakeHistoryRepository
 from app.repositories.mistakes import MistakeRepository
 from app.repositories.users import UserRepository
+from app.services.user_identity import ResolvedUserId
 
 
 class MistakeService:
@@ -26,10 +27,27 @@ class MistakeService:
     async def _get_user(self, db, telegram_user_id: int):
         return await self._user_repo.create_if_missing(db, telegram_user_id)
 
+    async def _resolve_user_id(
+        self,
+        db,
+        *,
+        identity: int | ResolvedUserId | None,
+        create_if_missing: bool,
+    ) -> int | None:
+        if isinstance(identity, ResolvedUserId):
+            return identity.value
+        if identity is None:
+            return None
+        if create_if_missing:
+            user = await self._user_repo.create_if_missing(db, identity)
+        else:
+            user = await self._user_repo.get_by_telegram_id(db, identity)
+        return int(user.id) if user is not None else None
+
     async def record_wrong_answer(
         self,
         db,
-        telegram_user_id: int,
+        telegram_user_id: int | ResolvedUserId | None,
         *,
         external_quiz_id: str,
         level: str,
@@ -42,23 +60,28 @@ class MistakeService:
         user_answer_id: int | None = None,
         metadata_snapshot: dict[str, Any] | None = None,
     ) -> Mistake | None:
+        target_user_id = await self._resolve_user_id(
+            db,
+            identity=telegram_user_id,
+            create_if_missing=not is_duplicate,
+        )
+        if target_user_id is None:
+            return None
+
         if is_duplicate:
-            user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
-            if user is None:
-                return None
             return await self._mistake_repo.get_active_by_user_and_external_quiz_id(
                 db,
-                user_id=user.id,
+                user_id=target_user_id,
                 external_quiz_id=external_quiz_id,
             )
 
-        user = await self._get_user(db, telegram_user_id)
-        existing = await self._mistake_repo.find_active_by_user_and_external_quiz_id(
+        existing = await self._mistake_repo.get_by_user_and_external_quiz_id(
             db,
-            user_id=user.id,
+            user_id=target_user_id,
             external_quiz_id=external_quiz_id,
+            active_only=False,
         )
-        if existing is not None:
+        if existing is not None and existing.resolved_at is None:
             previous_status = _status_value(existing.status)
             mistake = await self._mistake_repo.increment_wrong(
                 db,
@@ -80,17 +103,11 @@ class MistakeService:
             )
             return mistake
 
-        resolved = await self._mistake_repo.get_by_user_and_external_quiz_id(
-            db,
-            user_id=user.id,
-            external_quiz_id=external_quiz_id,
-            active_only=False,
-        )
-        if resolved is not None and resolved.resolved_at is not None:
-            previous_status = _status_value(resolved.status)
+        if existing is not None and existing.resolved_at is not None:
+            previous_status = _status_value(existing.status)
             mistake = await self._mistake_repo.reopen_as_active(
                 db,
-                resolved,
+                existing,
                 wrong_answer=wrong_answer,
                 correct_answer=correct_answer,
                 source_snapshot=source_snapshot,
@@ -110,7 +127,7 @@ class MistakeService:
 
         mistake = await self._mistake_repo.create(
             db,
-            user_id=user.id,
+            user_id=target_user_id,
             external_quiz_id=external_quiz_id,
             level=level,
             theme=theme or "",
@@ -136,7 +153,7 @@ class MistakeService:
     async def record_review_success(
         self,
         db,
-        telegram_user_id: int,
+        telegram_user_id: int | ResolvedUserId | None,
         *,
         external_quiz_id: str,
         question_level: str | None,
@@ -147,13 +164,17 @@ class MistakeService:
         metadata_snapshot: dict[str, Any] | None = None,
         answered_at: datetime | None = None,
     ) -> Mistake | None:
-        user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
-        if user is None:
+        target_user_id = await self._resolve_user_id(
+            db,
+            identity=telegram_user_id,
+            create_if_missing=False,
+        )
+        if target_user_id is None:
             return None
 
         mistake = await self._mistake_repo.find_active_by_user_and_external_quiz_id(
             db,
-            user_id=user.id,
+            user_id=target_user_id,
             external_quiz_id=external_quiz_id,
         )
         if mistake is None:

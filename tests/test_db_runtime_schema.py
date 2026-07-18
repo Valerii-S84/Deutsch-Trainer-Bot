@@ -46,6 +46,8 @@ EXPECTED_INDEXES = {
     },
     "outbox_events": {
         "ix_outbox_events_status_next_attempt",
+        "ix_outbox_events_status_next_attempt_created",
+        "ix_outbox_events_status_locked_at",
         "ix_outbox_events_type_status",
         "ix_outbox_events_aggregate",
     },

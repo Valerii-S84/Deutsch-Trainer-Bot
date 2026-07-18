@@ -63,7 +63,7 @@ class MistakeRepository:
         )
         if active_only:
             query = query.where(Mistake.resolved_at.is_(None))
-        query = query.order_by(Mistake.id.desc())
+        query = query.order_by(Mistake.resolved_at.is_(None).desc(), Mistake.id.desc())
         return await db.scalar(query)
 
     async def create(
