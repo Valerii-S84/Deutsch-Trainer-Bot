@@ -22,6 +22,8 @@ REQUIRED_TRUE_FIELDS = (
     "subscription_credited",
     "active_subscription_verified",
     "duplicate_event_rejected",
+    "duplicate_event_no_second_credit",
+    "duplicate_event_no_second_subscription_period",
 )
 REQUIRED_TEXT_FIELDS = (
     "environment",
@@ -30,11 +32,25 @@ REQUIRED_TEXT_FIELDS = (
     "telegram_stars_mode",
     "evidence_owner",
     "invoice_payload_prefix",
+    "invoice_payload_format",
     "invoice_payload_sha256",
     "telegram_payment_charge_id_sha256",
     "credited_plan",
+    "payment_status_after_success",
+    "subscription_status_after_credit",
 )
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+FORBIDDEN_RAW_FIELDS = {
+    "bot_token",
+    "database_url",
+    "db_url",
+    "invoice_payload",
+    "provider_payment_charge_id",
+    "raw_provider_data",
+    "redis_url",
+    "runtime_env",
+    "telegram_payment_charge_id",
+}
 SECRET_PATTERNS = (
     re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{35,}\b"),
     re.compile(r"(?i)\b(api[_-]?key|token|secret|password|credential)\b\s*[:=]\s*['\"]?[^'\"\s]{8,}"),
@@ -57,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("Payment sandbox evidence contains secret-like values")
 
     payload = json.loads(payload_text)
+    validate_no_forbidden_raw_fields(payload)
     validate_text_fields(payload)
     validate_true_fields(payload)
     validate_payment_observations(payload)
@@ -82,11 +99,28 @@ def validate_true_fields(payload: dict[str, object]) -> None:
             raise SystemExit(f"{field} must be true")
 
 
+def validate_no_forbidden_raw_fields(payload: object, *, path: str = "$") -> None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if str(key).lower() in FORBIDDEN_RAW_FIELDS:
+                raise SystemExit(f"{path}.{key} must not contain raw payment or credential data")
+            validate_no_forbidden_raw_fields(value, path=f"{path}.{key}")
+    elif isinstance(payload, list):
+        for index, item in enumerate(payload):
+            validate_no_forbidden_raw_fields(item, path=f"{path}[{index}]")
+
+
 def validate_payment_observations(payload: dict[str, object]) -> None:
     if payload["invoice_payload_prefix"] != "dtbpay":
         raise SystemExit("invoice_payload_prefix must be dtbpay")
+    if payload["invoice_payload_format"] != "dtbpay:{payment_id}:{idempotency_key}":
+        raise SystemExit("invoice_payload_format must be dtbpay:{payment_id}:{idempotency_key}")
     if payload["credited_plan"] not in {"plus", "pro"}:
         raise SystemExit("credited_plan must be plus or pro")
+    if payload["payment_status_after_success"] != "credited":
+        raise SystemExit("payment_status_after_success must be credited")
+    if payload["subscription_status_after_credit"] != "active":
+        raise SystemExit("subscription_status_after_credit must be active")
     for field in ("invoice_payload_sha256", "telegram_payment_charge_id_sha256"):
         if not SHA256_RE.fullmatch(payload[field]):
             raise SystemExit(f"{field} must be a SHA-256 hex digest")

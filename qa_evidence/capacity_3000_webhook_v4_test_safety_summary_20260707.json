@@ -1,0 +1,85 @@
+{
+  "evidence_file": "qa_evidence/capacity_3000_webhook_v4_test_safety_rerun_20260707.json",
+  "commit_under_test": "44e2bd4456f55b8c35f77b6a5f2a44b2c7762541",
+  "phase": "phase4",
+  "variant": "caddy_process_front_proxy_8ingress_sharded_48app_24dispatch_2persist_1outbox",
+  "measurement": "capacity_3000_burst",
+  "passed": true,
+  "requests": {
+    "requested": 3000,
+    "accepted": 3000,
+    "errors": 0,
+    "http_500": 0,
+    "success_rate": 1.0
+  },
+  "http_latency_ms": {
+    "p50": 137.603,
+    "p95": 406.385,
+    "p99": 598.04,
+    "max": 971.337,
+    "p95_limit": 500.0,
+    "p99_limit": 1500.0
+  },
+  "event_validation": {
+    "passed": true,
+    "expected_count": 3000,
+    "persisted_count": 3000,
+    "lost_count": 0,
+    "duplicate_update_count": 0,
+    "duplicate_quiz_answer_count": 0,
+    "outbox_missing": 0,
+    "outbox_bad_status_count": 0,
+    "outbox_done": 3000
+  },
+  "queue_processing": {
+    "drained": true,
+    "dead_letter_total": 0,
+    "webhook_stream_length": 0,
+    "webhook_pending": 0,
+    "webhook_lag": 0,
+    "webhook_processing_lag_p95_ms": 568.0,
+    "answer_persistence_stream_length": 0,
+    "answer_persistence_pending": 0,
+    "answer_persistence_lag": 0,
+    "answer_persistence_processing_lag_p95_ms": 2485.0
+  },
+  "pgbouncer": {
+    "max_cl_waiting": 0.0,
+    "max_cl_active": 27.0,
+    "max_sv_active": 23.0,
+    "pool_mode": "transaction",
+    "default_pool_size": "40",
+    "reserve_pool_size": "20",
+    "errors": 0
+  },
+  "postgres_lock_sampling": {
+    "max_lock_waiting_backends": 0.0,
+    "max_ungranted_locks": 0.0,
+    "max_blocking_chains": 0.0,
+    "lock_wait_rows": 0,
+    "blocking_chain_rows": 0,
+    "errors": 1
+  },
+  "cleanup": {
+    "dtb_load_containers_running_after_gate": 0
+  },
+  "acceptance_criteria": {
+    "scripts_local_ci_passed": true,
+    "full_3000_gate_passed": true,
+    "accepted_3000_of_3000": true,
+    "http_errors_zero": true,
+    "http_500_zero": true,
+    "http_p95_within_limit": true,
+    "http_p99_within_limit": true,
+    "lost_zero": true,
+    "duplicates_zero": true,
+    "persisted_3000": true,
+    "dlq_zero": true,
+    "queues_drained": true,
+    "outbox_pending_zero": true,
+    "processing_lag_p95_within_limit": true,
+    "pgbouncer_waiting_zero": true,
+    "postgres_lock_waits_zero": true,
+    "zombie_containers_zero": true
+  }
+}

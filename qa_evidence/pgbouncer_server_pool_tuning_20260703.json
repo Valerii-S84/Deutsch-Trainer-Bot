@@ -1,0 +1,133 @@
+{
+  "generated_at_utc": "2026-07-03T11:36:39.743675+00:00",
+  "scope": "PgBouncer server-side pool tuning for tx_start/answer.validate on 1x1 webhook path.",
+  "rules_observed": [
+    "No app-side QueuePool 100/0 retry was used.",
+    "Candidates were accepted only when isolated profile and end-to-end clean webhook evidence improved against an apples-to-apples baseline."
+  ],
+  "sampled_profile_candidates": [
+    {
+      "name": "default_pool_size_20",
+      "source": "qa_evidence/webhook_1x1_redis_reuse_pgbouncer_stats_20260703.json",
+      "profile_source": "qa_evidence/webhook_path_latency_breakdown_20260703_redis_reuse_detail.json",
+      "pgbouncer_stats_source": "qa_evidence/pgbouncer_pool_stats_20260703.json",
+      "rps": 15.628,
+      "p95_ms": 15716.194,
+      "answer_validate_p95_ms": 2496.975,
+      "tx_start_p95_ms": 1906.388,
+      "pgbouncer_summary": {
+        "target_database": "webhook_1x1_redis_shared_pgbouncer20",
+        "samples": 16,
+        "pool_rows": 16,
+        "max_cl_active": 22.0,
+        "max_cl_waiting": 60.0,
+        "max_sv_active": 20.0,
+        "max_sv_idle": 20.0,
+        "max_sv_used": 0.0,
+        "maxwait": 1.0,
+        "maxwait_us": 766196.0,
+        "config": {
+          "pool_mode": "transaction",
+          "max_client_conn": "200",
+          "default_pool_size": "20",
+          "max_db_connections": "0",
+          "reserve_pool_size": "5",
+          "reserve_pool_timeout": "5",
+          "server_lifetime": "3600",
+          "query_timeout": "0"
+        },
+        "errors": 0
+      }
+    },
+    {
+      "name": "default_pool_size_40",
+      "source": "qa_evidence/webhook_1x1_pgbouncer_server40_20260703.json",
+      "profile_source": "qa_evidence/webhook_path_latency_breakdown_20260703_pgbouncer_server40_detail.json",
+      "pgbouncer_stats_source": "qa_evidence/pgbouncer_pool_stats_20260703_server40.json",
+      "rps": 23.821,
+      "p95_ms": 9528.412,
+      "answer_validate_p95_ms": 1197.349,
+      "tx_start_p95_ms": 905.396,
+      "pgbouncer_summary": {
+        "target_database": "webhook_1x1_pgbouncer_server40",
+        "samples": 14,
+        "pool_rows": 14,
+        "max_cl_active": 41.0,
+        "max_cl_waiting": 83.0,
+        "max_sv_active": 40.0,
+        "max_sv_idle": 39.0,
+        "max_sv_used": 0.0,
+        "maxwait": 0.0,
+        "maxwait_us": 749824.0,
+        "config": {
+          "pool_mode": "transaction",
+          "max_client_conn": "200",
+          "default_pool_size": "40",
+          "max_db_connections": "0",
+          "reserve_pool_size": "5",
+          "reserve_pool_timeout": "5",
+          "server_lifetime": "3600",
+          "query_timeout": "0"
+        },
+        "errors": 0
+      },
+      "decision": "accepted_for_clean_validation"
+    },
+    {
+      "name": "default_pool_size_80",
+      "source": "qa_evidence/webhook_1x1_pgbouncer_server80_20260703.json",
+      "profile_source": "qa_evidence/webhook_path_latency_breakdown_20260703_pgbouncer_server80_detail.json",
+      "pgbouncer_stats_source": "qa_evidence/pgbouncer_pool_stats_20260703_server80.json",
+      "rps": 20.732,
+      "p95_ms": 9702.836,
+      "answer_validate_p95_ms": 1118.294,
+      "tx_start_p95_ms": 677.62,
+      "pgbouncer_summary": {
+        "target_database": "webhook_1x1_pgbouncer_server80",
+        "samples": 15,
+        "pool_rows": 15,
+        "max_cl_active": 60.0,
+        "max_cl_waiting": 45.0,
+        "max_sv_active": 57.0,
+        "max_sv_idle": 72.0,
+        "max_sv_used": 0.0,
+        "maxwait": 0.0,
+        "maxwait_us": 691140.0,
+        "config": {
+          "pool_mode": "transaction",
+          "max_client_conn": "200",
+          "default_pool_size": "80",
+          "max_db_connections": "0",
+          "reserve_pool_size": "5",
+          "reserve_pool_timeout": "5",
+          "server_lifetime": "3600",
+          "query_timeout": "0"
+        },
+        "errors": 0
+      },
+      "decision": "rejected_end_to_end_rps_regression_vs_server40"
+    }
+  ],
+  "clean_end_to_end_validation": {
+    "baseline_default_pool_size_20": {
+      "source": "qa_evidence/webhook_1x1_final_default20_20260703.json",
+      "rps": 23.482,
+      "p95_ms": 9514.872,
+      "errors": 0
+    },
+    "accepted_default_pool_size_40": {
+      "source": "qa_evidence/webhook_1x1_final_server40_20260703.json",
+      "rps": 24.893,
+      "p95_ms": 9270.066,
+      "errors": 0
+    },
+    "delta": {
+      "rps": 1.411,
+      "p95_ms": -244.806
+    }
+  },
+  "decision": {
+    "accepted_candidate": "default_pool_size_40",
+    "verdict": "server_pool_contributes_to_tx_start; default_pool_size_40 is the best tested server-side-only candidate, but it does not recover the older 33.347 rps checkpoint."
+  }
+}

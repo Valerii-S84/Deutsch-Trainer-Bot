@@ -306,15 +306,12 @@ async def run_ingress_server(args: argparse.Namespace) -> int:
         ready_path=args.ready_path,
         health_timeout_seconds=args.health_timeout_seconds,
     )
-    client = ClientSession(timeout=ClientTimeout(total=args.upstream_timeout_seconds))
+    client = _create_ingress_client(args)
     app = _create_ingress_app(args, state=state, client=client)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host=args.listen_host, port=args.listen_port)
-    health_task = asyncio.create_task(
-        _health_loop(args, state=state, client=client),
-        name="loadtest-ingress-health",
-    )
+    site = web.TCPSite(runner, host=args.listen_host, port=args.listen_port, backlog=args.listen_backlog)
+    health_task = asyncio.create_task(_health_loop(args, state=state, client=client), name="loadtest-ingress-health")
     try:
         await state.refresh(client)
         await site.start()
@@ -325,63 +322,6 @@ async def run_ingress_server(args: argparse.Namespace) -> int:
             await health_task
         await client.close()
         await runner.cleanup()
-
-
-def _create_ingress_app(
-    args: argparse.Namespace,
-    *,
-    state: RoundRobinUpstreams,
-    client: ClientSession,
-) -> web.Application:
-
-    async def ingress_health(_request: web.Request) -> web.Response:
-        return web.Response(text="ok", status=200)
-
-    async def proxy(request: web.Request) -> web.Response:
-        upstream = await state.choose()
-        if upstream is None:
-            return web.Response(text="no healthy upstreams", status=503)
-        forwarded_headers = {
-            key: value
-            for key, value in request.headers.items()
-            if key.lower() not in {"host", "content-length"}
-        }
-        forwarded_headers["X-Forwarded-For"] = request.remote or "127.0.0.1"
-        try:
-            async with client.request(
-                request.method,
-                f"{upstream.base_url}{request.path_qs}",
-                data=await request.read(),
-                headers=forwarded_headers,
-                allow_redirects=False,
-            ) as response:
-                body = await response.read()
-                response_headers = {
-                    key: value
-                    for key, value in response.headers.items()
-                    if key.lower() not in {"content-length", "transfer-encoding", "connection"}
-                }
-                return web.Response(status=response.status, headers=response_headers, body=body)
-        except (ClientError, TimeoutError, OSError):
-            await state.mark_unhealthy(upstream)
-            return web.Response(text="upstream unavailable", status=503)
-
-    app = web.Application()
-    app.router.add_get(args.ingress_health_path, ingress_health)
-    app.router.add_route("*", args.ready_path, proxy)
-    app.router.add_route("*", args.webhook_path, proxy)
-    return app
-
-
-async def _health_loop(
-    args: argparse.Namespace,
-    *,
-    state: RoundRobinUpstreams,
-    client: ClientSession,
-) -> None:
-    while True:
-        await state.refresh(client)
-        await asyncio.sleep(args.health_interval_seconds)
 
 
 def _validate_ingress_args(args: argparse.Namespace) -> None:

@@ -1,0 +1,540 @@
+{
+  "generated_at_utc": "2026-07-03T11:33:56.104760+00:00",
+  "phase": "phase4",
+  "repo_state": {
+    "commit": "10b0d31dcf01ffb37df94be2659915f06afe4c19",
+    "branch": "fix/trainer-answer-fast-path-v2",
+    "status_short": [
+      "M app/bot/dispatcher.py",
+      " M app/bot/handlers/training.py",
+      " M app/bot/middlewares/backpressure.py",
+      " M app/bot/middlewares/logging.py",
+      " M app/bot/middlewares/security.py",
+      " M app/config.py",
+      " M app/main.py",
+      " M app/quiz_bank/service.py",
+      " M app/runtime/fake_telegram.py",
+      " M app/runtime/idempotency_locks.py",
+      " M app/runtime/redis.py",
+      " M app/runtime/timing.py",
+      " M app/security/rate_limits.py",
+      " M app/services/training_answer_fast_path.py",
+      " M app/services/training_answer_flow.py",
+      " M scripts/load_stabilization_orchestrator.py",
+      " M scripts/load_stabilization_support.py",
+      " M scripts/secret_scan.py",
+      " M tests/test_bot_routers.py",
+      " M tests/test_foundation.py",
+      " M tests/test_load_stabilization_orchestrator.py",
+      " M tests/test_quiz_bank_service.py",
+      " M tests/test_runtime_redis.py",
+      " M tests/test_security_controls.py",
+      "?? .secret-scan-allowlist",
+      "?? .tmp/webhook_1x1_after_local_guard_spec_20260703.json",
+      "?? .tmp/webhook_1x1_current_vs_tuned_spec_20260703.json",
+      "?? .tmp/webhook_breakdown_tuned_spec_20260703.json",
+      "?? .tmp/webhook_profile_detail_post_local_guard_spec_20260703.json",
+      "?? .tmp/webhook_profile_detail_reuse_no_pre_ping_spec_20260703.json",
+      "?? .tmp/webhook_profile_detail_reuse_spec_20260703.json",
+      "?? .tmp/webhook_profile_detail_spec_20260703.json",
+      "?? app/runtime/driver_profiling.py",
+      "?? app/runtime/webhook_handler.py",
+      "?? app/runtime/webhook_profiling.py",
+      "?? tests/test_idempotency_locks.py",
+      "?? tests/test_webhook_profiling.py"
+    ]
+  },
+  "docker_version": {
+    "ok": true,
+    "details": {
+      "Client": {
+        "Version": "28.4.0",
+        "ApiVersion": "1.51",
+        "DefaultAPIVersion": "1.51",
+        "GitCommit": "d8eb465",
+        "GoVersion": "go1.24.7",
+        "Os": "linux",
+        "Arch": "amd64",
+        "BuildTime": "Wed Sep  3 20:56:28 2025",
+        "Context": "default"
+      },
+      "Server": {
+        "Platform": {
+          "Name": "Docker Desktop 4.46.0 (204649)"
+        },
+        "Components": [
+          {
+            "Name": "Engine",
+            "Version": "28.4.0",
+            "Details": {
+              "ApiVersion": "1.51",
+              "Arch": "amd64",
+              "BuildTime": "Wed Sep  3 20:57:37 2025",
+              "Experimental": "false",
+              "GitCommit": "249d679",
+              "GoVersion": "go1.24.7",
+              "KernelVersion": "6.6.87.2-microsoft-standard-WSL2",
+              "MinAPIVersion": "1.24",
+              "Os": "linux"
+            }
+          },
+          {
+            "Name": "containerd",
+            "Version": "1.7.27",
+            "Details": {
+              "GitCommit": "05044ec0a9a75232cad458027ca83437aae3f4da"
+            }
+          },
+          {
+            "Name": "runc",
+            "Version": "1.2.5",
+            "Details": {
+              "GitCommit": "v1.2.5-0-g59923ef"
+            }
+          },
+          {
+            "Name": "docker-init",
+            "Version": "0.19.0",
+            "Details": {
+              "GitCommit": "de40ad0"
+            }
+          }
+        ],
+        "Version": "28.4.0",
+        "ApiVersion": "1.51",
+        "MinAPIVersion": "1.24",
+        "GitCommit": "249d679",
+        "GoVersion": "go1.24.7",
+        "Os": "linux",
+        "Arch": "amd64",
+        "KernelVersion": "6.6.87.2-microsoft-standard-WSL2",
+        "BuildTime": "2025-09-03T20:57:37.000000000+00:00"
+      }
+    }
+  },
+  "baseline_variant": "webhook-1x1-final-default20",
+  "variants": [
+    {
+      "name": "webhook-1x1-final-default20",
+      "role": "baseline",
+      "status": "passed",
+      "prepare": {
+        "migrate": {
+          "command": "'/mnt/c/Users/User/Desktop/Deutsch Trainer Bot/.venv/bin/python' -m alembic upgrade head",
+          "parser": "text",
+          "returncode": 0,
+          "ok": true,
+          "duration_seconds": 8.347,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_excerpt": [],
+          "stderr_excerpt": [],
+          "parsed": {
+            "text": ""
+          },
+          "parse_error": null,
+          "name": "migrate",
+          "compare_paths": []
+        },
+        "seed_worker_pipeline": {
+          "command": "'/mnt/c/Users/User/Desktop/Deutsch Trainer Bot/.venv/bin/python' scripts/worker_pipeline_v2_regression_isolation.py seed --session-count 5000",
+          "parser": "json",
+          "returncode": 0,
+          "ok": true,
+          "duration_seconds": 9.183,
+          "stdout_sha256": "65f857cb4fb9f2df48b3907b5585a677d0efc20508df13cc87290d7850680090",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_excerpt": [
+            "{",
+            "  \"seeded\": {",
+            "    \"users\": 100000,",
+            "    \"active_sessions\": 5000,",
+            "    \"pending_question_payloads\": 5000,",
+            "    \"question_references\": 1,",
+            "    \"catalog_id\": \"dtb-evidence-20260701\"",
+            "  }",
+            "}"
+          ],
+          "stderr_excerpt": [],
+          "parsed": {
+            "seeded": {
+              "users": 100000,
+              "active_sessions": 5000,
+              "pending_question_payloads": 5000,
+              "question_references": 1,
+              "catalog_id": "dtb-evidence-20260701"
+            }
+          },
+          "parse_error": null,
+          "name": "seed_worker_pipeline",
+          "compare_paths": []
+        }
+      },
+      "measurements": {
+        "steady_500_requests": {
+          "command": "'/mnt/c/Users/User/Desktop/Deutsch Trainer Bot/.venv/bin/python' scripts/load_stabilization_orchestrator.py webhook-load --base-url http://127.0.0.1:57141 --webhook-path /telegram/webhook --secret-token loadtest-webhook-secret --target-rps 100 --total-requests 500 --session-offset 0 --seeded-session-count 5000 --concurrency 100 --arrival-mode steady",
+          "parser": "json",
+          "returncode": 0,
+          "ok": true,
+          "duration_seconds": 23.366,
+          "stdout_sha256": "662717ec3d9e372f9c25554b1227c5b2f57112790a668a4fc4b5a87a8ccf4e9a",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_excerpt": [
+            "{",
+            "  \"requests\": {",
+            "    \"requested\": 500,",
+            "    \"accepted\": 500,",
+            "    \"errors\": 0,",
+            "    \"success_rate\": 1.0,",
+            "...",
+            "    \"open_loop_target_rps\": 100.0,",
+            "    \"arrival_mode\": \"steady\",",
+            "    \"achieved_rps\": 23.482,",
+            "    \"max_in_flight_requests\": 100",
+            "  }",
+            "}"
+          ],
+          "stderr_excerpt": [],
+          "parsed": {
+            "requests": {
+              "requested": 500,
+              "accepted": 500,
+              "errors": 0,
+              "success_rate": 1.0,
+              "status_counts": {
+                "200": 500
+              },
+              "error_types": {}
+            },
+            "arrival": {
+              "mode": "steady",
+              "burst_window_seconds": null,
+              "burst_interval_seconds": null,
+              "scheduled_dispatch_span_sec": 4.99
+            },
+            "latency_ms": {
+              "count": 500.0,
+              "p50": 2667.971,
+              "p95": 9514.872,
+              "p99": 12759.808,
+              "max": 16920.814
+            },
+            "answer_p95_ms": 9514.872,
+            "dispatch_lag_ms": {
+              "count": 500.0,
+              "p50": 216.619,
+              "p95": 1193.303,
+              "p99": 1284.109,
+              "max": 1308.645
+            },
+            "harness_validation": {
+              "open_loop_target_rps": 100.0,
+              "arrival_mode": "steady",
+              "achieved_rps": 23.482,
+              "max_in_flight_requests": 100
+            }
+          },
+          "parse_error": null,
+          "name": "steady_500_requests",
+          "compare_paths": [
+            "requests.accepted",
+            "requests.errors",
+            "requests.success_rate",
+            "answer_p95_ms",
+            "latency_ms.p95",
+            "harness_validation.achieved_rps"
+          ]
+        }
+      },
+      "runtime": {
+        "postgres": {
+          "container": "dtb-load-pg-webhook-1x1-final-default20-f0a4daaa",
+          "image": "postgres:16-alpine",
+          "host_port": 50823,
+          "database": "webhook_1x1_final_default20",
+          "settings": {}
+        },
+        "redis": {
+          "container": "dtb-load-redis-webhook-1x1-final-default20-f0a4daaa",
+          "image": "redis:7-alpine",
+          "host_port": 56381
+        },
+        "pgbouncer": {
+          "container": "dtb-load-pgb-webhook-1x1-final-default20-f0a4daaa",
+          "image": "edoburu/pgbouncer:latest",
+          "host_port": 51643,
+          "settings": {
+            "pool_mode": "transaction",
+            "max_client_conn": "200",
+            "default_pool_size": "20",
+            "reserve_pool_size": "5",
+            "ignore_startup_parameters": "extra_float_digits",
+            "server_reset_query": "DISCARD ALL"
+          }
+        },
+        "network": "dtb-load-net-webhook-1x1-final-default20-f0a4daaa",
+        "keep_running": false,
+        "stack_started": true,
+        "stack": {
+          "mode": "webhook_multi_instance",
+          "webhook_path": "/telegram/webhook",
+          "app": [
+            {
+              "role": "app",
+              "runner": "process",
+              "identifier": "app-35956",
+              "replica_index": 1,
+              "dial_address": "127.0.0.1:57141",
+              "host_port": 57141,
+              "internal_port": 8080,
+              "url": "http://127.0.0.1:57141",
+              "ready_path": "/ready",
+              "log_path": "/mnt/c/Users/User/Desktop/Deutsch Trainer Bot/.tmp/load-stabilization-webhook-1x1-final-default20-f0a4daaa/app-1.log"
+            }
+          ],
+          "worker": [
+            {
+              "role": "worker",
+              "runner": "process",
+              "identifier": "worker-35955",
+              "replica_index": 1,
+              "dial_address": null,
+              "host_port": null,
+              "internal_port": null,
+              "url": null,
+              "ready_path": null,
+              "log_path": "/mnt/c/Users/User/Desktop/Deutsch Trainer Bot/.tmp/load-stabilization-webhook-1x1-final-default20-f0a4daaa/worker-1.log"
+            }
+          ],
+          "ingress": null
+        },
+        "cleanup_completed": true,
+        "database_url_redacted": "postgresql+asyncpg://postgres:***@127.0.0.1:51643/webhook_1x1_final_default20",
+        "direct_database_url_redacted": "postgresql+asyncpg://postgres:***@127.0.0.1:50823/webhook_1x1_final_default20",
+        "redis_url_redacted": "redis://127.0.0.1:56381/0"
+      },
+      "container_logs": {
+        "postgres": {
+          "container": "dtb-load-pg-webhook-1x1-final-default20-f0a4daaa",
+          "returncode": 0,
+          "excerpt": [
+            "The files belonging to this database system will be owned by user \"postgres\".",
+            "This user must also own the server process.",
+            "The database cluster will be initialized with locale \"en_US.utf8\".",
+            "The default database encoding has accordingly been set to \"UTF8\".",
+            "The default text search configuration will be set to \"english\".",
+            "Data page checksums are disabled.",
+            "fixing permissions on existing directory /var/lib/postgresql/data ... ok",
+            "creating subdirectories ... ok",
+            "selecting dynamic shared memory implementation ... posix",
+            "selecting default max_connections ... 100",
+            "selecting default shared_buffers ... 128MB",
+            "selecting default time zone ... UTC",
+            "creating configuration files ... ok",
+            "running bootstrap script ... ok",
+            "performing post-bootstrap initialization ... ok",
+            "syncing data to disk ... ok",
+            "Success. You can now start the database server using:",
+            "    pg_ctl -D /var/lib/postgresql/data -l logfile start",
+            "waiting for server to start....2026-07-03 11:34:01.002 UTC [59] LOG:  starting PostgreSQL 16.12 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+            "2026-07-03 11:34:01.006 UTC [59] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"",
+            "...",
+            "waiting for server to shut down...2026-07-03 11:34:01.185 UTC [59] LOG:  received fast shutdown request",
+            ".2026-07-03 11:34:01.189 UTC [59] LOG:  aborting any active transactions",
+            "2026-07-03 11:34:01.193 UTC [59] LOG:  background worker \"logical replication launcher\" (PID 65) exited with exit code 1",
+            "2026-07-03 11:34:01.193 UTC [60] LOG:  shutting down",
+            "2026-07-03 11:34:01.197 UTC [60] LOG:  checkpoint starting: shutdown immediate",
+            "2026-07-03 11:34:01.522 UTC [60] LOG:  checkpoint complete: wrote 926 buffers (5.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.045 s, sync=0.266 s, total=0.329 s; sync files=301, longest=0.006 s, average=0.001 s; distance=4272 kB, estimate=4272 kB; lsn=0/191E948, redo lsn=0/191E948",
+            "2026-07-03 11:34:01.542 UTC [59] LOG:  database system is shut down",
+            " done",
+            "server stopped",
+            "PostgreSQL init process complete; ready for start up.",
+            "sh: locale: not found",
+            "2026-07-03 11:33:58.888 UTC [41] WARNING:  no usable system locales were found",
+            "initdb: warning: enabling \"trust\" authentication for local connections",
+            "initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.",
+            "2026-07-03 11:34:01.632 UTC [1] LOG:  starting PostgreSQL 16.12 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+            "2026-07-03 11:34:01.632 UTC [1] LOG:  listening on IPv4 address \"0.0.0.0\", port 5432",
+            "2026-07-03 11:34:01.632 UTC [1] LOG:  listening on IPv6 address \"::\", port 5432",
+            "2026-07-03 11:34:01.640 UTC [1] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"",
+            "2026-07-03 11:34:01.651 UTC [82] LOG:  database system was shut down at 2026-07-03 11:34:01 UTC",
+            "2026-07-03 11:34:01.662 UTC [1] LOG:  database system is ready to accept connections"
+          ],
+          "checkpoint_lines": [
+            "2026-07-03 11:34:01.197 UTC [60] LOG:  checkpoint starting: shutdown immediate",
+            "2026-07-03 11:34:01.522 UTC [60] LOG:  checkpoint complete: wrote 926 buffers (5.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.045 s, sync=0.266 s, total=0.329 s; sync files=301, longest=0.006 s, average=0.001 s; distance=4272 kB, estimate=4272 kB; lsn=0/191E948, redo lsn=0/191E948"
+          ]
+        },
+        "redis": {
+          "container": "dtb-load-redis-webhook-1x1-final-default20-f0a4daaa",
+          "returncode": 0,
+          "excerpt": [],
+          "checkpoint_lines": []
+        },
+        "app": [
+          {
+            "container": "app-35956",
+            "returncode": null,
+            "excerpt": [
+              "2026-07-03 13:34:42,182 INFO __main__ Redis pool warmup completed: requested=128 succeeded=128 failed=0",
+              "2026-07-03 13:34:42,205 INFO __main__ Starting webhook server mode with path=/telegram/webhook",
+              "2026-07-03 13:34:42,206 INFO __main__ Webhook server is listening on 127.0.0.1:57141",
+              "2026-07-03 13:34:42,544 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:34:42 +0200] \"GET /ready HTTP/1.1\" 200 560 \"-\" \"Python-urllib/3.12\"",
+              "2026-07-03 13:34:46,618 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,624 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,625 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,627 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,630 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,631 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,633 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,634 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,649 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,650 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,651 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,652 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,653 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,654 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,672 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:34:46,673 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "...",
+              "2026-07-03 13:35:05,673 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:35:05,675 INFO app.bot.middlewares.logging incoming update: id=None type=Update user_id=None chat_id=None callback_route=None",
+              "2026-07-03 13:35:05,689 INFO aiogram.event Update id=1000227 is handled. Duration 137 ms by bot id=123456",
+              "2026-07-03 13:35:05,692 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\"",
+              "2026-07-03 13:35:05,720 INFO aiogram.event Update id=1000467 is handled. Duration 146 ms by bot id=123456",
+              "2026-07-03 13:35:05,723 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\"",
+              "2026-07-03 13:35:05,754 INFO aiogram.event Update id=1000422 is handled. Duration 154 ms by bot id=123456",
+              "2026-07-03 13:35:05,755 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\"",
+              "2026-07-03 13:35:05,774 INFO aiogram.event Update id=1000480 is handled. Duration 151 ms by bot id=123456",
+              "2026-07-03 13:35:05,775 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\"",
+              "2026-07-03 13:35:05,787 INFO aiogram.event Update id=1000468 is handled. Duration 141 ms by bot id=123456",
+              "2026-07-03 13:35:05,788 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\"",
+              "2026-07-03 13:35:05,792 INFO aiogram.event Update id=1000375 is handled. Duration 138 ms by bot id=123456",
+              "2026-07-03 13:35:05,793 INFO aiogram.event Update id=1000353 is handled. Duration 137 ms by bot id=123456",
+              "2026-07-03 13:35:05,794 INFO aiogram.event Update id=1000342 is handled. Duration 129 ms by bot id=123456",
+              "2026-07-03 13:35:05,795 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\"",
+              "2026-07-03 13:35:05,795 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\"",
+              "2026-07-03 13:35:05,796 INFO aiogram.event Update id=1000336 is handled. Duration 128 ms by bot id=123456",
+              "2026-07-03 13:35:05,797 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\"",
+              "2026-07-03 13:35:05,797 INFO aiohttp.access 127.0.0.1 [03/Jul/2026:13:35:05 +0200] \"POST /telegram/webhook HTTP/1.1\" 200 145 \"-\" \"python-httpx/0.28.1\""
+            ],
+            "checkpoint_lines": []
+          }
+        ],
+        "worker": [
+          {
+            "container": "worker-35955",
+            "returncode": null,
+            "excerpt": [],
+            "checkpoint_lines": []
+          }
+        ],
+        "ingress": null,
+        "pgbouncer": {
+          "container": "dtb-load-pgb-webhook-1x1-final-default20-f0a4daaa",
+          "returncode": 0,
+          "excerpt": [
+            "2026-07-03 11:34:04.347 UTC [1] LOG kernel file descriptor limit: 1048576 (hard: 1048576); max_client_conn: 200, max expected fd use: 232",
+            "2026-07-03 11:34:04.347 UTC [1] LOG listening on 0.0.0.0:6432",
+            "2026-07-03 11:34:04.349 UTC [1] LOG listening on unix:/tmp/.s.PGSQL.6432",
+            "2026-07-03 11:34:04.349 UTC [1] LOG process up: PgBouncer 1.25.2, libevent 2.1.12-stable (epoll), adns: evdns2, tls: OpenSSL 3.5.6 7 Apr 2026",
+            "2026-07-03 11:34:28.608 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:48688 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:34:28.611 UTC [1] LOG S-0x722c4edb33b0: webhook_1x1_final_default20/postgres@192.168.32.2:5432 new connection to server (from 192.168.32.4:60994)",
+            "2026-07-03 11:34:28.668 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:48688 closing because: client close request (age=0s)",
+            "2026-07-03 11:34:29.674 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:48692 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:34:29.684 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:48692 closing because: client close request (age=0s)",
+            "2026-07-03 11:34:30.688 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:48702 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:34:30.699 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:48702 closing because: client close request (age=0s)",
+            "2026-07-03 11:34:31.704 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60916 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:34:31.717 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60916 closing because: client close request (age=0s)",
+            "2026-07-03 11:34:32.721 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60928 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:34:32.731 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60928 closing because: client close request (age=0s)",
+            "2026-07-03 11:34:33.736 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60944 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:34:33.746 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60944 closing because: client close request (age=0s)",
+            "2026-07-03 11:34:34.754 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60950 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:34:34.769 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60950 closing because: client close request (age=0s)",
+            "2026-07-03 11:34:35.774 UTC [1] LOG C-0x722c4edc1390: webhook_1x1_final_default20/postgres@192.168.32.1:60960 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "...",
+            "2026-07-03 11:35:05.723 UTC [1] LOG C-0x722c4ed5a4a8: webhook_1x1_final_default20/postgres@192.168.32.1:38556 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:35:05.724 UTC [1] LOG C-0x722c4edc8da0: webhook_1x1_final_default20/postgres@192.168.32.1:38572 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:35:05.749 UTC [1] LOG C-0x722c4ed601a8: webhook_1x1_final_default20/postgres@192.168.32.1:38510 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.757 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38524 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.761 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38584 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:35:05.771 UTC [1] LOG C-0x722c4ed5a1c0: webhook_1x1_final_default20/postgres@192.168.32.1:38516 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.775 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38584 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.779 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38596 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:35:05.783 UTC [1] LOG C-0x722c4ed5f608: webhook_1x1_final_default20/postgres@192.168.32.1:38534 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.789 UTC [1] LOG C-0x722c4edc7948: webhook_1x1_final_default20/postgres@192.168.32.1:38542 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.790 UTC [1] LOG C-0x722c4ed5d610: webhook_1x1_final_default20/postgres@192.168.32.1:38554 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.790 UTC [1] LOG C-0x722c4ed5a4a8: webhook_1x1_final_default20/postgres@192.168.32.1:38556 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.790 UTC [1] LOG C-0x722c4edc8da0: webhook_1x1_final_default20/postgres@192.168.32.1:38572 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.842 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38596 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.845 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38606 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:35:05.859 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38606 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.863 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38610 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:35:05.932 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38610 closing because: client close request (age=0s)",
+            "2026-07-03 11:35:05.936 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38618 login attempt: db=webhook_1x1_final_default20 user=postgres tls=no replication=no",
+            "2026-07-03 11:35:05.947 UTC [1] LOG C-0x722c4ed5ed50: webhook_1x1_final_default20/postgres@192.168.32.1:38618 closing because: client close request (age=0s)"
+          ],
+          "checkpoint_lines": []
+        }
+      }
+    }
+  ],
+  "comparisons": [],
+  "status": "passed",
+  "phase_spec": {
+    "migrate": true,
+    "pgbouncer": {
+      "pool_mode": "transaction",
+      "max_client_conn": 200,
+      "default_pool_size": 20,
+      "reserve_pool_size": 5,
+      "ignore_startup_parameters": "extra_float_digits",
+      "server_reset_query": "DISCARD ALL"
+    },
+    "stack": {
+      "app": {
+        "runner": "process",
+        "env": {
+          "WEBHOOK_BIND_HOST": "127.0.0.1",
+          "WEBHOOK_BIND_PORT": "{listen_port}"
+        },
+        "command": [
+          "{python}",
+          "-m",
+          "app.main",
+          "serve-webhook"
+        ]
+      },
+      "worker": {
+        "runner": "process",
+        "command": [
+          "{python}",
+          "-m",
+          "app.workers.run_outbox"
+        ]
+      },
+      "ingress": false
+    },
+    "variants": [
+      {
+        "name": "webhook-1x1-final-default20",
+        "role": "baseline",
+        "env": {
+          "DB_CONNECTION_BACKEND": "pgbouncer_transaction",
+          "REDIS_WARMUP_CONNECTIONS": "128"
+        }
+      }
+    ],
+    "plans": [
+      {
+        "name": "steady_500_requests",
+        "mode": "steady",
+        "target_rps": 100,
+        "total_requests": 500,
+        "concurrency": 100
+      }
+    ]
+  }
+}

@@ -18,6 +18,7 @@ dependencies = [
   "pydantic>=2.7.4",
   "msgpack>=1.2.1",
   "tzdata>=2025.2",
+  "uvicorn[standard]>=0.29.0",
 ]
 
 [project.optional-dependencies]

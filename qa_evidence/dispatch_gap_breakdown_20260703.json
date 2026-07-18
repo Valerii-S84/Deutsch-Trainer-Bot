@@ -1,0 +1,58 @@
+{
+  "generated_at_utc": "2026-07-03T11:36:39.743675+00:00",
+  "scope": "Updated webhook.dispatch_ms gap breakdown after Redis rate limiter hardening and PgBouncer server40 candidate.",
+  "source_files": [
+    "qa_evidence/webhook_path_latency_breakdown_20260703_current_detail.json",
+    "qa_evidence/webhook_path_latency_breakdown_20260703_redis_reuse_detail.json",
+    "qa_evidence/webhook_path_latency_breakdown_20260703_pgbouncer_server40_detail.json"
+  ],
+  "p95_progression_ms": {
+    "before_redis_fix": {
+      "webhook_dispatch_ms": 2580.298,
+      "security_rate_limit_ms": 561.077,
+      "rate_limit_redis": {
+        "command_count_p95": 2.0,
+        "command_ms_p95": 561.024,
+        "connect_ms_p95": 468.063,
+        "pool_acquire_ms_p95": 472.243,
+        "pool_new_connection_count_p95": null,
+        "read_response_ms_p95": 177.964
+      },
+      "dispatch_unattributed_after_known_gap_ms": 552.88
+    },
+    "after_redis_fix_default20_profiled": {
+      "webhook_dispatch_ms": 3691.686,
+      "security_rate_limit_ms": 134.746,
+      "rate_limit_redis": {
+        "command_count_p95": 1.0,
+        "command_ms_p95": 134.683,
+        "connect_ms_p95": null,
+        "pool_acquire_ms_p95": 0.156,
+        "pool_new_connection_count_p95": null,
+        "read_response_ms_p95": 133.884
+      },
+      "dispatch_unattributed_after_known_gap_ms": 372.9
+    },
+    "after_pgbouncer_server40_profiled": {
+      "webhook_dispatch_ms": 2228.667,
+      "security_rate_limit_ms": 79.465,
+      "rate_limit_redis": {
+        "command_count_p95": 1.0,
+        "command_ms_p95": 79.434,
+        "connect_ms_p95": null,
+        "pool_acquire_ms_p95": 0.086,
+        "pool_new_connection_count_p95": null,
+        "read_response_ms_p95": 79.298
+      },
+      "handler_total_ms": 1887.637,
+      "feed_update_minus_handler_total_ms": 344.128,
+      "feed_webhook_update_minus_feed_update_ms": 57.623,
+      "dispatch_unattributed_after_known_gap_ms": 318.992
+    }
+  },
+  "verdict": {
+    "redis_rate_limit_connect_gap_closed": true,
+    "remaining_gap_ms": 318.992,
+    "remaining_gap_attribution": "Residual is inside aiogram dispatch/router path after custom middleware and handler spans; it is no longer Redis connect/pool acquisition."
+  }
+}

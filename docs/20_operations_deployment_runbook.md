@@ -138,7 +138,84 @@ local unit tests. Required non-secret facts include:
 - `telegram_payment_charge_id` was present, recorded only as a SHA-256 hash in
   the evidence artifact;
 - paid subscription was credited and verified active;
-- duplicate provider event handling was verified.
+- duplicate provider event handling was verified without a second payment credit
+  and without a second subscription period.
+
+Current sandbox status: a 1 Star Telegram Stars test-mode payment was verified
+on `2026-07-16` against the isolated server runtime. The sanitized local
+artifact is `qa_evidence/telegram_stars_sandbox.json` and is intentionally
+gitignored. This does not authorize or prove a production Stars charge; production
+mode remains approval-gated.
+
+The evidence artifact must not contain raw payment identifiers, raw invoice
+payloads, provider payload dumps, runtime environment values, `BOT_TOKEN`,
+database URLs, Redis URLs or credentials. `qa_evidence/` is gitignored and is
+the expected local location for the operator-produced sandbox artifact, but the
+artifact may be stored in protected inventory instead when local policy requires
+that.
+
+Minimal sandbox evidence shape:
+
+```json
+{
+  "environment": "staging",
+  "tested_at": "<ISO-8601 UTC timestamp>",
+  "telegram_bot_username": "<bot username only>",
+  "telegram_stars_mode": "test",
+  "evidence_owner": "<operator or team>",
+  "invoice_payload_prefix": "dtbpay",
+  "invoice_payload_format": "dtbpay:{payment_id}:{idempotency_key}",
+  "invoice_payload_sha256": "<64 lowercase hex sha256>",
+  "telegram_payment_charge_id_sha256": "<64 lowercase hex sha256>",
+  "credited_plan": "plus",
+  "payment_status_after_success": "credited",
+  "subscription_status_after_credit": "active",
+  "invoice_created": true,
+  "invoice_payload_matches_expected_format": true,
+  "pre_checkout_received": true,
+  "pre_checkout_payload_matched_payment": true,
+  "pre_checkout_answered_ok": true,
+  "successful_payment_received": true,
+  "successful_payment_payload_matched_payment": true,
+  "telegram_payment_charge_id_received": true,
+  "subscription_credited": true,
+  "active_subscription_verified": true,
+  "duplicate_event_rejected": true,
+  "duplicate_event_no_second_credit": true,
+  "duplicate_event_no_second_subscription_period": true
+}
+```
+
+Sandbox execution procedure:
+
+1. Use only a staging or isolated test runtime with `TELEGRAM_STARS_MODE=test`.
+   Do not set `TELEGRAM_STARS_MODE=prod` and do not use the production bot token
+   for this gate.
+2. Start a Plus or Pro Telegram Stars invoice from the bot UI. Record only that
+   the invoice was created and that the observed payload starts with `dtbpay`.
+3. Verify the observed invoice payload format locally as
+   `dtbpay:{payment_id}:{idempotency_key}`. Do not paste the raw payload into
+   docs, logs, commits or chat.
+4. Complete the Telegram test-mode payment from the Telegram test account.
+5. Verify runtime facts from protected DB access without printing connection
+   strings or raw payment rows:
+   - the matching payment moved through pre-checkout and successful payment;
+   - `payment.status` is `credited`;
+   - `telegram_payment_charge_id` is non-empty;
+   - the subscription for the payment is `active`;
+   - replaying the same provider event is reported as duplicate/idempotent and
+     does not create another credit or subscription period.
+6. Hash the raw invoice payload and raw `telegram_payment_charge_id` locally with
+   SHA-256 and put only the hashes into the artifact.
+7. Save the sanitized JSON as `qa_evidence/telegram_stars_sandbox.json` or in
+   protected inventory, then validate it:
+
+```bash
+python scripts/payment_sandbox_evidence_check.py qa_evidence/telegram_stars_sandbox.json
+```
+
+If the validator rejects the artifact, keep the production blocker open. Do not
+loosen the validator to fit incomplete evidence.
 
 ## Runtime Mode Gate
 
