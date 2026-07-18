@@ -18,11 +18,6 @@ def jsonb() -> postgresql.JSONB:
 
 
 def upgrade() -> None:
-    op.create_index(
-        "ix_user_answers_user_topic_item",
-        "user_answers",
-        ["user_id", "level", "theme", "external_quiz_id"],
-    )
     op.create_table(
         "outbox_events",
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
@@ -66,4 +61,3 @@ def downgrade() -> None:
     op.drop_index("ix_outbox_events_type_status", table_name="outbox_events")
     op.drop_index("ix_outbox_events_status_next_attempt", table_name="outbox_events")
     op.drop_table("outbox_events")
-    op.drop_index("ix_user_answers_user_topic_item", table_name="user_answers")
