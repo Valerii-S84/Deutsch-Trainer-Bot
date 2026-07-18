@@ -69,7 +69,7 @@ async def test_register_webhook_resets_and_sets_telegram_state() -> None:
     config = app.main.WebhookRuntimeConfig(
         url="https://example.test",
         path="/telegram/webhook",
-        secret="secret-token",
+        secret="test-secret",
         request_timeout=30,
         max_connections=40,
         handle_in_background=True,
@@ -80,7 +80,7 @@ async def test_register_webhook_resets_and_sets_telegram_state() -> None:
     bot.delete_webhook.assert_awaited_once_with(drop_pending_updates=True)
     bot.set_webhook.assert_awaited_once_with(
         url="https://example.test/telegram/webhook",
-        secret_token="secret-token",
+        secret_token="test-secret",
         request_timeout=30,
         max_connections=40,
     )
