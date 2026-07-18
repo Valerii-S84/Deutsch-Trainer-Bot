@@ -54,13 +54,17 @@ def build_dispatcher(settings: Settings | None = None, *, redis_client: Redis | 
 def _security_state(settings: Settings, *, redis_client: Redis | None = None):
     if _uses_redis_security_state(settings):
         redis_client = redis_client or get_or_create_shared_redis_client(settings)
-        return (
-            RedisRateLimiter(redis_client),
-            RedisDuplicateUpdateGuard(
+        rate_limiter = RedisRateLimiter(redis_client)
+        if settings.db_app_replica_count > 1:
+            duplicate_guard = RedisDuplicateUpdateGuard(
                 redis_client,
                 ttl_seconds=settings.telegram_duplicate_update_ttl_seconds,
-            ),
-        )
+            )
+        else:
+            duplicate_guard = DuplicateUpdateGuard(
+                ttl_seconds=settings.telegram_duplicate_update_ttl_seconds,
+            )
+        return rate_limiter, duplicate_guard
     return (
         InMemoryRateLimiter(),
         DuplicateUpdateGuard(ttl_seconds=settings.telegram_duplicate_update_ttl_seconds),
@@ -84,7 +88,7 @@ def _runtime_redis_client(settings: Settings, *, redis_client: Redis | None = No
 
 
 def _admission_controller(settings: Settings, *, redis_client: Redis | None = None):
-    if redis_client is not None:
+    if redis_client is not None and settings.db_app_replica_count > 1:
         return RedisAdmissionController(
             redis_client,
             limit=settings.shared_bot_in_flight_limit,

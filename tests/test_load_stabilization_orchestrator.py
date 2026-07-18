@@ -195,6 +195,76 @@ def test_phase4_plan_command_builds_webhook_burst_command() -> None:
     assert command_spec.context["target_rps"] == "100"
 
 
+def test_phase4_plan_command_enables_pgbouncer_sampling() -> None:
+    runtime = build_runtime_spec(
+        {
+            "name": "webhook-multi",
+            "stack": {
+                "app_replicas": 1,
+                "worker_replicas": 1,
+                "ingress": False,
+            },
+        },
+        runtime_defaults(),
+    )
+
+    command_spec, needs_seed = phase4_plan_command(
+        {
+            "mode": "steady",
+            "target_rps": 100,
+            "total_requests": 500,
+            "pgbouncer_sample_output": "qa_evidence/pgbouncer_pool_stats_20260703.json",
+        },
+        runtime=runtime,
+    )
+
+    assert needs_seed is True
+    assert "--pgbouncer-sample-output" in command_spec.command
+    assert command_spec.context["pgbouncer_sample_output"] == "qa_evidence/pgbouncer_pool_stats_20260703.json"
+    assert command_spec.env["PGBOUNCER_ADMIN_DOCKER_CONTAINER"] == "{postgres_container}"
+    assert command_spec.env["PGBOUNCER_TARGET_DATABASE"] == "{postgres_db}"
+
+
+def test_summarize_pgbouncer_samples_filters_target_database() -> None:
+    from scripts.load_stabilization_orchestrator import _summarize_pgbouncer_samples
+
+    summary = _summarize_pgbouncer_samples(
+        [
+            {
+                "pools": [
+                    {
+                        "database": "bot_db",
+                        "cl_active": "10",
+                        "cl_waiting": "3",
+                        "sv_active": "20",
+                        "sv_idle": "1",
+                        "sv_used": "2",
+                        "maxwait": "0.75",
+                        "maxwait_us": "750000",
+                    },
+                    {
+                        "database": "other",
+                        "cl_active": "99",
+                        "cl_waiting": "99",
+                        "sv_active": "99",
+                    },
+                ]
+            }
+        ],
+        config_rows=[
+            {"key": "default_pool_size", "value": "20"},
+            {"key": "reserve_pool_size", "value": "5"},
+        ],
+        target_database="bot_db",
+        errors=[],
+    )
+
+    assert summary["pool_rows"] == 1
+    assert summary["max_cl_waiting"] == 3.0
+    assert summary["maxwait"] == 0.75
+    assert summary["config"]["default_pool_size"] == "20"
+
+
 def test_phase4_variants_assign_distinct_session_offsets_and_seed_capacity() -> None:
     variants = phase4_variants(
         {

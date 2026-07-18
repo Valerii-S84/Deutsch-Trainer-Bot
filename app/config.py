@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from functools import lru_cache
 from typing import Optional
 
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
@@ -72,6 +73,7 @@ class Settings(BaseSettings):
     worker_db_pool_timeout: float = Field(default=5.0, alias="WORKER_DB_POOL_TIMEOUT")
     redis_url: str = "redis://localhost:6379/0"
     redis_max_connections: int = Field(default=256, alias="REDIS_MAX_CONNECTIONS")
+    redis_warmup_connections: int = Field(default=128, alias="REDIS_WARMUP_CONNECTIONS")
 
     quiz_bank_api_base_url: str = "https://api.quiz-bank.example.internal"
     quiz_bank_edge_api_key: Optional[SecretStr] = None
@@ -153,6 +155,7 @@ class Settings(BaseSettings):
         "db_max_overflow",
         "worker_db_max_overflow",
         "quiz_bank_max_retries",
+        "redis_warmup_connections",
     )
     @classmethod
     def validate_non_negative_number(cls, value: int | float, info: ValidationInfo) -> int | float:
@@ -410,7 +413,14 @@ def _env_name(field_name: str | None) -> str:
     return field_name.upper()
 
 
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Load and validate environment configuration."""
 
     return Settings()  # type: ignore[call-arg]
+
+
+def clear_settings_cache() -> None:
+    """Reset cached settings for tests and controlled runtime reloads."""
+
+    get_settings.cache_clear()

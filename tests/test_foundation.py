@@ -12,10 +12,12 @@ from pydantic import SecretStr
 
 
 def test_config_module_imports() -> None:
-    from app.config import get_settings
+    from app.config import clear_settings_cache, get_settings
 
+    clear_settings_cache()
     settings = get_settings()
     assert settings is not None
+    assert get_settings() is settings
 
 
 def test_app_main_imports() -> None:
@@ -267,5 +269,6 @@ def test_config_loads_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     import importlib
 
     config_module = importlib.reload(__import__("app.config", fromlist=["get_settings"]))
+    config_module.clear_settings_cache()
     settings = config_module.get_settings()
     assert settings.app_env.value == "staging"

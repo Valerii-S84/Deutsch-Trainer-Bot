@@ -6,6 +6,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 import logging
 from collections.abc import Sequence
+import os
 import signal
 from time import perf_counter
 
@@ -25,13 +26,19 @@ from app.bot.dispatcher import build_dispatcher
 from app.bot.dispatcher import _uses_redis_security_state
 from app.repositories.outbox import OUTBOX_DEAD, OUTBOX_FAILED, OUTBOX_PENDING, OUTBOX_PROCESSING, OutboxRepository
 from app.runtime.backpressure import BackpressureMonitor, global_backpressure_monitor
-from app.runtime.redis import close_redis_client, create_redis_client
+from app.runtime.driver_profiling import install_driver_profiling
+from app.runtime.webhook_handler import ProfiledSimpleRequestHandler
+from app.runtime.webhook_profiling import (
+    create_webhook_profile_collector_from_env,
+    install_aiogram_webhook_profiling,
+)
+from app.runtime.redis import close_redis_client, create_redis_client, warm_redis_client
 from app.runtime.fake_telegram import FakeTelegramSession
 
 logger = logging.getLogger(__name__)
 # Container health and webhook endpoints must be reachable inside Docker.
-WEBHOOK_BIND_HOST = "0.0.0.0"  # nosec B104
-WEBHOOK_BIND_PORT = 8080
+WEBHOOK_BIND_HOST = os.environ.get("WEBHOOK_BIND_HOST", "0.0.0.0")  # nosec B104
+WEBHOOK_BIND_PORT = int(os.environ.get("WEBHOOK_BIND_PORT", "8080"))
 READY_DB_POOL_WAIT_UNHEALTHY_MS = 200.0
 READY_REDIS_LATENCY_UNHEALTHY_MS = 50.0
 READY_WORKER_LAG_UNHEALTHY_SECONDS = 120.0
@@ -201,16 +208,28 @@ def create_webhook_app(
 ) -> web.Application:
     """Create an aiohttp app that forwards Telegram webhook updates to aiogram."""
     app = web.Application()
+    webhook_profiler = create_webhook_profile_collector_from_env()
     app["redis_client"] = redis_client
     app["backpressure_monitor"] = global_backpressure_monitor
     app["outbox_readiness_enabled"] = True
     app.router.add_get("/health", health_check)
     app.router.add_get("/ready", readiness_check)
-    SimpleRequestHandler(
+    request_handler_cls = SimpleRequestHandler
+    request_handler_kwargs: dict[str, object] = {}
+    if webhook_profiler.enabled:
+        install_aiogram_webhook_profiling()
+        install_driver_profiling()
+        webhook_profiler.start()
+        app["webhook_profiler"] = webhook_profiler
+        app.on_shutdown.append(_close_webhook_profiler)
+        request_handler_cls = ProfiledSimpleRequestHandler
+        request_handler_kwargs["profiler"] = webhook_profiler
+    request_handler_cls(
         dispatcher=dispatcher,
         bot=bot,
         handle_in_background=handle_in_background,
         secret_token=webhook_secret,
+        **request_handler_kwargs,
     ).register(app, path=webhook_path)
     setup_application(app, dispatcher, bot=bot)
     return app
@@ -295,7 +314,16 @@ async def run_bot(command: str = DEFAULT_RUNTIME_COMMAND) -> None:
             )
             return
 
-        redis_client = create_redis_client(settings) if _uses_redis_security_state(settings) else None
+        redis_client = create_redis_client(settings) if _uses_redis_runtime(settings) else None
+        if redis_client is not None and _uses_redis_security_state(settings):
+            warmup_count = min(settings.redis_warmup_connections, settings.redis_max_connections)
+            warmup = await warm_redis_client(redis_client, connection_count=warmup_count)
+            logger.info(
+                "Redis pool warmup completed: requested=%s succeeded=%s failed=%s",
+                warmup["requested"],
+                warmup["succeeded"],
+                warmup["failed"],
+            )
         dp = create_dispatcher(redis_client=redis_client)
 
         if command == SERVE_WEBHOOK_COMMAND:
@@ -332,6 +360,19 @@ async def _wait_for_shutdown() -> None:
         with suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(item, stop_event.set)
     await stop_event.wait()
+
+
+async def _close_webhook_profiler(app: web.Application) -> None:
+    profiler = app.get("webhook_profiler")
+    if profiler is None:
+        return
+    profiler.close()
+
+
+def _uses_redis_runtime(settings) -> bool:
+    return _uses_redis_security_state(settings) or bool(
+        getattr(settings, "local_catalog_cache_enabled", False)
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> None:

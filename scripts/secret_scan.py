@@ -30,6 +30,7 @@ SKIP_SUFFIXES = {
     ".pyc",
     ".zip",
 }
+ALLOWLIST_PATH = Path(".secret-scan-allowlist")
 
 
 def tracked_files() -> list[Path]:
@@ -40,6 +41,16 @@ def tracked_files() -> list[Path]:
         text=True,
     )
     return [Path(line) for line in result.stdout.splitlines() if line.strip()]
+
+
+def load_allowlist() -> set[str]:
+    if not ALLOWLIST_PATH.exists():
+        return set()
+    return {
+        line.strip()
+        for line in ALLOWLIST_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
 
 
 def scan_file(path: Path, *, allowlist: set[str] | None = None) -> list[str]:
@@ -53,20 +64,27 @@ def scan_file(path: Path, *, allowlist: set[str] | None = None) -> list[str]:
     findings: list[str] = []
     allowed_findings = allowlist or set()
     for line_number, line in enumerate(lines, start=1):
-        for rule_name, pattern in PATTERNS:
-            if not pattern.search(line):
-                continue
-            finding_key = f"{path.as_posix()}:{line_number}:{rule_name}"
-            if finding_key in allowed_findings:
-                continue
-            findings.append(f"{path}:{line_number}: possible secret ({rule_name})")
+        findings.extend(scan_line(path, line_number=line_number, line=line, allowlist=allowed_findings))
+    return findings
+
+
+def scan_line(path: Path, *, line_number: int, line: str, allowlist: set[str]) -> list[str]:
+    findings: list[str] = []
+    for rule_name, pattern in PATTERNS:
+        if not pattern.search(line):
+            continue
+        finding_key = f"{path.as_posix()}:{line_number}:{rule_name}"
+        if finding_key in allowlist:
+            continue
+        findings.append(f"{path}:{line_number}: possible secret ({rule_name})")
     return findings
 
 
 def main() -> int:
+    allowlist = load_allowlist()
     findings: list[str] = []
     for path in tracked_files():
-        findings.extend(scan_file(path))
+        findings.extend(scan_file(path, allowlist=allowlist))
 
     if findings:
         print("Secret scan failed:")

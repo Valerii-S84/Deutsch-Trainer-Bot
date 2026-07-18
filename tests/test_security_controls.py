@@ -46,10 +46,12 @@ def _update(update_id: int, callback: FakeCallback):
 class FakeRedis:
     def __init__(self) -> None:
         self.now = 0.0
+        self.time_calls = 0
         self.values: dict[str, float] = {}
         self.zsets: dict[str, list[tuple[int, str]]] = {}
 
     async def time(self):
+        self.time_calls += 1
         seconds = int(self.now)
         microseconds = int((self.now - seconds) * 1_000_000)
         return seconds, microseconds
@@ -62,6 +64,8 @@ class FakeRedis:
         return True
 
     async def eval(self, _script, _numkeys, key, now_ms, window_ms, limit, _ttl_seconds, member):
+        if now_ms == "":
+            now_ms = int(self.now * 1000)
         bucket = [
             (score, value)
             for score, value in self.zsets.get(key, [])
@@ -142,6 +146,7 @@ async def test_redis_rate_limiter_blocks_until_window_expires() -> None:
 
     redis.advance(10)
     assert (await limiter.check(action=ACTION_START, identity="user:1")).allowed is True
+    assert redis.time_calls == 0
 
 
 @pytest.mark.asyncio

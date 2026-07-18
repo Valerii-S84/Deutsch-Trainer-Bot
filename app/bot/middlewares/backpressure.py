@@ -8,6 +8,7 @@ from typing import Any
 from app.bot.texts import SATURATION_RETRY_TEXT
 from app.runtime.admission import AdmissionBackendError, AdmissionController, LocalAdmissionController
 from app.runtime.backpressure import BackpressureMonitor, global_backpressure_monitor
+from app.runtime.webhook_profiling import webhook_timing_span
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,8 @@ class BackpressureMiddleware:
     async def __call__(self, handler: Any, event: Any, data: dict[str, Any]) -> Any:
         update = data.get("event_update") or event
         try:
-            lease = await self._admission_controller.try_acquire(timeout_seconds=self._acquire_timeout_seconds)
+            with webhook_timing_span("middleware.backpressure_acquire_ms"):
+                lease = await self._admission_controller.try_acquire(timeout_seconds=self._acquire_timeout_seconds)
         except AdmissionBackendError:
             self._monitor.rejected()
             logger.exception("telegram update rejected because shared admission backend is unavailable")
@@ -50,8 +52,9 @@ class BackpressureMiddleware:
             self._monitor.acquired()
             return await handler(event, data)
         finally:
-            await lease.release()
-            self._monitor.released()
+            with webhook_timing_span("middleware.backpressure_release_ms"):
+                await lease.release()
+                self._monitor.released()
 
     @property
     def limit(self) -> int:

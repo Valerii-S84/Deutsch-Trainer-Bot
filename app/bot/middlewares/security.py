@@ -30,6 +30,11 @@ from app.security.rate_limits import (
     InMemoryRateLimiter,
     RateLimitBackendError,
 )
+from app.runtime.webhook_profiling import (
+    record_webhook_metric,
+    webhook_operation_label,
+    webhook_timing_span,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +57,10 @@ class SecurityMiddleware:
         update = data.get("event_update") or event
         update_id = _update_id(update)
         try:
-            accepted = await _maybe_await(self._duplicate_guard.accept(update_id))
+            with webhook_timing_span("middleware.security_duplicate_guard_ms"):
+                record_webhook_metric("duplicate_guard.call_count", 1)
+                with webhook_operation_label("duplicate_guard.redis"):
+                    accepted = await _maybe_await(self._duplicate_guard.accept(update_id))
         except RateLimitBackendError:
             logger.warning("telegram security state backend unavailable: update_id=%s", update_id)
             await _notify_rate_limit(update)
@@ -70,7 +78,9 @@ class SecurityMiddleware:
 
         identity = _rate_limit_identity(update)
         try:
-            decision = await _maybe_await(self._rate_limiter.check(action=action, identity=identity))
+            with webhook_timing_span("middleware.security_rate_limit_ms"):
+                with webhook_operation_label("rate_limit.redis"):
+                    decision = await _maybe_await(self._rate_limiter.check(action=action, identity=identity))
         except RateLimitBackendError:
             logger.warning(
                 "telegram rate limit backend unavailable: action=%s identity=%s update_id=%s",

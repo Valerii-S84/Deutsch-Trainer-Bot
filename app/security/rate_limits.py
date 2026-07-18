@@ -44,7 +44,14 @@ DEFAULT_RATE_LIMIT_RULES = {
 
 REDIS_RATE_LIMIT_SCRIPT = """
 local key = KEYS[1]
-local now_ms = tonumber(ARGV[1])
+local now_ms_arg = ARGV[1]
+local now_ms = nil
+if now_ms_arg == '' then
+  local redis_time = redis.call('TIME')
+  now_ms = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
+else
+  now_ms = tonumber(now_ms_arg)
+end
 local window_ms = tonumber(ARGV[2])
 local limit = tonumber(ARGV[3])
 local ttl_seconds = tonumber(ARGV[4])
@@ -126,9 +133,9 @@ class RedisRateLimiter:
             return RateLimitDecision(action=action, allowed=True, retry_after_seconds=0)
 
         key = f"{self._key_prefix}:{action}:{identity}"
-        now_ms = await self._now_ms()
+        now_ms = self._now_ms_arg()
         window_ms = rule.window_seconds * 1000
-        member = f"{now_ms}:{uuid4().hex}"
+        member = uuid4().hex
         try:
             result = await self._redis.eval(
                 REDIS_RATE_LIMIT_SCRIPT,
@@ -150,14 +157,10 @@ class RedisRateLimiter:
             retry_after_seconds=retry_after,
         )
 
-    async def _now_ms(self) -> int:
-        if self._time_func is not None:
-            return int(self._time_func() * 1000)
-        try:
-            seconds, microseconds = await self._redis.time()
-        except RedisError as exc:
-            raise RateLimitBackendError("redis_time_unavailable") from exc
-        return int(seconds) * 1000 + int(microseconds) // 1000
+    def _now_ms_arg(self) -> int | str:
+        if self._time_func is None:
+            return ""
+        return int(self._time_func() * 1000)
 
 
 class DuplicateUpdateGuard:

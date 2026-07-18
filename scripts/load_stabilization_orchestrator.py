@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 from collections import Counter
 import json
 import math
+import os
+from io import StringIO
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from time import perf_counter
@@ -698,11 +701,34 @@ def _phase4_webhook_plan_command(
                 "{burst_interval_seconds}",
             ]
         )
+    env: dict[str, str] = {}
+    if "pgbouncer_sample_output" in plan:
+        context["pgbouncer_sample_output"] = str(plan["pgbouncer_sample_output"])
+        context["pgbouncer_sample_interval_ms"] = str(plan.get("pgbouncer_sample_interval_ms", 250))
+        command.extend(
+            [
+                "--pgbouncer-sample-output",
+                "{pgbouncer_sample_output}",
+                "--pgbouncer-sample-interval-ms",
+                "{pgbouncer_sample_interval_ms}",
+            ]
+        )
+        env.update(
+            {
+                "PGBOUNCER_ADMIN_DOCKER_CONTAINER": "{postgres_container}",
+                "PGBOUNCER_ADMIN_HOST": "{pgbouncer_container}",
+                "PGBOUNCER_ADMIN_PORT": "6432",
+                "PGBOUNCER_ADMIN_USER": "{postgres_user}",
+                "PGBOUNCER_ADMIN_PASSWORD": "{postgres_password}",
+                "PGBOUNCER_TARGET_DATABASE": "{postgres_db}",
+            }
+        )
     return (
         CommandSpec(
             name=str(plan.get("name", f"{mode}_{total_requests}_requests")),
             command=command,
             parser="json",
+            env=env,
             context=context,
             compare_paths=normalize_str_list(plan.get("compare_paths")) or list(PHASE4_WEBHOOK_COMPARE_PATHS),
         ),
@@ -981,6 +1007,182 @@ def _build_answer_callback_update(
     }
 
 
+async def _sample_pgbouncer_until(
+    stop_event: asyncio.Event,
+    *,
+    output_path: str,
+    interval_ms: float,
+) -> dict[str, Any]:
+    target_database = os.environ.get("PGBOUNCER_TARGET_DATABASE", "")
+    samples: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    config_rows: list[dict[str, str]] = []
+    started_at = perf_counter()
+    interval_seconds = max(interval_ms, 50.0) / 1000.0
+    while not stop_event.is_set():
+        sample_started = perf_counter()
+        try:
+            pools = await _run_pgbouncer_show("SHOW POOLS;")
+            stats = await _run_pgbouncer_show("SHOW STATS;")
+            if not config_rows:
+                config_rows = await _run_pgbouncer_show("SHOW CONFIG;")
+            samples.append(
+                {
+                    "offset_ms": round((sample_started - started_at) * 1000, 3),
+                    "pools": pools,
+                    "stats": stats,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(
+                {
+                    "offset_ms": str(round((perf_counter() - started_at) * 1000, 3)),
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }
+            )
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+        except asyncio.TimeoutError:
+            continue
+
+    payload = {
+        "generated_at_utc": now_utc(),
+        "target_database": target_database,
+        "sample_interval_ms": interval_ms,
+        "sample_count": len(samples),
+        "samples": samples,
+        "config": _pgbouncer_config_map(config_rows),
+        "summary": _summarize_pgbouncer_samples(
+            samples,
+            config_rows=config_rows,
+            target_database=target_database,
+            errors=errors,
+        ),
+        "errors": errors,
+    }
+    write_json(resolve_evidence_path(output_path), payload)
+    return payload["summary"]
+
+
+async def _run_pgbouncer_show(sql: str) -> list[dict[str, str]]:
+    container = _required_env("PGBOUNCER_ADMIN_DOCKER_CONTAINER")
+    host = _required_env("PGBOUNCER_ADMIN_HOST")
+    port = os.environ.get("PGBOUNCER_ADMIN_PORT", "6432")
+    user = _required_env("PGBOUNCER_ADMIN_USER")
+    password = _required_env("PGBOUNCER_ADMIN_PASSWORD")
+    process = await asyncio.create_subprocess_exec(
+        "docker",
+        "exec",
+        "-e",
+        f"PGPASSWORD={password}",
+        container,
+        "psql",
+        "--csv",
+        "-X",
+        "-q",
+        "-P",
+        "footer=off",
+        "-h",
+        host,
+        "-p",
+        port,
+        "-U",
+        user,
+        "-d",
+        "pgbouncer",
+        "-c",
+        sql,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    if process.returncode != 0:
+        message = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(message or f"psql failed for {sql.strip()}")
+    return _parse_csv_rows(stdout.decode("utf-8", errors="replace"))
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is required for PgBouncer sampling")
+    return value
+
+
+def _parse_csv_rows(raw: str) -> list[dict[str, str]]:
+    if not raw.strip():
+        return []
+    reader = csv.DictReader(StringIO(raw))
+    return [{str(key): str(value) for key, value in row.items()} for row in reader]
+
+
+def _pgbouncer_config_map(rows: Sequence[Mapping[str, str]]) -> dict[str, str]:
+    config: dict[str, str] = {}
+    for row in rows:
+        key = row.get("key") or row.get("name")
+        value = row.get("value")
+        if key is not None and value is not None:
+            config[str(key)] = str(value)
+    return config
+
+
+def _summarize_pgbouncer_samples(
+    samples: Sequence[Mapping[str, Any]],
+    *,
+    config_rows: Sequence[Mapping[str, str]],
+    target_database: str,
+    errors: Sequence[Mapping[str, str]],
+) -> dict[str, Any]:
+    pool_rows = [
+        row
+        for sample in samples
+        for row in sample.get("pools", [])
+        if not target_database or str(row.get("database", "")) == target_database
+    ]
+    config = _pgbouncer_config_map(config_rows)
+    return {
+        "target_database": target_database,
+        "samples": len(samples),
+        "pool_rows": len(pool_rows),
+        "max_cl_active": _max_row_value(pool_rows, "cl_active"),
+        "max_cl_waiting": _max_row_value(pool_rows, "cl_waiting"),
+        "max_sv_active": _max_row_value(pool_rows, "sv_active"),
+        "max_sv_idle": _max_row_value(pool_rows, "sv_idle"),
+        "max_sv_used": _max_row_value(pool_rows, "sv_used"),
+        "maxwait": _max_row_value(pool_rows, "maxwait"),
+        "maxwait_us": _max_row_value(pool_rows, "maxwait_us"),
+        "config": {
+            name: config.get(name)
+            for name in (
+                "pool_mode",
+                "max_client_conn",
+                "default_pool_size",
+                "max_db_connections",
+                "reserve_pool_size",
+                "reserve_pool_timeout",
+                "server_lifetime",
+                "query_timeout",
+            )
+            if name in config
+        },
+        "errors": len(errors),
+    }
+
+
+def _max_row_value(rows: Sequence[Mapping[str, str]], key: str) -> float:
+    values = [_number_or_zero(row.get(key, "0")) for row in rows]
+    return round(max(values), 3) if values else 0.0
+
+
+def _number_or_zero(value: object) -> float:
+    if value in (None, "", "NULL"):
+        return 0.0
+    try:
+        return float(str(value))
+    except ValueError:
+        return 0.0
+
+
 async def webhook_load(args: argparse.Namespace) -> int:
     base_url = args.base_url.rstrip("/")
     webhook_url = f"{base_url}{args.webhook_path}"
@@ -1005,52 +1207,69 @@ async def webhook_load(args: argparse.Namespace) -> int:
     max_in_flight = 0
     lock = asyncio.Lock()
     started_at = perf_counter()
+    pgbouncer_stop_event = asyncio.Event()
+    pgbouncer_task: asyncio.Task[dict[str, Any]] | None = None
+    pgbouncer_summary: dict[str, Any] | None = None
 
-    async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
-        async def invoke(index: int) -> None:
-            nonlocal in_flight, max_in_flight
-            scheduled_at = _scheduled_offset(
-                index,
-                target_rps=args.target_rps,
-                mode=args.arrival_mode,
-                burst_window=args.burst_window_seconds,
-                burst_interval=args.burst_interval_seconds,
+    if args.pgbouncer_sample_output:
+        pgbouncer_task = asyncio.create_task(
+            _sample_pgbouncer_until(
+                pgbouncer_stop_event,
+                output_path=args.pgbouncer_sample_output,
+                interval_ms=args.pgbouncer_sample_interval_ms,
             )
-            now_offset = perf_counter() - started_at
-            if scheduled_at > now_offset:
-                await asyncio.sleep(scheduled_at - now_offset)
-            dispatch_started = perf_counter()
-            dispatch_lag_ms.append(round((dispatch_started - started_at - scheduled_at) * 1000, 3))
-            async with semaphore:
-                async with lock:
-                    in_flight += 1
-                    max_in_flight = max(max_in_flight, in_flight)
-                request_started = perf_counter()
-                try:
-                    session_id = _measurement_session_id(args.session_offset, index)
-                    response = await client.post(
-                        webhook_url,
-                        headers={
-                            "Content-Type": "application/json",
-                            "X-Telegram-Bot-Api-Secret-Token": args.secret_token,
-                        },
-                        json=_build_answer_callback_update(
-                            args.start_update_id + index,
-                            session_id=session_id,
-                            telegram_user_id=args.base_user_id + session_id,
-                            selected_option_id=args.selected_option_id,
-                        ),
-                    )
-                    statuses[response.status_code] += 1
-                except Exception as exc:  # noqa: BLE001
-                    errors[exc.__class__.__name__] += 1
-                else:
-                    latencies_ms.append(round((perf_counter() - request_started) * 1000, 3))
-                finally:
-                    async with lock:
-                        in_flight -= 1
+        )
 
-        await asyncio.gather(*(invoke(index) for index in range(args.total_requests)))
+    try:
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
+            async def invoke(index: int) -> None:
+                nonlocal in_flight, max_in_flight
+                scheduled_at = _scheduled_offset(
+                    index,
+                    target_rps=args.target_rps,
+                    mode=args.arrival_mode,
+                    burst_window=args.burst_window_seconds,
+                    burst_interval=args.burst_interval_seconds,
+                )
+                now_offset = perf_counter() - started_at
+                if scheduled_at > now_offset:
+                    await asyncio.sleep(scheduled_at - now_offset)
+                dispatch_started = perf_counter()
+                dispatch_lag_ms.append(round((dispatch_started - started_at - scheduled_at) * 1000, 3))
+                async with semaphore:
+                    async with lock:
+                        in_flight += 1
+                        max_in_flight = max(max_in_flight, in_flight)
+                    request_started = perf_counter()
+                    try:
+                        session_id = _measurement_session_id(args.session_offset, index)
+                        response = await client.post(
+                            webhook_url,
+                            headers={
+                                "Content-Type": "application/json",
+                                "X-Telegram-Bot-Api-Secret-Token": args.secret_token,
+                            },
+                            json=_build_answer_callback_update(
+                                args.start_update_id + index,
+                                session_id=session_id,
+                                telegram_user_id=args.base_user_id + session_id,
+                                selected_option_id=args.selected_option_id,
+                            ),
+                        )
+                        statuses[response.status_code] += 1
+                    except Exception as exc:  # noqa: BLE001
+                        errors[exc.__class__.__name__] += 1
+                    else:
+                        latencies_ms.append(round((perf_counter() - request_started) * 1000, 3))
+                    finally:
+                        async with lock:
+                            in_flight -= 1
+
+            await asyncio.gather(*(invoke(index) for index in range(args.total_requests)))
+    finally:
+        if pgbouncer_task is not None:
+            pgbouncer_stop_event.set()
+            pgbouncer_summary = await pgbouncer_task
 
     elapsed = perf_counter() - started_at
     accepted = sum(count for status, count in statuses.items() if 200 <= status < 300)
@@ -1090,6 +1309,8 @@ async def webhook_load(args: argparse.Namespace) -> int:
             "max_in_flight_requests": max_in_flight,
         },
     }
+    if pgbouncer_summary is not None:
+        result["pgbouncer_admin_sampling"] = pgbouncer_summary
     print(json.dumps(result, indent=2, ensure_ascii=True))
     return 0 if error_total == 0 else 1
 
@@ -1137,6 +1358,8 @@ def build_parser() -> argparse.ArgumentParser:
     webhook_load_parser.add_argument("--timeout-seconds", type=float, default=10.0)
     webhook_load_parser.add_argument("--start-update-id", type=int, default=1_000_000)
     webhook_load_parser.add_argument("--base-user-id", type=int, default=7_000_000_000)
+    webhook_load_parser.add_argument("--pgbouncer-sample-output")
+    webhook_load_parser.add_argument("--pgbouncer-sample-interval-ms", type=float, default=250.0)
     webhook_load_parser.set_defaults(func=webhook_load)
     return parser
 

@@ -6,8 +6,11 @@ from datetime import UTC, datetime
 import time
 from typing import TypeVar
 
-from app.config import Settings, get_settings
+from app.config import AppEnvironment, Settings, get_settings
 from pydantic import BaseModel, ValidationError
+from redis.exceptions import RedisError
+
+from app.runtime.redis import get_shared_redis_client
 
 from .client import QuizBankAsyncClient
 from .errors import QuizBankError, QuizBankValidationError
@@ -24,6 +27,7 @@ from .schemas import (
 )
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
+QUIZ_BANK_CACHE_PREFIX = "dtb:quiz_bank"
 
 
 class QuizBankService:
@@ -40,6 +44,7 @@ class QuizBankService:
     ) -> None:
         if settings is None:
             settings = get_settings()
+        self._settings = settings
         self._client = client or QuizBankAsyncClient(
             base_url=settings.quiz_bank_api_base_url,
             edge_api_key=settings.quiz_bank_edge_api_key_or_legacy,
@@ -59,7 +64,8 @@ class QuizBankService:
         return self._validate_payload(payload, QuizHealthResponse, "Quiz Bank health response is invalid")
 
     async def get_levels(self) -> QuizLevelsResponse:
-        cached = self._get_cached("levels", QuizLevelsResponse)
+        cache_key = self._cache_key("levels")
+        cached = await self._get_cached(cache_key, QuizLevelsResponse)
         if cached is not None:
             return cached
 
@@ -71,13 +77,13 @@ class QuizBankService:
             if level.is_active and level.code in SUPPORTED_LEVELS
         ]
         response = response.model_copy(update={"levels": filtered})
-        self._set_cached("levels", response)
+        await self._set_cached(cache_key, response)
         return response
 
     async def get_themes(self, *, level: str) -> QuizThemesResponse:
         level_value = self._validate_level(level)
-        cache_key = f"themes:{level_value}"
-        cached = self._get_cached(cache_key, QuizThemesResponse)
+        cache_key = self._cache_key("themes", level_value)
+        cached = await self._get_cached(cache_key, QuizThemesResponse)
         if cached is not None:
             return cached
 
@@ -89,14 +95,14 @@ class QuizBankService:
             if theme.is_active and theme.available_items_count is not None and theme.available_items_count > 0
         ]
         response = response.model_copy(update={"themes": filtered})
-        self._set_cached(cache_key, response)
+        await self._set_cached(cache_key, response)
         return response
 
     async def get_availability(self, *, level: str, theme: str) -> QuizAvailabilityResponse:
         level_value = self._validate_level(level)
         theme_value = self._validate_theme(theme)
-        cache_key = f"availability:{level_value}:{theme_value}"
-        cached = self._get_cached(cache_key, QuizAvailabilityResponse)
+        cache_key = self._cache_key("availability", level_value, theme_value)
+        cached = await self._get_cached(cache_key, QuizAvailabilityResponse)
         if cached is not None:
             return cached
 
@@ -111,7 +117,7 @@ class QuizBankService:
             QuizAvailabilityResponse,
             "Quiz Bank availability response is invalid",
         )
-        self._set_cached(cache_key, response)
+        await self._set_cached(cache_key, response)
         return response
 
     async def _availability_from_theme_catalog(self, *, level: str, theme: str) -> dict[str, object]:
@@ -150,13 +156,14 @@ class QuizBankService:
         return response
 
     async def get_metadata(self) -> QuizMetadataResponse:
-        cached = self._get_cached("metadata", QuizMetadataResponse)
+        cache_key = self._cache_key("metadata")
+        cached = await self._get_cached(cache_key, QuizMetadataResponse)
         if cached is not None:
             return cached
 
         payload = await self._client.fetch_metadata()
         response = self._validate_payload(payload, QuizMetadataResponse, "Quiz Bank metadata response is invalid")
-        self._set_cached("metadata", response)
+        await self._set_cached(cache_key, response)
         return response
 
     async def resolve_theme_ids(self, *, theme: str) -> list[str]:
@@ -198,7 +205,22 @@ class QuizBankService:
         )
         return self._validate_payload(payload, QuizQuestionsResponse, "Quiz Bank questions response is invalid")
 
-    def _get_cached(self, key: str, model_type: type[ResponseModel]) -> ResponseModel | None:
+    async def _get_cached(self, key: str, model_type: type[ResponseModel]) -> ResponseModel | None:
+        cached = self._get_local_cached(key, model_type)
+        if cached is not None:
+            return cached
+
+        payload = await self._read_shared_cache(key)
+        if payload is None:
+            return None
+        try:
+            value = model_type.model_validate_json(payload)
+        except (TypeError, ValidationError, ValueError):
+            return None
+        self._set_local_cached(key, value)
+        return value
+
+    def _get_local_cached(self, key: str, model_type: type[ResponseModel]) -> ResponseModel | None:
         item = self._cache.get(key)
         if item is None:
             return None
@@ -211,8 +233,50 @@ class QuizBankService:
         self._cache.pop(key, None)
         return None
 
-    def _set_cached(self, key: str, value: BaseModel) -> None:
+    async def _set_cached(self, key: str, value: BaseModel) -> None:
+        self._set_local_cached(key, value)
+        await self._write_shared_cache(key, value.model_dump_json())
+
+    def _set_local_cached(self, key: str, value: BaseModel) -> None:
         self._cache[key] = (time.monotonic() + self._cache_ttl_seconds, value)
+
+    def _cache_key(self, *parts: str) -> str:
+        return ":".join([QUIZ_BANK_CACHE_PREFIX, *parts])
+
+    def _cache_client(self):
+        if not self._uses_shared_cache():
+            return None
+        return get_shared_redis_client()
+
+    def _uses_shared_cache(self) -> bool:
+        if self._settings.security_state_backend == "redis":
+            return True
+        if self._settings.security_state_backend == "in_memory":
+            return False
+        return self._settings.app_env != AppEnvironment.development
+
+    async def _read_shared_cache(self, key: str) -> str | None:
+        redis_client = self._cache_client()
+        if redis_client is None:
+            return None
+        try:
+            payload = await redis_client.get(key)
+        except RedisError:
+            return None
+        if isinstance(payload, bytes):
+            return payload.decode("utf-8")
+        if isinstance(payload, str):
+            return payload
+        return None
+
+    async def _write_shared_cache(self, key: str, payload: str) -> None:
+        redis_client = self._cache_client()
+        if redis_client is None:
+            return
+        try:
+            await redis_client.set(key, payload, ex=self._cache_ttl_seconds)
+        except RedisError:
+            return
 
     @staticmethod
     def _validate_payload(

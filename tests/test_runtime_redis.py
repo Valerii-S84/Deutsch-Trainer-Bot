@@ -40,6 +40,28 @@ def test_get_or_create_shared_redis_client_reuses_existing_client(monkeypatch: p
     assert client is fake_client
 
 
+def test_create_redis_client_reuses_registered_shared_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_client = SimpleNamespace(aclose=AsyncMock())
+    monkeypatch.setattr(redis_runtime, "_shared_redis_client", fake_client)
+    from_url = AsyncMock()
+    monkeypatch.setattr(redis_runtime.Redis, "from_url", from_url)
+
+    client = redis_runtime.create_redis_client(Settings())
+
+    assert client is fake_client
+    from_url.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_warm_redis_client_pings_requested_connection_count() -> None:
+    fake_client = SimpleNamespace(ping=AsyncMock(return_value=True))
+
+    result = await redis_runtime.warm_redis_client(fake_client, connection_count=4)
+
+    assert result == {"requested": 4, "succeeded": 4, "failed": 0}
+    assert fake_client.ping.await_count == 4
+
+
 @pytest.mark.asyncio
 async def test_redis_admission_controller_acquires_and_releases_lease() -> None:
     redis_client = SimpleNamespace(eval=AsyncMock(side_effect=[[1, 1], 1]))
@@ -68,6 +90,17 @@ async def test_close_redis_client_clears_shared_client(monkeypatch: pytest.Monke
     monkeypatch.setattr(redis_runtime, "_shared_redis_client", fake_client)
 
     await redis_runtime.close_redis_client(fake_client)
+
+    fake_client.aclose.assert_awaited_once()
+    assert redis_runtime.get_shared_redis_client() is None
+
+
+@pytest.mark.asyncio
+async def test_close_redis_client_closes_lazy_shared_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_client = SimpleNamespace(aclose=AsyncMock())
+    monkeypatch.setattr(redis_runtime, "_shared_redis_client", fake_client)
+
+    await redis_runtime.close_redis_client(None)
 
     fake_client.aclose.assert_awaited_once()
     assert redis_runtime.get_shared_redis_client() is None

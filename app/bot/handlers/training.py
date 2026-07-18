@@ -52,6 +52,8 @@ from app.quiz_bank.errors import (
 )
 from app.repositories.api_error_logs import ApiErrorLogRepository
 from app.repositories.users import UserRepository
+from app.runtime.timing import begin_timing, end_timing
+from app.runtime.webhook_profiling import merge_webhook_metrics, merge_webhook_timings, webhook_timing_span
 from app.services.analytics import AnalyticsTracker
 from app.services.training_session import (
     ActiveSessionConflictError,
@@ -405,41 +407,52 @@ async def handle_cancel_training(callback_query: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith(CALLBACK_TRAIN_ANSWER_PREFIX + ":"))
 async def handle_submit_answer(callback_query: CallbackQuery, event_update: Update | None = None) -> None:
-    await callback_query.answer()
-    if callback_query.message is None:
-        return
-
-    user_id = _extract_user_id(callback_query)
-    if not user_id:
-        return
-
-    try:
-        session_id, question_token, selected_option = _parse_answer_payload(callback_query.data)
-    except ValueError:
-        await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
-        return
-
-    async with _session_factory() as db:
-        try:
-            result = await training_service.submit_answer(
-                db,
-                user_id,
-                session_id=session_id,
-                question_token=question_token,
-                selected_option_id=selected_option,
-                telegram_update_id=_extract_update_id(event_update),
-            )
-            await db.commit()
-        except (
-            QuestionStateError,
-            ActiveSessionNotFoundError,
-            NoMoreQuestionsError,
-        ) as exc:
-            await db.rollback()
-            await callback_query.message.answer(_map_session_error(exc))
+    with webhook_timing_span("handler.training_answer_total_ms"):
+        with webhook_timing_span("handler.training_answer_callback_answer_ms"):
+            await callback_query.answer()
+        if callback_query.message is None:
             return
 
-    await _send_answer_result(callback_query.message, result)
+        user_id = _extract_user_id(callback_query)
+        if not user_id:
+            return
+
+        try:
+            with webhook_timing_span("handler.training_answer_parse_payload_ms"):
+                session_id, question_token, selected_option = _parse_answer_payload(callback_query.data)
+        except ValueError:
+            await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
+            return
+
+        async with _session_factory() as db:
+            timing_spans, timing_metrics, timing_token = begin_timing()
+            try:
+                with webhook_timing_span("handler.training_answer_submit_ms"):
+                    result = await training_service.submit_answer(
+                        db,
+                        user_id,
+                        session_id=session_id,
+                        question_token=question_token,
+                        selected_option_id=selected_option,
+                        telegram_update_id=_extract_update_id(event_update),
+                    )
+                with webhook_timing_span("handler.training_answer_commit_ms"):
+                    await db.commit()
+            except (
+                QuestionStateError,
+                ActiveSessionNotFoundError,
+                NoMoreQuestionsError,
+            ) as exc:
+                await db.rollback()
+                await callback_query.message.answer(_map_session_error(exc))
+                return
+            finally:
+                end_timing(timing_token)
+                merge_webhook_timings(timing_spans)
+                merge_webhook_metrics(timing_metrics)
+
+        with webhook_timing_span("handler.training_answer_send_result_ms"):
+            await _send_answer_result(callback_query.message, result)
 
 
 @router.callback_query(F.data.startswith(CALLBACK_TRAIN_NEXT_PREFIX + ":"))

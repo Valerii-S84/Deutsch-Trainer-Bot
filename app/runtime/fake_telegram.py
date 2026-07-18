@@ -8,6 +8,8 @@ from aiogram.client.session.base import BaseSession
 from aiogram.methods import TelegramMethod
 from aiogram.types import Message
 
+from app.runtime.webhook_profiling import webhook_timing_span
+
 
 class FakeTelegramSession(BaseSession):
     """Minimal Bot API stub for local webhook load tests."""
@@ -26,12 +28,13 @@ class FakeTelegramSession(BaseSession):
         timeout: int | None = None,
     ) -> Any:
         del timeout
-        returning = getattr(method, "__returning__", None)
-        if returning is bool:
-            return True
-        if returning is Message:
-            return self._build_message(bot, method)
-        raise RuntimeError(f"FakeTelegramSession does not support {method.__class__.__name__}")
+        with webhook_timing_span(f"telegram.{method.__class__.__name__}_ms"):
+            returning = getattr(method, "__returning__", None)
+            if returning is bool:
+                return True
+            if returning is Message:
+                return self._build_message(bot, method)
+            raise RuntimeError(f"FakeTelegramSession does not support {method.__class__.__name__}")
 
     async def stream_content(
         self,
@@ -60,7 +63,8 @@ class FakeTelegramSession(BaseSession):
             },
             "text": text,
         }
-        return Message.model_validate(payload, context={"bot": bot})
+        with webhook_timing_span("telegram.message_model_validate_ms"):
+            return Message.model_validate(payload, context={"bot": bot})
 
 
 def _int_chat_id(value: object) -> int:

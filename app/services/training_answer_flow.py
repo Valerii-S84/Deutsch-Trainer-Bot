@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.answers import AnswerWriteResult
 from app.runtime.idempotency_locks import answer_attempt_lock
-from app.runtime.timing import timing_span
+from app.runtime.timing import record_timing_metric, timing_query, timing_span
 from app.services.training_answer_fast_path import accept_answer_fast_path
 from app.services.training_answer_persistence import create_answer_or_duplicate
 from app.services.training_answer_state import AnswerContext, AnswerSnapshot
@@ -113,7 +113,9 @@ class TrainingAnswerProcessor:
                 question_token,
                 selected_option_id,
             )
-            return context, self._snapshot(context)
+            with timing_span("answer.validate.snapshot_ms"):
+                snapshot = self._snapshot(context)
+            return context, snapshot
 
     async def _prechecked_duplicate(
         self,
@@ -157,25 +159,37 @@ class TrainingAnswerProcessor:
         selected_option_id: str,
     ) -> AnswerContext:
         service = self._service
-        user = await service.get_user(db, telegram_user_id)
-        session = await service._session_repo.get_by_id_for_user(db, session_id, user.id)
-        if not session:
-            raise ActiveSessionNotFoundError("Session is not found")
-        if session.status != service.ACTIVE_SESSION_STATUS:
-            raise ActiveSessionNotFoundError("Session is not active")
-        pending = self._pending_answer_payload(session)
-        if pending.question_token != question_token or pending.session_id != session.id:
-            raise QuestionStateError("Question token is stale")
-        if selected_option_id not in option_ids(pending):
-            raise QuestionStateError("Selected answer is invalid")
-        correct_answer_text = pending.correct_answer_text or option_text(pending, pending.correct_answer)
-        return AnswerContext(
-            user=user,
-            session=session,
-            pending=pending,
-            selected_option_id=selected_option_id,
-            correct_answer_text=correct_answer_text,
-        )
+        with timing_span("answer.validate.db_acquire_ms"):
+            await db.connection()
+
+        record_timing_metric("answer.validate.logical_round_trip_count", 1)
+        with timing_query("answer.validate.sql_1"):
+            with timing_span("answer.validate.sql_1_total_ms"):
+                user = await service.get_user(db, telegram_user_id)
+
+        record_timing_metric("answer.validate.logical_round_trip_count", 1)
+        with timing_query("answer.validate.sql_2"):
+            with timing_span("answer.validate.sql_2_total_ms"):
+                session = await service._session_repo.get_by_id_for_user(db, session_id, user.id)
+
+        with timing_span("answer.validate.business_logic_ms"):
+            if not session:
+                raise ActiveSessionNotFoundError("Session is not found")
+            if session.status != service.ACTIVE_SESSION_STATUS:
+                raise ActiveSessionNotFoundError("Session is not active")
+            pending = self._pending_answer_payload(session)
+            if pending.question_token != question_token or pending.session_id != session.id:
+                raise QuestionStateError("Question token is stale")
+            if selected_option_id not in option_ids(pending):
+                raise QuestionStateError("Selected answer is invalid")
+            correct_answer_text = pending.correct_answer_text or option_text(pending, pending.correct_answer)
+            return AnswerContext(
+                user=user,
+                session=session,
+                pending=pending,
+                selected_option_id=selected_option_id,
+                correct_answer_text=correct_answer_text,
+            )
 
     @staticmethod
     def _pending_answer_payload(session: Any) -> QuizQuestionPayload:
