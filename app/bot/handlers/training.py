@@ -64,10 +64,6 @@ from app.services.training_session import (
 )
 from app.services.entitlements import DailyLimitExceededError, EntitlementService
 from app.services.mistakes import MistakeService
-from app.bot.handlers.training_message_flow import (
-    continue_active_training_from_message,
-    start_saved_theme_training_from_message,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +84,11 @@ _NEW_TRAINING_RECOVERABLE_ERRORS = (
     QuizBankValidationError,
     NoMoreQuestionsError,
     DailyLimitExceededError,
+)
+_QUESTION_FLOW_RECOVERABLE_ERRORS = (
+    ActiveSessionNotFoundError,
+    QuestionStateError,
+    *_NEW_TRAINING_RECOVERABLE_ERRORS,
 )
 
 
@@ -271,16 +272,7 @@ async def handle_resume_training(callback_query: CallbackQuery) -> None:
         try:
             question = await training_service.get_or_create_current_question(db, user_id, force_refresh=False)
             await db.commit()
-        except (
-            ActiveSessionNotFoundError,
-            NoMoreQuestionsError,
-            QuestionStateError,
-            QuizBankAuthError,
-            QuizBankRateLimitError,
-            QuizBankUnavailableError,
-            QuizBankValidationError,
-            DailyLimitExceededError,
-        ) as exc:
+        except _QUESTION_FLOW_RECOVERABLE_ERRORS as exc:
             await db.rollback()
             if isinstance(
                 exc,
@@ -428,35 +420,52 @@ async def handle_submit_answer(callback_query: CallbackQuery, event_update: Upda
             await callback_query.message.answer(TRAINING_SESSION_ERROR_TEXT)
             return
 
-        async with _session_factory() as db:
-            timing_spans, timing_metrics, timing_token = begin_timing()
-            try:
-                with webhook_timing_span("handler.training_answer_submit_ms"):
-                    result = await training_service.submit_answer(
-                        db,
-                        user_id,
-                        session_id=session_id,
-                        question_token=question_token,
-                        selected_option_id=selected_option,
-                        telegram_update_id=_extract_update_id(event_update),
-                    )
-                with webhook_timing_span("handler.training_answer_commit_ms"):
-                    await db.commit()
-            except (
-                QuestionStateError,
-                ActiveSessionNotFoundError,
-                NoMoreQuestionsError,
-            ) as exc:
-                await db.rollback()
-                await callback_query.message.answer(_map_session_error(exc))
-                return
-            finally:
-                end_timing(timing_token)
-                merge_webhook_timings(timing_spans)
-                merge_webhook_metrics(timing_metrics)
-
+        result = await _submit_answer_with_db(
+            callback_query,
+            user_id=user_id,
+            session_id=session_id,
+            question_token=question_token,
+            selected_option=selected_option,
+            event_update=event_update,
+        )
+        if result is None:
+            return
         with webhook_timing_span("handler.training_answer_send_result_ms"):
             await _send_answer_result(callback_query.message, result)
+
+
+async def _submit_answer_with_db(
+    callback_query: CallbackQuery,
+    *,
+    user_id: int,
+    session_id: int,
+    question_token: str,
+    selected_option: str,
+    event_update: Update | None,
+) -> Any | None:
+    async with _session_factory() as db:
+        timing_spans, timing_metrics, timing_token = begin_timing()
+        try:
+            with webhook_timing_span("handler.training_answer_submit_ms"):
+                result = await training_service.submit_answer(
+                    db,
+                    user_id,
+                    session_id=session_id,
+                    question_token=question_token,
+                    selected_option_id=selected_option,
+                    telegram_update_id=_extract_update_id(event_update),
+                )
+            with webhook_timing_span("handler.training_answer_commit_ms"):
+                await db.commit()
+        except (QuestionStateError, ActiveSessionNotFoundError, NoMoreQuestionsError) as exc:
+            await db.rollback()
+            await callback_query.message.answer(_map_session_error(exc))
+            return None
+        finally:
+            end_timing(timing_token)
+            merge_webhook_timings(timing_spans)
+            merge_webhook_metrics(timing_metrics)
+    return result
 
 
 @router.callback_query(F.data.startswith(CALLBACK_TRAIN_NEXT_PREFIX + ":"))
@@ -491,16 +500,7 @@ async def handle_next_question(callback_query: CallbackQuery) -> None:
                 answered_question_token=question_token,
             )
             await db.commit()
-        except (
-            ActiveSessionNotFoundError,
-            NoMoreQuestionsError,
-            QuestionStateError,
-            QuizBankAuthError,
-            QuizBankRateLimitError,
-            QuizBankUnavailableError,
-            QuizBankValidationError,
-            DailyLimitExceededError,
-        ) as exc:
+        except _QUESTION_FLOW_RECOVERABLE_ERRORS as exc:
             await db.rollback()
             if isinstance(exc, (QuizBankAuthError, QuizBankRateLimitError, QuizBankUnavailableError, QuizBankValidationError)):
                 await _persist_quiz_bank_error(

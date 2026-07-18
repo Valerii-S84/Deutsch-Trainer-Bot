@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db.models import OutboxEvent
 from app.db.session import dispose_engine, measure_pool_wait_ms
 from app.db.session import AsyncSessionLocal
@@ -315,42 +315,51 @@ async def run_bot(command: str = DEFAULT_RUNTIME_COMMAND) -> None:
             return
 
         redis_client = create_redis_client(settings) if _uses_redis_runtime(settings) else None
-        if redis_client is not None and _uses_redis_security_state(settings):
-            warmup_count = min(settings.redis_warmup_connections, settings.redis_max_connections)
-            warmup = await warm_redis_client(redis_client, connection_count=warmup_count)
-            logger.info(
-                "Redis pool warmup completed: requested=%s succeeded=%s failed=%s",
-                warmup["requested"],
-                warmup["succeeded"],
-                warmup["failed"],
-            )
+        await _warm_redis_runtime(settings, redis_client)
         dp = create_dispatcher(redis_client=redis_client)
-
-        if command == SERVE_WEBHOOK_COMMAND:
-            logger.info("Starting webhook server mode with path=%s", settings.telegram_webhook_path)
-            await run_webhook(
-                bot=bot,
-                dispatcher=dp,
-                config=create_webhook_config(settings),
-                redis_client=redis_client,
-            )
-        elif settings.webhook_mode_enabled:
-            logger.info("Starting webhook mode with path=%s", settings.telegram_webhook_path)
-            await run_webhook(
-                bot=bot,
-                dispatcher=dp,
-                config=create_webhook_config(settings),
-                redis_client=redis_client,
-            )
-        elif settings.bot_polling_enabled:
-            logger.info("Starting polling mode")
-            await dp.start_polling(bot, request_timeout=settings.bot_max_request_timeout)
-        else:
-            raise RuntimeError("No bot runtime mode is enabled")
+        await _run_configured_mode(command, settings=settings, bot=bot, dispatcher=dp, redis_client=redis_client)
     finally:
         await bot.session.close()
         await close_redis_client(redis_client)
         await dispose_engine()
+
+
+async def _warm_redis_runtime(settings: Settings, redis_client: Redis | None) -> None:
+    if redis_client is None or not _uses_redis_security_state(settings):
+        return
+    warmup_count = min(settings.redis_warmup_connections, settings.redis_max_connections)
+    warmup = await warm_redis_client(redis_client, connection_count=warmup_count)
+    logger.info(
+        "Redis pool warmup completed: requested=%s succeeded=%s failed=%s",
+        warmup["requested"],
+        warmup["succeeded"],
+        warmup["failed"],
+    )
+
+
+async def _run_configured_mode(
+    command: str,
+    *,
+    settings: Settings,
+    bot: Bot,
+    dispatcher: Dispatcher,
+    redis_client: Redis | None,
+) -> None:
+    if command == SERVE_WEBHOOK_COMMAND or settings.webhook_mode_enabled:
+        mode_label = "webhook server" if command == SERVE_WEBHOOK_COMMAND else "webhook"
+        logger.info("Starting %s mode with path=%s", mode_label, settings.telegram_webhook_path)
+        await run_webhook(
+            bot=bot,
+            dispatcher=dispatcher,
+            config=create_webhook_config(settings),
+            redis_client=redis_client,
+        )
+        return
+    if settings.bot_polling_enabled:
+        logger.info("Starting polling mode")
+        await dispatcher.start_polling(bot, request_timeout=settings.bot_max_request_timeout)
+        return
+    raise RuntimeError("No bot runtime mode is enabled")
 
 
 async def _wait_for_shutdown() -> None:

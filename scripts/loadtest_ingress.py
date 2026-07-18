@@ -311,6 +311,32 @@ async def run_ingress_server(args: argparse.Namespace) -> int:
         health_timeout_seconds=args.health_timeout_seconds,
     )
     client = ClientSession(timeout=ClientTimeout(total=args.upstream_timeout_seconds))
+    app = _create_ingress_app(args, state=state, client=client)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host=args.listen_host, port=args.listen_port)
+    health_task = asyncio.create_task(
+        _health_loop(args, state=state, client=client),
+        name="loadtest-ingress-health",
+    )
+    try:
+        await state.refresh(client)
+        await site.start()
+        await asyncio.Event().wait()
+    finally:
+        health_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await health_task
+        await client.close()
+        await runner.cleanup()
+
+
+def _create_ingress_app(
+    args: argparse.Namespace,
+    *,
+    state: RoundRobinUpstreams,
+    client: ClientSession,
+) -> web.Application:
 
     async def ingress_health(_request: web.Request) -> web.Response:
         return web.Response(text="ok", status=200)
@@ -344,30 +370,22 @@ async def run_ingress_server(args: argparse.Namespace) -> int:
             await state.mark_unhealthy(upstream)
             return web.Response(text="upstream unavailable", status=503)
 
-    async def health_loop() -> None:
-        while True:
-            await state.refresh(client)
-            await asyncio.sleep(args.health_interval_seconds)
-
     app = web.Application()
     app.router.add_get(args.ingress_health_path, ingress_health)
     app.router.add_route("*", args.ready_path, proxy)
     app.router.add_route("*", args.webhook_path, proxy)
+    return app
 
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host=args.listen_host, port=args.listen_port)
-    health_task = asyncio.create_task(health_loop(), name="loadtest-ingress-health")
-    try:
+
+async def _health_loop(
+    args: argparse.Namespace,
+    *,
+    state: RoundRobinUpstreams,
+    client: ClientSession,
+) -> None:
+    while True:
         await state.refresh(client)
-        await site.start()
-        await asyncio.Event().wait()
-    finally:
-        health_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await health_task
-        await client.close()
-        await runner.cleanup()
+        await asyncio.sleep(args.health_interval_seconds)
 
 
 def build_render_parser() -> argparse.ArgumentParser:

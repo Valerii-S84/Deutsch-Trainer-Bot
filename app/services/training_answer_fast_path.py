@@ -119,55 +119,81 @@ async def _validate_context(
     record_timing_metric("answer.validate.logical_round_trip_count", 1)
     with timing_query("answer.validate.sql_1"):
         with timing_span("answer.validate.sql_1_total_ms"):
-            row = (
-                await db.execute(
-                    select(
-                        User.id.label("user_id"),
-                        User.telegram_user_id.label("telegram_user_id"),
-                        QuizSession.id.label("session_id"),
-                        QuizSession.status.label("status"),
-                        QuizSession.session_type.label("session_type"),
-                        QuizSession.source_metadata.label("source_metadata"),
-                        QuizSession.total_questions.label("total_questions"),
-                        QuizSession.answered_count.label("answered_count"),
-                        QuizSession.correct_answers.label("correct_answers"),
-                        QuizSession.api_metadata.label("api_metadata"),
-                    )
-                    .join(User, User.id == QuizSession.user_id)
-                    .where(User.telegram_user_id == telegram_user_id)
-                    .where(QuizSession.id == session_id)
-                )
-            ).mappings().first()
+            row = await _fetch_session_answer_context_row(
+                db,
+                telegram_user_id=telegram_user_id,
+                session_id=session_id,
+            )
 
     with timing_span("answer.validate.business_logic_ms"):
-        if row is None:
-            raise ActiveSessionNotFoundError("Session is not found")
-        if str(row["status"]) != ACTIVE_SESSION_STATUS:
-            raise ActiveSessionNotFoundError("Session is not active")
-
-        metadata = row["api_metadata"] if isinstance(row["api_metadata"], dict) else {}
-        pending_raw = metadata.get("pending_question")
-        if not isinstance(pending_raw, dict):
-            raise QuestionStateError("No active question in session")
-        pending = deserialize_question_payload(pending_raw)
-        if pending.question_token != question_token or pending.session_id != int(row["session_id"]):
-            raise QuestionStateError("Question token is stale")
-        if selected_option_id not in option_ids(pending):
-            raise QuestionStateError("Selected answer is invalid")
-
-        return FastPathContext(
-            telegram_user_id=int(row["telegram_user_id"]),
-            user_id=int(row["user_id"]),
-            session_id=int(row["session_id"]),
-            session_type=_session_type(row["session_type"], row["source_metadata"]),
-            total_questions=int(row["total_questions"]),
-            answered_count=int(row["answered_count"] or 0),
-            correct_answers=int(row["correct_answers"] or 0),
-            pending=pending,
+        return _build_fast_path_context(
+            row,
+            question_token=question_token,
             selected_option_id=selected_option_id,
-            correct_answer_text=pending.correct_answer_text or option_text(pending, pending.correct_answer),
-            api_metadata=metadata,
         )
+
+
+async def _fetch_session_answer_context_row(
+    db: AsyncSession,
+    *,
+    telegram_user_id: int,
+    session_id: int,
+) -> Any | None:
+    return (
+        await db.execute(
+            select(
+                User.id.label("user_id"),
+                User.telegram_user_id.label("telegram_user_id"),
+                QuizSession.id.label("session_id"),
+                QuizSession.status.label("status"),
+                QuizSession.session_type.label("session_type"),
+                QuizSession.source_metadata.label("source_metadata"),
+                QuizSession.total_questions.label("total_questions"),
+                QuizSession.answered_count.label("answered_count"),
+                QuizSession.correct_answers.label("correct_answers"),
+                QuizSession.api_metadata.label("api_metadata"),
+            )
+            .join(User, User.id == QuizSession.user_id)
+            .where(User.telegram_user_id == telegram_user_id)
+            .where(QuizSession.id == session_id)
+        )
+    ).mappings().first()
+
+
+def _build_fast_path_context(
+    row: Any | None,
+    *,
+    question_token: str,
+    selected_option_id: str,
+) -> FastPathContext:
+    if row is None:
+        raise ActiveSessionNotFoundError("Session is not found")
+    if str(row["status"]) != ACTIVE_SESSION_STATUS:
+        raise ActiveSessionNotFoundError("Session is not active")
+
+    metadata = row["api_metadata"] if isinstance(row["api_metadata"], dict) else {}
+    pending_raw = metadata.get("pending_question")
+    if not isinstance(pending_raw, dict):
+        raise QuestionStateError("No active question in session")
+    pending = deserialize_question_payload(pending_raw)
+    if pending.question_token != question_token or pending.session_id != int(row["session_id"]):
+        raise QuestionStateError("Question token is stale")
+    if selected_option_id not in option_ids(pending):
+        raise QuestionStateError("Selected answer is invalid")
+
+    return FastPathContext(
+        telegram_user_id=int(row["telegram_user_id"]),
+        user_id=int(row["user_id"]),
+        session_id=int(row["session_id"]),
+        session_type=_session_type(row["session_type"], row["source_metadata"]),
+        total_questions=int(row["total_questions"]),
+        answered_count=int(row["answered_count"] or 0),
+        correct_answers=int(row["correct_answers"] or 0),
+        pending=pending,
+        selected_option_id=selected_option_id,
+        correct_answer_text=pending.correct_answer_text or option_text(pending, pending.correct_answer),
+        api_metadata=metadata,
+    )
 
 
 async def _mark_session_item_answered(db: AsyncSession, context: FastPathContext) -> None:
