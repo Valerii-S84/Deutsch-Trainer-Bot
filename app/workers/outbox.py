@@ -16,6 +16,7 @@ from app.runtime.timing import timing_span
 from app.services.analytics import AnalyticsTracker
 from app.services.mistakes import MistakeService
 from app.services.progress import ProgressService
+from app.services.user_identity import ResolvedUserId
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +78,7 @@ class OutboxEventProcessor:
     async def _record_progress(self, db: AsyncSession, payload: AnswerAcceptedPayload) -> None:
         await self._progress_service.record_answer_result(
             db,
-            payload.telegram_user_id,
-            user_id=payload.user_id,
+            ResolvedUserId(payload.user_id),
             level=payload.level,
             theme=payload.theme,
             is_correct=payload.is_correct,
@@ -96,8 +96,7 @@ class OutboxEventProcessor:
         if payload.is_correct and payload.session_type == "mistake_review":
             await self._mistakes_service.record_review_success(
                 db,
-                payload.telegram_user_id,
-                user_id=payload.user_id,
+                ResolvedUserId(payload.user_id),
                 external_quiz_id=payload.item_id,
                 question_level=payload.level,
                 question_theme=payload.theme,
@@ -111,8 +110,7 @@ class OutboxEventProcessor:
             return
         await self._mistakes_service.record_wrong_answer(
             db,
-            payload.telegram_user_id,
-            user_id=payload.user_id,
+            ResolvedUserId(payload.user_id),
             external_quiz_id=payload.item_id,
             level=payload.level,
             theme=payload.theme,

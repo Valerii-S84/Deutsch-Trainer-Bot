@@ -7,6 +7,7 @@ from app.db.models import Mistake, MistakeStatus
 from app.repositories.mistake_history import MistakeHistoryRepository
 from app.repositories.mistakes import MistakeRepository
 from app.repositories.users import UserRepository
+from app.services.user_identity import ResolvedUserId
 
 
 class MistakeService:
@@ -30,26 +31,24 @@ class MistakeService:
         self,
         db,
         *,
-        telegram_user_id: int | None,
-        user_id: int | None,
+        identity: int | ResolvedUserId | None,
         create_if_missing: bool,
     ) -> int | None:
-        if user_id is not None:
-            return int(user_id)
-        if telegram_user_id is None:
+        if isinstance(identity, ResolvedUserId):
+            return identity.value
+        if identity is None:
             return None
         if create_if_missing:
-            user = await self._user_repo.create_if_missing(db, telegram_user_id)
+            user = await self._user_repo.create_if_missing(db, identity)
         else:
-            user = await self._user_repo.get_by_telegram_id(db, telegram_user_id)
+            user = await self._user_repo.get_by_telegram_id(db, identity)
         return int(user.id) if user is not None else None
 
     async def record_wrong_answer(
         self,
         db,
-        telegram_user_id: int | None,
+        telegram_user_id: int | ResolvedUserId | None,
         *,
-        user_id: int | None = None,
         external_quiz_id: str,
         level: str,
         theme: str | None,
@@ -63,8 +62,7 @@ class MistakeService:
     ) -> Mistake | None:
         target_user_id = await self._resolve_user_id(
             db,
-            telegram_user_id=telegram_user_id,
-            user_id=user_id,
+            identity=telegram_user_id,
             create_if_missing=not is_duplicate,
         )
         if target_user_id is None:
@@ -155,9 +153,8 @@ class MistakeService:
     async def record_review_success(
         self,
         db,
-        telegram_user_id: int | None,
+        telegram_user_id: int | ResolvedUserId | None,
         *,
-        user_id: int | None = None,
         external_quiz_id: str,
         question_level: str | None,
         question_theme: str | None,
@@ -169,8 +166,7 @@ class MistakeService:
     ) -> Mistake | None:
         target_user_id = await self._resolve_user_id(
             db,
-            telegram_user_id=telegram_user_id,
-            user_id=user_id,
+            identity=telegram_user_id,
             create_if_missing=False,
         )
         if target_user_id is None:

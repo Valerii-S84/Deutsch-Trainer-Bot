@@ -11,7 +11,7 @@ from app.repositories.sqlite_compat import next_sqlite_id_if_needed
 from app.services.progress_model import TopicAnswerEvent, TopicMistakeSignals, TopicScores
 
 
-class ProgressRepository:
+class _ProgressWriteRepository:
     """Persistence helpers for user progress aggregation."""
 
     async def get_by_user_level_theme(
@@ -199,6 +199,7 @@ class ProgressRepository:
         result = await db.execute(query)
         return list(result.scalars().all())
 
+class ProgressRepository(_ProgressWriteRepository):
     async def list_topic_answer_events(
         self,
         db: AsyncSession,
