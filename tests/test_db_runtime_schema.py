@@ -44,7 +44,11 @@ EXPECTED_INDEXES = {
         "ix_quiz_catalog_import_runs_catalog_started",
         "ix_quiz_catalog_import_runs_status",
     },
-    "outbox_events": {"ix_outbox_events_claim", "ix_outbox_events_aggregate"},
+    "outbox_events": {
+        "ix_outbox_events_status_next_attempt",
+        "ix_outbox_events_type_status",
+        "ix_outbox_events_aggregate",
+    },
     "question_references": {
         "uq_question_references_api_item_id",
         "ix_question_references_item_id",
